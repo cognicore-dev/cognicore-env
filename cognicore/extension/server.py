@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 
 from cognicore.memory import SQLiteMemoryBackend, MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
+from cognicore.memory.categorize import auto_categorize
 
 logger = logging.getLogger("cognicore.extension")
 
@@ -98,9 +99,17 @@ def create_extension_server() -> "FastMCP":
         )
     )
 
+    import time as _time
+    _server_start = _time.time()
+
+    def _normalize_score(score: float, max_score: float) -> float:
+        if max_score <= 0:
+            return 0.0
+        return round(min(score / max_score, 1.0), 3)
+
     @mcp.tool()
-    def cognicore_remember(text: str, category: str = "general", scope: str = "user") -> str:
-        """Store a fact, preference, or decision. Auto-decomposes compound text into atomic facts."""
+    def cognicore_remember(text: str, category: str = "", scope: str = "user") -> str:
+        """Store a fact, preference, or decision. Auto-decomposes and auto-categorizes."""
         _ensure_backend()
         
         try:
@@ -110,13 +119,19 @@ def create_extension_server() -> "FastMCP":
             
         scope_id = _get_project_id() if mem_scope == MemoryScope.PROJECT else ""
         
-        # Atomic decomposition: split paragraphs into independently searchable facts
         facts = decompose(text)
         ids = []
+        cats_detected = set()
         for fact in facts:
+            if category:
+                fact_cat = category
+            else:
+                fact_cat, _ = auto_categorize(fact)
+            cats_detected.add(fact_cat)
+
             entry = MemoryEntry(
                 text=fact,
-                category=category,
+                category=fact_cat,
                 scope=mem_scope,
                 scope_id=scope_id,
                 memory_type="semantic"
@@ -127,13 +142,14 @@ def create_extension_server() -> "FastMCP":
                 logger.error(f"Failed to store fact: {e}")
                 return f"Error: {e}"
 
+        cat_str = ",".join(sorted(cats_detected))
         if len(ids) == 1:
-            return f"OK id={ids[0]}"
-        return f"OK {len(ids)} facts: {','.join(ids)}"
+            return f"Stored 1 fact (id={ids[0]}, cat={cat_str})"
+        return f"Stored {len(ids)} facts (ids={','.join(ids)}, cats={cat_str})"
 
     @mcp.tool()
-    def cognicore_recall(query: str, category: str = "", scope: str = "user", top_k: int = 3) -> str:
-        """Search memory. Returns matching facts."""
+    def cognicore_recall(query: str, category: str = "", scope: str = "user", top_k: int = 5) -> str:
+        """Search memory. Returns scored results sorted by relevance."""
         _ensure_backend()
         
         try:
@@ -154,8 +170,15 @@ def create_extension_server() -> "FastMCP":
             
             if not results:
                 return "(none)"
-            # Ultra-compact format: one fact per line, minimal overhead
-            return "\n".join(f"#{r.entry.entry_id}: {r.entry.text}" for r in results)
+
+            max_score = max(r.score for r in results) if results else 1.0
+            max_score = max(max_score, 0.001)
+
+            lines = [f"Found {len(results)} memories:"]
+            for r in results:
+                norm = _normalize_score(r.score, max_score)
+                lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}) #{r.entry.entry_id}")
+            return "\n".join(lines)
         except Exception as e:
             logger.error(f"Failed to recall memories: {e}")
             return f"Error: {e}"
@@ -174,7 +197,7 @@ def create_extension_server() -> "FastMCP":
 
     @mcp.tool()
     def cognicore_list(limit: int = 10, category: str = "", scope: str = "user") -> str:
-        """List recent memories."""
+        """List recent memories with categories."""
         _ensure_backend()
         
         try:
@@ -195,34 +218,48 @@ def create_extension_server() -> "FastMCP":
             
             if not results:
                 return "(empty)"
-            return "\n".join(f"#{r.entry.entry_id}: {r.entry.text}" for r in results)
+            lines = []
+            for r in results:
+                lines.append(f"#{r.entry.entry_id}: {r.entry.text} ({r.entry.category})")
+            return "\n".join(lines)
         except Exception as e:
             logger.error(f"Failed to list memories: {e}")
             return f"Error: {e}"
 
     @mcp.tool()
     def cognicore_stats() -> str:
-        """Get statistics about the CogniCore memory extension storage.
-        
-        Returns:
-            Statistics including total count, location, and backend mode.
-        """
+        """Memory statistics: count, categories, uptime, storage."""
         _ensure_backend()
         
         try:
             count = _backend.count()
             db_path = _get_data_dir() / "memory.db"
-            mode = "Semantic (sentence-transformers)" if _backend.provider else "Lexical (SQLite FTS5)"
+            mode = "Semantic (sentence-transformers)" if _backend.provider else "BM25 (SQLite FTS5)"
             
-            return (
-                f"CogniCore Extension Memory Stats:\n"
-                f"- Total memories stored: {count}\n"
-                f"- Search mode: {mode}\n"
-                f"- Storage location: {db_path}"
-            )
+            # Category breakdown
+            all_results = _backend.search(query="", top_k=10000, scope=MemoryScope.USER)
+            cat_counts = {}
+            for r in all_results:
+                cat = r.entry.category or "general"
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+            uptime_s = int(_time.time() - _server_start)
+            hours, remainder = divmod(uptime_s, 3600)
+            minutes, seconds = divmod(remainder, 60)
+
+            lines = [
+                f"Total memories: {count}",
+                f"Search mode: {mode}",
+                f"Uptime: {hours}h {minutes}m {seconds}s",
+                f"Storage: {db_path}",
+                f"Categories:"
+            ]
+            for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"  {cat}: {cnt}")
+            return "\n".join(lines)
         except Exception as e:
             logger.error(f"Failed to get stats: {e}")
-            return f"Error retrieving stats: {str(e)}"
+            return f"Error: {e}"
 
     return mcp
 

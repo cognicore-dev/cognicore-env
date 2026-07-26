@@ -115,36 +115,58 @@ def get_backend(ctx: Context):
 
 from cognicore.memory import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
+from cognicore.memory.categorize import auto_categorize
+
+import time as _time
+
+_server_start_time = _time.time()
+
+
+def _normalize_score(score: float, max_score: float) -> float:
+    """Normalize raw BM25/similarity score to 0.0-1.0 range."""
+    if max_score <= 0:
+        return 0.0
+    return round(min(score / max_score, 1.0), 3)
+
 
 @mcp.tool()
-def cognicore_remember(text: str, ctx: Context, category: str = "general", scope: str = "user") -> str:
-    """Store a fact, preference, or decision. Auto-decomposes compound text into atomic facts."""
+def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str = "user") -> str:
+    """Store a fact, preference, or decision. Auto-decomposes and auto-categorizes."""
     backend = get_backend(ctx)
     try:
         mem_scope = MemoryScope(scope.lower())
     except ValueError:
         return "Error: scope must be 'user' or 'project'."
 
-    # Atomic decomposition: split paragraphs into independently searchable facts
     facts = decompose(text)
     ids = []
+    cats_detected = set()
     for fact in facts:
+        # Auto-categorize if no category provided
+        if category:
+            fact_cat = category
+        else:
+            fact_cat, _ = auto_categorize(fact)
+        cats_detected.add(fact_cat)
+
         entry = MemoryEntry(
             text=fact,
-            category=category,
+            category=fact_cat,
             scope=mem_scope,
             scope_id="",
             memory_type="semantic"
         )
         ids.append(str(backend.store(entry)))
 
+    cat_str = ",".join(sorted(cats_detected))
     if len(ids) == 1:
-        return f"OK id={ids[0]}"
-    return f"OK {len(ids)} facts: {','.join(ids)}"
+        return f"Stored 1 fact (id={ids[0]}, cat={cat_str})"
+    return f"Stored {len(ids)} facts (ids={','.join(ids)}, cats={cat_str})"
+
 
 @mcp.tool()
-def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "user", top_k: int = 3) -> str:
-    """Search memory. Returns matching facts."""
+def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "user", top_k: int = 5) -> str:
+    """Search memory. Returns scored results sorted by relevance."""
     backend = get_backend(ctx)
     try:
         mem_scope = MemoryScope(scope.lower())
@@ -159,8 +181,17 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
     )
     if not results:
         return "(none)"
-    # Ultra-compact format: one fact per line, minimal overhead
-    return "\n".join(f"#{r.entry.entry_id}: {r.entry.text}" for r in results)
+
+    # Normalize scores to 0.0-1.0
+    max_score = max(r.score for r in results) if results else 1.0
+    max_score = max(max_score, 0.001)  # avoid div-by-zero
+
+    lines = [f"Found {len(results)} memories:"]
+    for r in results:
+        norm = _normalize_score(r.score, max_score)
+        lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}) #{r.entry.entry_id}")
+    return "\n".join(lines)
+
 
 @mcp.tool()
 def cognicore_forget(entry_id: str, ctx: Context) -> str:
@@ -169,9 +200,10 @@ def cognicore_forget(entry_id: str, ctx: Context) -> str:
     success = backend.delete(entry_id)
     return "OK" if success else "Not found"
 
+
 @mcp.tool()
 def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str = "user") -> str:
-    """List recent memories."""
+    """List recent memories with categories."""
     backend = get_backend(ctx)
     try:
         mem_scope = MemoryScope(scope.lower())
@@ -186,7 +218,42 @@ def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str
     )
     if not results:
         return "(empty)"
-    return "\n".join(f"#{r.entry.entry_id}: {r.entry.text}" for r in results)
+    lines = []
+    for r in results:
+        lines.append(f"#{r.entry.entry_id}: {r.entry.text} ({r.entry.category})")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def cognicore_stats(ctx: Context) -> str:
+    """Memory statistics: count, categories, uptime, storage."""
+    backend = get_backend(ctx)
+    
+    # Get all memories for category breakdown
+    all_results = backend.search(query="", top_k=10000, scope=MemoryScope.USER)
+    total = len(all_results)
+    
+    # Category breakdown
+    cat_counts = {}
+    for r in all_results:
+        cat = r.entry.category or "general"
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+    
+    # Uptime
+    uptime_s = int(_time.time() - _server_start_time)
+    hours, remainder = divmod(uptime_s, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+    
+    lines = [
+        f"Total memories: {total}",
+        f"Uptime: {uptime_str}",
+        f"Categories:"
+    ]
+    for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1]):
+        lines.append(f"  {cat}: {count}")
+    
+    return "\n".join(lines)
 
 # Create the FastAPI app
 app = FastAPI(title="CogniCore Remote MCP Server")
