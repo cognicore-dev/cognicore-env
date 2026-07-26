@@ -239,19 +239,83 @@ class SQLiteMemoryBackend(MemoryBackend):
         
         # If we have an embedding provider, we use it for semantic search + BM25 score
         query_vec = None
-        if self.provider:
-            query_vec = self.provider.embed(query)
-            norm = sum(x*x for x in query_vec) ** 0.5
-            if norm > 0:
-                query_vec = [x/norm for x in query_vec]
+        if self.provider and query.strip():
+            try:
+                query_vec = self.provider.embed(query)
+                norm = sum(x*x for x in query_vec) ** 0.5
+                if norm > 0:
+                    query_vec = [x/norm for x in query_vec]
+            except Exception as e:
+                logger.warning(f"Failed to embed query: {e}")
+                query_vec = None
 
         with self._get_conn() as conn:
-            # If query is not empty, use FTS5 INNER JOIN to avoid full-table scans. 
-            # If empty, limit to recent items to prevent O(N) memory load.
+            if query_vec:
+                # Semantic / Hybrid search mode: evaluate across candidate corpus
+                sql = "SELECT *, 0 as bm25_score FROM memory_entries WHERE 1=1"
+                params = []
+                if category:
+                    sql += " AND category = ?"
+                    params.append(category)
+                if scope:
+                    sql += " AND scope = ?"
+                    params.append(scope.value)
+                if scope_id:
+                    sql += " AND scope_id = ?"
+                    params.append(scope_id)
+                sql += " ORDER BY timestamp DESC LIMIT 5000"
+                rows = conn.execute(sql, params).fetchall()
+
+                if not rows:
+                    return []
+
+                # Calculate BM25 scores across candidate set for normalization
+                bm25_res = self._bm25_search(rows, query, len(rows), category, scope, scope_id)
+                bm25_map = {r.entry.entry_id: r.score for r in bm25_res}
+                max_bm25 = max(bm25_map.values()) if bm25_map else 1.0
+                max_bm25 = max(max_bm25, 0.001)
+
+                results = []
+                for row in rows:
+                    entry = self._row_to_entry(row)
+                    sim_score = 0.0
+                    if row["embedding_json"]:
+                        try:
+                            vec = json.loads(row["embedding_json"])
+                            if len(vec) == len(query_vec):
+                                sim_score = sum(a*b for a, b in zip(query_vec, vec))
+                        except Exception:
+                            pass
+                    elif self.provider:
+                        # On-the-fly embed and save if missing
+                        try:
+                            text_to_embed = row["text"] or row["action"] or ""
+                            if text_to_embed:
+                                vec = self.provider.embed(text_to_embed)
+                                norm = sum(x*x for x in vec) ** 0.5
+                                if norm > 0:
+                                    vec = [x/norm for x in vec]
+                                sim_score = sum(a*b for a, b in zip(query_vec, vec))
+                                conn.execute("UPDATE memory_entries SET embedding_json = ? WHERE entry_id = ?", 
+                                             (json.dumps(vec), row["entry_id"]))
+                        except Exception:
+                            pass
+                    
+                    sim_score = max(0.0, sim_score)
+                    norm_bm25 = bm25_map.get(entry.entry_id, 0.0) / max_bm25
+                    final_score = 0.7 * sim_score + 0.3 * norm_bm25
+
+                    if final_score > 0.05:
+                        results.append(SearchResult(entry=entry, score=round(final_score, 4), source="hybrid"))
+
+                results.sort(key=lambda x: x.score, reverse=True)
+                final_results = results[:top_k]
+                event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
+                return final_results
+
+            # Lexical / BM25 mode: FTS5 prefix search with full-corpus BM25 fallback
             rows = []
             if query.strip():
-                # Build FTS5 token prefix query: each word becomes word* for prefix matching
-                # This is the correct FTS5 syntax; quoted phrase + wildcard is NOT supported.
                 clean_query = query.replace('"', '').replace("'", '').strip()
                 fts_tokens = ' '.join(f'{w}*' for w in clean_query.split() if w)
                 
@@ -285,13 +349,11 @@ class SQLiteMemoryBackend(MemoryBackend):
                     logger.warning(f"FTS5 search failed: {e}")
                     rows = []
 
-                # --- FALLBACK: FTS5 returned nothing — run BM25 over full corpus ---
                 if not rows:
                     logger.info("FTS5 returned no results; running BM25 fallback")
                     return self._fallback_search(
                         conn, query, top_k, category, scope, scope_id
                     )
-
             else:
                 sql = """
                     SELECT m.*, 0 as bm25_score
@@ -310,36 +372,18 @@ class SQLiteMemoryBackend(MemoryBackend):
                     sql += " AND m.scope_id = ?"
                     params.append(scope_id)
 
-                sql += " ORDER BY m.timestamp DESC LIMIT 1000"
+                sql += " ORDER BY timestamp DESC LIMIT 1000"
                 cursor = conn.execute(sql, params)
                 rows = cursor.fetchall()
             
             results = []
             for row in rows:
                 entry = self._row_to_entry(row)
-                bm25_score = -row["bm25_score"]  # FTS5 rank is usually negative (more negative = better)
-                
-                sim_score = 0.0
-                if query_vec and row["embedding_json"]:
-                    try:
-                        vec = json.loads(row["embedding_json"])
-                        if len(vec) == len(query_vec):
-                            sim_score = sum(a*b for a, b in zip(query_vec, vec))
-                    except Exception:
-                        pass
-                
-                # Combine scores (simple heuristic: normalize BM25 or just use vector score if available)
-                if self.provider:
-                    final_score = sim_score
-                else:
-                    final_score = bm25_score
-
-                results.append(SearchResult(entry=entry, score=final_score, source="sqlite"))
+                bm25_score = -row["bm25_score"]
+                results.append(SearchResult(entry=entry, score=bm25_score, source="sqlite"))
             
-            # Sort descending
             results.sort(key=lambda x: x.score, reverse=True)
             final_results = results[:top_k]
-            
             event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
             return final_results
 

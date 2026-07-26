@@ -73,7 +73,7 @@ def _ensure_backend():
     db_path = _get_data_dir() / "memory.db"
     
     provider = None
-    if _HAS_SEMANTIC and os.environ.get("COGNICORE_USE_SEMANTIC", "0") == "1":
+    if _HAS_SEMANTIC and os.environ.get("COGNICORE_USE_SEMANTIC", "1") != "0":
         try:
             provider = SentenceTransformerProvider()
             logger.info("Semantic search enabled via sentence-transformers")

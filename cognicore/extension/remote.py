@@ -101,6 +101,24 @@ def get_db_path_for_user(user_id: str) -> str:
     safe_id = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
     return str(base_dir / f"memory_{safe_id}.db")
 
+_shared_provider = None
+_provider_checked = False
+
+def _get_shared_provider():
+    global _shared_provider, _provider_checked
+    if not _provider_checked:
+        _provider_checked = True
+        if os.environ.get("COGNICORE_USE_SEMANTIC", "1") != "0":
+            try:
+                from cognicore.memory.providers.sentence_transformers import SentenceTransformerProvider
+                _shared_provider = SentenceTransformerProvider()
+                print("[SEMANTIC] Enabled SentenceTransformerProvider in remote server")
+            except ImportError:
+                print("[SEMANTIC] sentence-transformers not installed, using BM25 FTS5 only")
+            except Exception as e:
+                print(f"[SEMANTIC] Failed to initialize SentenceTransformerProvider: {e}")
+    return _shared_provider
+
 def get_backend(ctx: Context):
     """Dynamically resolve the backend for the current request context."""
     if not ctx.request_context:
@@ -111,7 +129,7 @@ def get_backend(ctx: Context):
     db_path = get_db_path_for_user(user_id)
     
     from cognicore.memory import SQLiteMemoryBackend
-    return SQLiteMemoryBackend(db_path)
+    return SQLiteMemoryBackend(db_path, provider=_get_shared_provider())
 
 from cognicore.memory import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
