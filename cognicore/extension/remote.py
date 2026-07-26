@@ -59,8 +59,18 @@ def get_user_id(request_obj) -> str:
             debug_logs.append("No starlette_req")
         
         if not token and hasattr(request_obj, "meta") and request_obj.meta:
-            debug_logs.append(f"Has meta: {list(request_obj.meta.keys())}")
-            auth = request_obj.meta.get("Authorization", "")
+            # Meta may be a Pydantic model, dataclass, or dict — normalize to dict
+            meta = request_obj.meta
+            if hasattr(meta, "model_dump"):
+                meta_dict = meta.model_dump()
+            elif hasattr(meta, "__dict__"):
+                meta_dict = vars(meta)
+            elif isinstance(meta, dict):
+                meta_dict = meta
+            else:
+                meta_dict = {}
+            debug_logs.append(f"Has meta: {list(meta_dict.keys())}")
+            auth = meta_dict.get("Authorization", "")
             if auth and auth.lower().startswith("bearer "):
                 token = auth[7:].strip()
 
