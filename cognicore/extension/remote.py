@@ -134,6 +134,14 @@ def get_backend(ctx: Context):
 from cognicore.memory import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
 from cognicore.memory.categorize import auto_categorize
+from cognicore.memory.context_preservation import (
+    TokenBudget,
+    compress_context,
+    save_session,
+    resume_session,
+    handle_token_triggers,
+)
+from typing import Optional, List, Dict, Any
 
 import time as _time
 
@@ -148,7 +156,7 @@ def _normalize_score(score: float, max_score: float) -> float:
 
 
 @mcp.tool()
-def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str = "user") -> str:
+def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str = "user", conversation: Optional[list] = None) -> str:
     """Store a fact, preference, or decision. Auto-decomposes and auto-categorizes."""
     backend = get_backend(ctx)
     try:
@@ -178,12 +186,14 @@ def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str =
 
     cat_str = ",".join(sorted(cats_detected))
     if len(ids) == 1:
-        return f"Stored 1 fact (id={ids[0]}, cat={cat_str})"
-    return f"Stored {len(ids)} facts (ids={','.join(ids)}, cats={cat_str})"
+        res = f"Stored 1 fact (id={ids[0]}, cat={cat_str})"
+    else:
+        res = f"Stored {len(ids)} facts (ids={','.join(ids)}, cats={cat_str})"
+    return handle_token_triggers(backend, conversation, res)
 
 
 @mcp.tool()
-def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "user", top_k: int = 5) -> str:
+def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "user", top_k: int = 5, conversation: Optional[list] = None) -> str:
     """Search memory. Returns scored results sorted by relevance."""
     backend = get_backend(ctx)
     try:
@@ -198,7 +208,7 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         scope=mem_scope
     )
     if not results:
-        return "(none)"
+        return handle_token_triggers(backend, conversation, "(none)")
 
     # Normalize scores to 0.0-1.0
     max_score = max(r.score for r in results) if results else 1.0
@@ -208,19 +218,21 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
     for r in results:
         norm = _normalize_score(r.score, max_score)
         lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}) #{r.entry.entry_id}")
-    return "\n".join(lines)
+    res = "\n".join(lines)
+    return handle_token_triggers(backend, conversation, res)
 
 
 @mcp.tool()
-def cognicore_forget(entry_id: str, ctx: Context) -> str:
+def cognicore_forget(entry_id: str, ctx: Context, conversation: Optional[list] = None) -> str:
     """Delete a memory by ID."""
     backend = get_backend(ctx)
     success = backend.delete(entry_id)
-    return "OK" if success else "Not found"
+    res = "OK" if success else "Not found"
+    return handle_token_triggers(backend, conversation, res)
 
 
 @mcp.tool()
-def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str = "user") -> str:
+def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str = "user", conversation: Optional[list] = None) -> str:
     """List recent memories with categories."""
     backend = get_backend(ctx)
     try:
@@ -235,15 +247,16 @@ def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str
         scope=mem_scope
     )
     if not results:
-        return "(empty)"
+        return handle_token_triggers(backend, conversation, "(empty)")
     lines = []
     for r in results:
         lines.append(f"#{r.entry.entry_id}: {r.entry.text} ({r.entry.category})")
-    return "\n".join(lines)
+    res = "\n".join(lines)
+    return handle_token_triggers(backend, conversation, res)
 
 
 @mcp.tool()
-def cognicore_stats(ctx: Context) -> str:
+def cognicore_stats(ctx: Context, conversation: Optional[list] = None) -> str:
     """Memory statistics: count, categories, uptime, storage."""
     backend = get_backend(ctx)
     
@@ -271,7 +284,30 @@ def cognicore_stats(ctx: Context) -> str:
     for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1]):
         lines.append(f"  {cat}: {count}")
     
-    return "\n".join(lines)
+    res = "\n".join(lines)
+    return handle_token_triggers(backend, conversation, res)
+
+
+@mcp.tool()
+def cognicore_compress_context(ctx: Context, conversation: list, keep_last_n: int = 5) -> str:
+    """Called when conversation is getting long. Takes messages older than last N and compresses them into a dense summary without LLM API calls."""
+    backend = get_backend(ctx)
+    return compress_context(backend, conversation, keep_last_n=keep_last_n)
+
+
+@mcp.tool()
+def cognicore_save_session(ctx: Context, conversation: list, session_name: str = "") -> str:
+    """Called at END of conversation automatically. Saves atomic facts, decisions, code snippets, and action items before context is lost."""
+    backend = get_backend(ctx)
+    return save_session(backend, conversation, session_name=session_name if session_name else None)
+
+
+@mcp.tool()
+def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int = 3, include_action_items: bool = True) -> str:
+    """Called at START of every new conversation. Reconstructs context brief from past sessions instantly."""
+    backend = get_backend(ctx)
+    return resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
+
 
 # Create the FastAPI app
 app = FastAPI(title="CogniCore Remote MCP Server")

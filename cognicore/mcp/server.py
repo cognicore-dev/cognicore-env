@@ -16,7 +16,15 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
+
+from cognicore.memory.context_preservation import (
+    TokenBudget,
+    compress_context,
+    save_session,
+    resume_session,
+    handle_token_triggers,
+)
 
 logger = logging.getLogger("cognicore.mcp")
 
@@ -79,11 +87,10 @@ def _ensure_initialized():
         return
 
     from cognicore.runtime import CogniCoreRuntime, RuntimeConfig
-    from cognicore.memory.tfidf_backend import TFIDFMemoryBackend
     
-    path = _get_data_dir() / "cognicore_memory.json"
+    path = _get_data_dir() / "mcp_memories.db"
     _runtime = CogniCoreRuntime(
-        config=RuntimeConfig(persistence_path=str(path)),
+        config=RuntimeConfig(persistence_path=str(path), memory_backend="sqlite"),
         name="mcp-server"
     )
 
@@ -526,6 +533,73 @@ def create_mcp_server() -> "FastMCP":
             f"  Total scans       : {_stats['total_scans']}",
         ]
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Tool 8: cognicore_compress_context
+    # ------------------------------------------------------------------
+    @mcp.tool()
+    def cognicore_compress_context(
+        conversation: List[Dict[str, Any]],
+        keep_last_n: int = 5,
+    ) -> str:
+        """Called when conversation is getting long. Takes messages older than last N and compresses them into a dense summary without LLM API calls.
+
+        Args:
+            conversation: List of conversation messages [{role, content}] to compress.
+            keep_last_n: Number of recent messages to preserve verbatim (default 5).
+
+        Returns:
+            JSON string with compressed summary, token metrics, and stored memory ID.
+        """
+        _ensure_initialized()
+        return compress_context(_runtime.backend, conversation, keep_last_n=keep_last_n)
+
+    # ------------------------------------------------------------------
+    # Tool 9: cognicore_save_session
+    # ------------------------------------------------------------------
+    @mcp.tool()
+    def cognicore_save_session(
+        conversation: List[Dict[str, Any]],
+        session_name: str = "",
+    ) -> str:
+        """Called at END of conversation automatically or manually. Saves atomic facts, decisions, code snippets, and action items before context is lost.
+
+        Args:
+            conversation: List of conversation messages [{role, content}] from the session.
+            session_name: Optional human-readable name for this session.
+
+        Returns:
+            JSON string confirming stored facts, decisions, snippets, and summary.
+        """
+        _ensure_initialized()
+        return save_session(_runtime.backend, conversation, session_name=session_name if session_name else None)
+
+    # ------------------------------------------------------------------
+    # Tool 10: cognicore_resume_session
+    # ------------------------------------------------------------------
+    @mcp.tool()
+    def cognicore_resume_session(
+        query: str = "",
+        last_n_sessions: int = 3,
+        include_action_items: bool = True,
+    ) -> str:
+        """Called at START of every new conversation. Reconstructs context brief from past sessions instantly.
+
+        Args:
+            query: Optional search query describing what the user is currently working on.
+            last_n_sessions: Number of recent sessions to include in the brief (default 3).
+            include_action_items: Whether to retrieve pending action items (default true).
+
+        Returns:
+            Formatted context resume brief with token count.
+        """
+        _ensure_initialized()
+        return resume_session(
+            _runtime.backend,
+            query=query if query else None,
+            last_n_sessions=last_n_sessions,
+            include_action_items=include_action_items,
+        )
 
     return mcp
 

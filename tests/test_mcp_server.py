@@ -70,11 +70,14 @@ def test_mcp_tool_registration(monkeypatch, tmp_path):
     names = sorted(tool.name for tool in tools)
 
     assert names == [
+        "cognicore_compress_context",
         "cognicore_recall",
         "cognicore_recall_failures",
         "cognicore_recall_successes",
         "cognicore_reflect",
         "cognicore_remember",
+        "cognicore_resume_session",
+        "cognicore_save_session",
         "cognicore_scan_threat",
         "cognicore_stats",
     ]

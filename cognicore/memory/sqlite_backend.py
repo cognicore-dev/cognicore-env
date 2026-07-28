@@ -93,7 +93,7 @@ class SQLiteMemoryBackend(MemoryBackend):
             """)
 
     def _migrate_schema(self, conn):
-        """Auto-add v2 lifecycle columns to existing databases."""
+        """Auto-add v2 lifecycle columns and session tables to existing databases."""
         cursor = conn.execute("PRAGMA table_info(memory_entries)")
         existing_cols = {row[1] for row in cursor.fetchall()}
         migrations = [
@@ -122,6 +122,24 @@ class SQLiteMemoryBackend(MemoryBackend):
                     conn.execute(f"ALTER TABLE memory_entries ADD COLUMN {col_name} {col_def}")
                 except Exception as e:
                     logger.warning(f"Migration error for {col_name}: {e}")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                name TEXT,
+                timestamp REAL,
+                message_count INTEGER,
+                total_tokens_estimated INTEGER,
+                summary_memory_id INTEGER
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_memories (
+                session_id TEXT,
+                memory_id INTEGER,
+                PRIMARY KEY (session_id, memory_id)
+            )
+        """)
 
     def _row_to_entry(self, row: sqlite3.Row) -> MemoryEntry:
         scope_str = row["scope"]

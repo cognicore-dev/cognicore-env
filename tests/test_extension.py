@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -60,11 +61,11 @@ def test_ext_remember_and_recall(monkeypatch, tmp_path):
         )
     )
 
-    assert "Successfully stored" in store_result
+    assert "Stored 1 fact" in store_result
     
     # Extract ID
-    # Format: Successfully stored memory in category 'preferences'.\nID: 1
-    entry_id = store_result.split("ID: ")[1].strip()
+    # Format: Stored 1 fact (id=1, cat=preferences)
+    entry_id = re.search(r'id=(\d+)', store_result).group(1)
 
     # Recall the memory
     recall_result = asyncio.run(
@@ -89,7 +90,7 @@ def test_ext_list_and_forget(monkeypatch, tmp_path):
     asyncio.run(_call(server, "cognicore_remember", {"text": "Project uses FastAPI", "category": "tech_stack"}))
     store_result = asyncio.run(_call(server, "cognicore_remember", {"text": "Use PostgreSQL for database", "category": "tech_stack"}))
     
-    entry_id = store_result.split("ID: ")[1].strip()
+    entry_id = re.search(r'id=(\d+)', store_result).group(1)
 
     # List
     list_result = asyncio.run(_call(server, "cognicore_list", {"limit": 10}))
@@ -98,7 +99,7 @@ def test_ext_list_and_forget(monkeypatch, tmp_path):
 
     # Forget
     forget_result = asyncio.run(_call(server, "cognicore_forget", {"entry_id": entry_id}))
-    assert "Successfully deleted" in forget_result
+    assert forget_result == "OK" or "deleted" in forget_result.lower()
 
     # List again, PostgreSQL should be gone
     list_result_after = asyncio.run(_call(server, "cognicore_list", {"limit": 10}))
@@ -115,8 +116,8 @@ def test_ext_stats(monkeypatch, tmp_path):
 
     stats_result = asyncio.run(_call(server, "cognicore_stats", {}))
     
-    assert "Total memories stored: 2" in stats_result
-    assert "Lexical (SQLite FTS5)" in stats_result
+    assert "Total memories: 2" in stats_result
+    assert "BM25 (SQLite FTS5)" in stats_result
 
 
 def test_ext_persistence_across_restart(monkeypatch, tmp_path):

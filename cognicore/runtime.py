@@ -169,6 +169,10 @@ class CogniCoreRuntime:
         # Initialize middleware
         if memory is not None:
             self.backend = memory
+        elif self.config.memory_backend == "sqlite":
+            from cognicore.memory.sqlite_backend import SQLiteMemoryBackend
+            db_path = self.config.persistence_path or "cognicore_memory.db"
+            self.backend = SQLiteMemoryBackend(db_path=db_path)
         else:
             self.backend = TFIDFMemoryBackend(
                 max_size=self.config.memory_max_size,
