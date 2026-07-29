@@ -4,17 +4,24 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from mcp.server.fastmcp import FastMCP, Context
+try:
+    from mcp.server.fastmcp import FastMCP, Context
+except ImportError:
+    from fastmcp import FastMCP, Context  # standalone fastmcp package (mcp>=1.27)
 import uvicorn
 import jwt
 
-from mcp.server.transport_security import TransportSecuritySettings
+try:
+    from mcp.server.transport_security import TransportSecuritySettings
+    _transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+except (ImportError, Exception):
+    _transport_security = None
 
 # We use FastMCP for the core logic, but we inject a context-aware backend
-mcp = FastMCP(
-    "cognicore-remote",
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)
-)
+if _transport_security is not None:
+    mcp = FastMCP("cognicore-remote", transport_security=_transport_security)
+else:
+    mcp = FastMCP("cognicore-remote")
 security = HTTPBearer()
 
 
