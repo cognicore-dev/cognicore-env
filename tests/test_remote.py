@@ -63,3 +63,33 @@ def test_db_path_sanitization():
     assert ".." not in path
     assert path.endswith(f"memory_{safe_hash}.db")
 
+
+def test_apply_auto_compression():
+    from cognicore.extension.remote import apply_auto_compression
+    from unittest.mock import MagicMock, patch
+
+    mock_ctx = MagicMock()
+
+    # Small conversation under 150,000 tokens
+    short_conv = [{"role": "user", "content": "hello world"}]
+    res = apply_auto_compression(mock_ctx, short_conv, "original response")
+    assert res == "original response"
+
+    # Large conversation over 150,000 tokens (approx 700,000 chars > 175k tokens)
+    big_text = "Important decision: We decided to use FastMCP for remote context preservation. " * 10000
+    long_conv = [
+        {"role": "user", "content": f"Msg {i}: {big_text}"} for i in range(10)
+    ]
+
+    mock_backend = MagicMock()
+    mock_backend.store.return_value = 42
+
+    with patch("cognicore.extension.remote.get_backend", return_value=mock_backend):
+        out = apply_auto_compression(mock_ctx, long_conv, "Original tool output")
+        assert "Context compressed." in out
+        assert "Summary of previous discussion attached." in out
+        assert "Continue from here." in out
+        assert "Original tool output" in out
+        assert mock_backend.store.called
+
+

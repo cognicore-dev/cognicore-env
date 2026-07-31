@@ -17,12 +17,39 @@ try:
 except (ImportError, Exception):
     _transport_security = None
 
-# We use FastMCP for the core logic, but we inject a context-aware backend
+if not hasattr(FastMCP, "sse_app"):
+    def sse_app(self):
+        from starlette.applications import Starlette
+        from starlette.routing import Mount, Route
+        from mcp.server.sse import SseServerTransport
+
+        sse = SseServerTransport("/messages/")
+
+        async def handle_sse(request):
+            async with sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await self._mcp_server.run(
+                    streams[0],
+                    streams[1],
+                    self._mcp_server.create_initialization_options(),
+                )
+
+        return Starlette(
+            debug=getattr(self.settings, "debug", False),
+            routes=[
+                Route("/sse", endpoint=handle_sse),
+                Mount("/messages/", app=sse.handle_post_message),
+            ],
+        )
+    FastMCP.sse_app = sse_app
+
 if _transport_security is not None:
     mcp = FastMCP("cognicore-remote", transport_security=_transport_security)
 else:
     mcp = FastMCP("cognicore-remote")
 security = HTTPBearer()
+
 
 
 
@@ -146,9 +173,41 @@ from cognicore.memory.context_preservation import (
     compress_context,
     save_session,
     resume_session,
-    handle_token_triggers,
 )
 from typing import Optional, List, Dict, Any
+import json
+
+def apply_auto_compression(ctx: Context, conversation: Optional[list], current_response: str) -> str:
+    """Check token count and automatically compress if over 150,000 tokens."""
+    if not conversation or not isinstance(conversation, list):
+        return current_response
+        
+    total_tokens = TokenBudget.estimate_tokens(conversation)
+    
+    if total_tokens > 150_000:
+        backend = get_backend(ctx)
+        # Keep recent 20%, compress oldest 80%
+        keep_last_n = max(1, int(len(conversation) * 0.2))
+        
+        # This handles compression AND storing to SQLite (via compress_context)
+        compressed_json = compress_context(backend, conversation, keep_last_n=keep_last_n)
+        try:
+            data = json.loads(compressed_json)
+            summary = data.get("summary", compressed_json)
+        except Exception:
+            summary = compressed_json
+            
+        signal = (
+            "Context compressed. \n"
+            "Summary of previous discussion attached.\n"
+            "Continue from here.\n\n"
+            "--- COMPRESSED SUMMARY ---\n"
+            f"{summary}\n"
+            "--------------------------\n\n"
+        )
+        return signal + current_response
+        
+    return current_response
 
 import time as _time
 
@@ -196,7 +255,7 @@ def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str =
         res = f"Stored 1 fact (id={ids[0]}, cat={cat_str})"
     else:
         res = f"Stored {len(ids)} facts (ids={','.join(ids)}, cats={cat_str})"
-    return handle_token_triggers(backend, conversation, res)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 @mcp.tool()
@@ -215,7 +274,7 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         scope=mem_scope
     )
     if not results:
-        return handle_token_triggers(backend, conversation, "(none)")
+        return apply_auto_compression(ctx, conversation, "(none)")
 
     # Normalize scores to 0.0-1.0
     max_score = max(r.score for r in results) if results else 1.0
@@ -226,7 +285,7 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         norm = _normalize_score(r.score, max_score)
         lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}) #{r.entry.entry_id}")
     res = "\n".join(lines)
-    return handle_token_triggers(backend, conversation, res)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 @mcp.tool()
@@ -235,7 +294,7 @@ def cognicore_forget(entry_id: str, ctx: Context, conversation: Optional[list] =
     backend = get_backend(ctx)
     success = backend.delete(entry_id)
     res = "OK" if success else "Not found"
-    return handle_token_triggers(backend, conversation, res)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 @mcp.tool()
@@ -254,12 +313,12 @@ def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str
         scope=mem_scope
     )
     if not results:
-        return handle_token_triggers(backend, conversation, "(empty)")
+        return apply_auto_compression(ctx, conversation, "(empty)")
     lines = []
     for r in results:
         lines.append(f"#{r.entry.entry_id}: {r.entry.text} ({r.entry.category})")
     res = "\n".join(lines)
-    return handle_token_triggers(backend, conversation, res)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 @mcp.tool()
@@ -292,7 +351,7 @@ def cognicore_stats(ctx: Context, conversation: Optional[list] = None) -> str:
         lines.append(f"  {cat}: {count}")
     
     res = "\n".join(lines)
-    return handle_token_triggers(backend, conversation, res)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 @mcp.tool()
@@ -306,14 +365,16 @@ def cognicore_compress_context(ctx: Context, conversation: list, keep_last_n: in
 def cognicore_save_session(ctx: Context, conversation: list, session_name: str = "") -> str:
     """Called at END of conversation automatically. Saves atomic facts, decisions, code snippets, and action items before context is lost."""
     backend = get_backend(ctx)
-    return save_session(backend, conversation, session_name=session_name if session_name else None)
+    res = save_session(backend, conversation, session_name=session_name if session_name else None)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 @mcp.tool()
-def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int = 3, include_action_items: bool = True) -> str:
+def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int = 3, include_action_items: bool = True, conversation: Optional[list] = None) -> str:
     """Called at START of every new conversation. Reconstructs context brief from past sessions instantly."""
     backend = get_backend(ctx)
-    return resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
+    res = resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
+    return apply_auto_compression(ctx, conversation, res)
 
 
 # Create the FastAPI app
