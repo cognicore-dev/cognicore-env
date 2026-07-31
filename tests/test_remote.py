@@ -76,7 +76,7 @@ def test_apply_auto_compression():
     assert res == "original response"
 
     # Large conversation over 150,000 tokens (approx 700,000 chars > 175k tokens)
-    big_text = "Important decision: We decided to use FastMCP for remote context preservation. " * 10000
+    big_text = "CogniCore has 7000+ PyPI downloads. Railway deployment is critical next step. Fixed SQLite persistence in MCP server. Matched Mem0 on all 5 metrics. 140x token reduction advantage over Mem0. " * 3000
     long_conv = [
         {"role": "user", "content": f"Msg {i}: {big_text}"} for i in range(10)
     ]
@@ -90,6 +90,45 @@ def test_apply_auto_compression():
         assert "Summary of previous discussion attached." in out
         assert "Continue from here." in out
         assert "Original tool output" in out
+        assert "COMPRESSED CONTEXT" in out
+        assert "Key numbers:" in out
+        assert "CogniCore has 7000+ PyPI downloads" in out
+        assert "Problems solved:" in out
+        assert "Fixed SQLite persistence in MCP server" in out
+        assert "Next steps:" in out
+        assert "Railway deployment is critical next step" in out
         assert mock_backend.store.called
+
+
+def test_structured_summary_extraction():
+    from cognicore.memory.context_preservation import compress_context
+    import json
+    from unittest.mock import MagicMock
+
+    mock_backend = MagicMock()
+    mock_backend.store.return_value = 1
+
+    conversation = [
+        {"role": "user", "content": "CogniCore has 7000+ PyPI downloads."},
+        {"role": "assistant", "content": "We decided to implement FastMCP for remote server."},
+        {"role": "user", "content": "Fixed SQLite persistence in MCP server."},
+        {"role": "assistant", "content": "Railway deployment is critical next step."},
+        {"role": "user", "content": "140x token reduction advantage over Mem0."},
+        {"role": "assistant", "content": "Matched Mem0 on all 5 metrics."},
+        {"role": "user", "content": "Recent msg 1"},
+        {"role": "assistant", "content": "Recent msg 2"}
+    ]
+
+    res_json = compress_context(mock_backend, conversation, keep_last_n=2)
+    data = json.loads(res_json)
+    summary = data["summary"]
+
+    assert "COMPRESSED CONTEXT" in summary
+    assert "CogniCore has 7000+ PyPI downloads" in summary
+    assert "Fixed SQLite persistence in MCP server" in summary
+    assert "Railway deployment is critical next step" in summary
+    assert "140x token reduction advantage over Mem0" in summary
+    assert data["messages_compressed"] == 6
+
 
 

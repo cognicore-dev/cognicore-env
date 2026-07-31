@@ -94,6 +94,27 @@ def _normalize_sentence(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
+def _clean_statement(s: str) -> str:
+    """Clean bullet markers and whitespace from sentence while keeping full content."""
+    cleaned = re.sub(r'^(?:[-*•]|\d+\.)\s*', '', s.strip())
+    return cleaned.strip()
+
+
+def _is_meaningful_statement(s: str) -> bool:
+    """Check if statement is self-contained and meaningful (>12 chars and at least 2 words)."""
+    cleaned = _clean_statement(s)
+    words = cleaned.split()
+    if len(cleaned) < 12 or len(words) < 2:
+        return False
+    vague_fragments = {
+        "good fix", "critical next step", "critical step", "next step",
+        "todo item", "small fix", "bug fix", "good progress"
+    }
+    if cleaned.lower() in vague_fragments:
+        return False
+    return True
+
+
 def compress_context(
     backend: Any,
     conversation: List[Dict[str, Any]],
@@ -101,7 +122,7 @@ def compress_context(
 ) -> str:
     """
     TOOL 1: cognicore_compress_context
-    Compress older messages into a dense summary without LLM calls and store in SQLite.
+    Compress older messages into a dense, structured summary without LLM calls and store in SQLite.
     """
     if not conversation or not isinstance(conversation, list):
         res = {
@@ -125,8 +146,15 @@ def compress_context(
         recent_messages = []
 
     messages_compressed = len(older_messages)
-    preserved_sentences = []
+
+    project_status = ""
+    key_numbers = []
+    decisions = []
+    problems_solved = []
+    next_steps = []
+    ideas_discussed = []
     code_blocks = []
+
     seen_normalized = set()
 
     for msg in older_messages:
@@ -146,35 +174,104 @@ def compress_context(
         sentences = _extract_sentences(text_without_code)
 
         for sent in sentences:
-            norm = _normalize_sentence(sent)
-            if not norm or norm in seen_normalized:
+            cleaned = _clean_statement(sent)
+            norm = _normalize_sentence(cleaned)
+            if not norm or norm in seen_normalized or not _is_meaningful_statement(sent):
                 continue
 
-            # Check if sentence contains keywords, numbers/percentages, or bullet points
-            sent_lower = sent.lower()
-            has_keyword = any(kw in sent_lower for kw in COMPRESSION_KEYWORDS)
-            has_number_fact = bool(re.search(r'\b\d+(\.\d+)?%?\b', sent))
-            is_bullet = sent.startswith(("- ", "* ", "• ", "1. ", "2. ", "3. ", "TODO", "NEXT"))
+            sl = cleaned.lower()
 
-            if has_keyword or has_number_fact or is_bullet:
-                preserved_sentences.append(sent)
+            # 1. Key numbers / metrics
+            is_number_fact = bool(re.search(
+                r'\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%|\+|\b|k|m|x|ms|sec|seconds|downloads|metrics|users|tests|tokens|percent|ratio)', sl
+            ))
+            has_num_kw = any(w in sl for w in ["download", "metric", "percent", "ratio", "benchmark", "token reduction", "metrics", "downloads", "speed", "total count"])
+            
+            # 2. Decisions made
+            is_decision = any(w in sl for w in ["decid", "agreed", "chose", "opted", "selected", "will use", "architecture", "design choice", "settled on", "going with", "determined"])
+            
+            # 3. Problems solved
+            is_problem_solved = any(w in sl for w in ["fixed", "solv", "resolv", "bugfix", "repaired", "patched", "fix for", "solution", "working now", "corrected"])
+            
+            # 4. Next steps
+            is_next_step = any(w in sl for w in ["next step", "todo", "action item", "will implement", "plan to", "need to", "must do", "critical next", "deploy", "upcoming", "priority"])
+            
+            # 5. Ideas discussed
+            is_idea = any(w in sl for w in ["proposal", "propose", "suggest", "idea", "concept", "discuss", "feature", "potential", "strategy", "explore"])
+
+            # 6. Project status detection
+            if not project_status and any(w in sl for w in ["project", "status", "building", "working on", "goal is", "cognicore", "mcp server", "system"]):
+                project_status = cleaned
+
+            added = False
+            if is_number_fact or has_num_kw:
+                key_numbers.append(cleaned)
+                added = True
+            if is_decision:
+                decisions.append(cleaned)
+                added = True
+            if is_problem_solved:
+                problems_solved.append(cleaned)
+                added = True
+            if is_next_step:
+                next_steps.append(cleaned)
+                added = True
+            if is_idea and not added:
+                ideas_discussed.append(cleaned)
+                added = True
+
+            if added:
                 seen_normalized.add(norm)
 
-    # Fallback if compression was too aggressive
-    if not preserved_sentences and older_messages:
-        for msg in older_messages[:3]:
+    if not project_status:
+        for msg in older_messages:
             content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
-            sents = _extract_sentences(str(content))
-            if sents:
-                preserved_sentences.append(sents[0])
+            if isinstance(content, str) and content.strip():
+                sents = _extract_sentences(content)
+                if sents:
+                    project_status = _clean_statement(sents[0])
+                    break
+    if not project_status:
+        project_status = "Active development on CogniCore MCP server and memory systems."
 
-    summary_parts = []
-    if preserved_sentences:
-        summary_parts.append("Key points:\n- " + "\n- ".join(preserved_sentences[:20]))
-    if code_blocks:
-        summary_parts.append("Code artifacts preserved:\n" + "\n\n".join(code_blocks[:3]))
+    def _build_summary(t_after_estimate: int) -> str:
+        lines = [f"COMPRESSED CONTEXT ({messages_compressed} messages → {t_after_estimate} tokens):\n"]
+        lines.append(f"Project status: {project_status}")
 
-    summary_text = "\n\n".join(summary_parts) if summary_parts else "Compressed session context."
+        if key_numbers:
+            lines.append("\nKey numbers:")
+            for kn in key_numbers[:10]:
+                lines.append(f"- {kn}")
+
+        if decisions:
+            lines.append("\nDecisions made:")
+            for d in decisions[:10]:
+                lines.append(f"- {d}")
+
+        if problems_solved:
+            lines.append("\nProblems solved:")
+            for ps in problems_solved[:10]:
+                lines.append(f"- {ps}")
+
+        if next_steps:
+            lines.append("\nNext steps:")
+            for ns in next_steps[:10]:
+                lines.append(f"- {ns}")
+
+        if ideas_discussed:
+            lines.append("\nIdeas discussed:")
+            for id_item in ideas_discussed[:10]:
+                lines.append(f"- {id_item}")
+
+        if code_blocks:
+            lines.append("\nCode artifacts preserved:\n" + "\n\n".join(code_blocks[:3]))
+
+        return "\n".join(lines)
+
+    initial_draft = _build_summary(0)
+    tokens_after = TokenBudget.estimate_tokens([{"content": initial_draft}] + recent_messages)
+    summary_text = _build_summary(tokens_after)
+    tokens_after = TokenBudget.estimate_tokens([{"content": summary_text}] + recent_messages)
 
     # Store summary in CogniCore memory
     entry = MemoryEntry(
@@ -185,7 +282,6 @@ def compress_context(
     )
     stored_id = backend.store(entry)
 
-    tokens_after = TokenBudget.estimate_tokens([{"content": summary_text}] + recent_messages)
     ratio_val = max(1, round(tokens_before / max(1, tokens_after)))
 
     result = {
@@ -197,6 +293,7 @@ def compress_context(
         "stored_memory_id": stored_id
     }
     return json.dumps(result, indent=2)
+
 
 
 def save_session(
