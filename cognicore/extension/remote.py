@@ -289,10 +289,10 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
 
 
 @mcp.tool()
-def cognicore_forget(entry_id: str, ctx: Context, conversation: Optional[list] = None) -> str:
+def cognicore_forget(entry_id: Any, ctx: Context, conversation: Optional[list] = None) -> str:
     """Delete a memory by ID."""
     backend = get_backend(ctx)
-    success = backend.delete(entry_id)
+    success = backend.delete(str(entry_id))
     res = "OK" if success else "Not found"
     return apply_auto_compression(ctx, conversation, res)
 

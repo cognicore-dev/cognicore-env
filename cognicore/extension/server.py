@@ -184,12 +184,12 @@ def create_extension_server() -> "FastMCP":
             return f"Error: {e}"
 
     @mcp.tool()
-    def cognicore_forget(entry_id: str) -> str:
+    def cognicore_forget(entry_id: Any) -> str:
         """Delete a memory by ID."""
         _ensure_backend()
         
         try:
-            success = _backend.delete(entry_id)
+            success = _backend.delete(str(entry_id))
             return "OK" if success else "Not found"
         except Exception as e:
             logger.error(f"Failed to delete memory: {e}")
