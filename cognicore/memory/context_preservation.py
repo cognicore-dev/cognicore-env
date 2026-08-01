@@ -80,13 +80,51 @@ class TokenBudget:
         return "ok"
 
 
+DAYS_MONTHS_CURRENCY_KEYWORDS = {
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "percent", "dollar", "dollars", "usd", "eur", "gbp", "yen"
+}
+
+
+def _is_key_number_line(cleaned_line: str) -> bool:
+    """Check if a line contains digits, percent, currency, or dates, and exclude questions/opinions."""
+    s_lower = cleaned_line.lower()
+
+    # Exclude questions
+    if cleaned_line.endswith("?") or s_lower.startswith(("what", "why", "how", "when", "where", "who", "is ", "are ", "can ", "could ", "should ", "would ")):
+        return False
+
+    has_digit = bool(re.search(r'\d+', cleaned_line))
+    has_percent = "%" in cleaned_line or "percent" in s_lower
+    has_currency = bool(re.search(r'[$€£¥]|usd|eur|dollar', s_lower))
+    has_date_or_keyword = any(k in s_lower for k in DAYS_MONTHS_CURRENCY_KEYWORDS)
+
+    if not (has_digit or has_percent or has_currency or has_date_or_keyword):
+        return False
+
+    # Exclude generic opinions without digits
+    generic_opinions = ["i think", "i believe", "in my opinion", "seems like", "maybe"]
+    if any(op in s_lower for op in generic_opinions) and not has_digit:
+        return False
+
+    return True
+
+
 def _extract_sentences(text: str) -> List[str]:
-    """Split text into sentences cleanly."""
+    """Split text into sentences cleanly, protecting decimal numbers."""
     if not text:
         return []
+    # Protect decimal numbers (e.g. 98.2, 98. 2) so dots aren't treated as sentence boundaries
+    protected_text = re.sub(r'(\d+)\.\s*(\d+)', r'\1__DOT__\2', text)
+    
     # Split on periods, exclamation marks, question marks followed by space/newline, or newlines
-    raw_sentences = re.split(r'(?<=[.!?])\s+|\n+', text)
-    return [s.strip() for s in raw_sentences if s.strip() and len(s.strip()) > 5]
+    raw_sentences = re.split(r'(?<=[.!?])\s+|\n+', protected_text)
+    
+    # Restore decimal points
+    restored = [s.replace("__DOT__", ".").strip() for s in raw_sentences]
+    return [s for s in restored if s and len(s) > 5]
 
 
 def _normalize_sentence(s: str) -> str:
@@ -147,6 +185,12 @@ def compress_context(
 
     messages_compressed = len(older_messages)
 
+    # Calculate input text size in characters for 40% hard limit check
+    input_text_len = sum(
+        len(m.get("content", "")) if isinstance(m, dict) else len(str(m))
+        for m in older_messages
+    )
+
     project_status = ""
     key_numbers = []
     decisions = []
@@ -181,11 +225,8 @@ def compress_context(
 
             sl = cleaned.lower()
 
-            # 1. Key numbers / metrics
-            is_number_fact = bool(re.search(
-                r'\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%|\+|\b|k|m|x|ms|sec|seconds|downloads|metrics|users|tests|tokens|percent|ratio)', sl
-            ))
-            has_num_kw = any(w in sl for w in ["download", "metric", "percent", "ratio", "benchmark", "token reduction", "metrics", "downloads", "speed", "total count"])
+            # 1. Key numbers / metrics (Strict Bug 2 rules)
+            is_number_fact = _is_key_number_line(cleaned)
             
             # 2. Decisions made
             is_decision = any(w in sl for w in ["decid", "agreed", "chose", "opted", "selected", "will use", "architecture", "design choice", "settled on", "going with", "determined"])
@@ -204,7 +245,7 @@ def compress_context(
                 project_status = cleaned
 
             added = False
-            if is_number_fact or has_num_kw:
+            if is_number_fact:
                 key_numbers.append(cleaned)
                 added = True
             if is_decision:
@@ -234,44 +275,74 @@ def compress_context(
     if not project_status:
         project_status = "Active development on CogniCore MCP server and memory systems."
 
-    def _build_summary(t_after_estimate: int) -> str:
+    def _build_summary(t_after_estimate: int, max_items: int = 10, include_all_sections: bool = True) -> str:
         lines = [f"COMPRESSED CONTEXT ({messages_compressed} messages → {t_after_estimate} tokens):\n"]
         lines.append(f"Project status: {project_status}")
 
-        if key_numbers:
-            lines.append("\nKey numbers:")
-            for kn in key_numbers[:10]:
-                lines.append(f"- {kn}")
+        if include_all_sections:
+            if key_numbers:
+                lines.append("\nKey numbers:")
+                for kn in key_numbers[:max_items]:
+                    lines.append(f"- {kn}")
 
-        if decisions:
-            lines.append("\nDecisions made:")
-            for d in decisions[:10]:
-                lines.append(f"- {d}")
+            if decisions:
+                lines.append("\nDecisions made:")
+                for d in decisions[:max_items]:
+                    lines.append(f"- {d}")
 
-        if problems_solved:
-            lines.append("\nProblems solved:")
-            for ps in problems_solved[:10]:
-                lines.append(f"- {ps}")
+            if problems_solved:
+                lines.append("\nProblems solved:")
+                for ps in problems_solved[:max_items]:
+                    lines.append(f"- {ps}")
 
-        if next_steps:
-            lines.append("\nNext steps:")
-            for ns in next_steps[:10]:
-                lines.append(f"- {ns}")
+            if next_steps:
+                lines.append("\nNext steps:")
+                for ns in next_steps[:max_items]:
+                    lines.append(f"- {ns}")
 
-        if ideas_discussed:
-            lines.append("\nIdeas discussed:")
-            for id_item in ideas_discussed[:10]:
-                lines.append(f"- {id_item}")
+            if ideas_discussed:
+                lines.append("\nIdeas discussed:")
+                for id_item in ideas_discussed[:max_items]:
+                    lines.append(f"- {id_item}")
+        else:
+            # Minimal summary: Project status + Next steps only
+            if next_steps:
+                lines.append("\nNext steps:")
+                for ns in next_steps[:max_items]:
+                    lines.append(f"- {ns}")
 
-        if code_blocks:
-            lines.append("\nCode artifacts preserved:\n" + "\n\n".join(code_blocks[:3]))
+        if code_blocks and include_all_sections:
+            lines.append("\nCode artifacts preserved:\n" + "\n\n".join(code_blocks[:2]))
 
         return "\n".join(lines)
 
-    initial_draft = _build_summary(0)
-    tokens_after = TokenBudget.estimate_tokens([{"content": initial_draft}] + recent_messages)
-    summary_text = _build_summary(tokens_after)
+    # Initial draft
+    initial_draft = _build_summary(0, max_items=10, include_all_sections=True)
+
+    # BUG 1 Check & Enforce Hard Limit: MAX 40% of input size
+    # For large conversations, enforce 40% limit. Set lower bound to 500 to allow complete structured headers.
+    max_allowed_len = max(500, int(input_text_len * 0.4)) if input_text_len > 0 else len(initial_draft)
+
+    summary_text = initial_draft
+    if len(summary_text) > max_allowed_len:
+        # Step 1: Reduce item count per section
+        for items_limit in [5, 3, 2, 1]:
+            candidate = _build_summary(0, max_items=items_limit, include_all_sections=True)
+            if len(candidate) <= max_allowed_len:
+                summary_text = candidate
+                break
+        else:
+            # Step 2: Keep ONLY Project status + Next steps
+            candidate_minimal = _build_summary(0, max_items=3, include_all_sections=False)
+            if len(candidate_minimal) <= max_allowed_len:
+                summary_text = candidate_minimal
+            else:
+                candidate_one = _build_summary(0, max_items=1, include_all_sections=False)
+                summary_text = candidate_one if len(candidate_one) <= max_allowed_len else candidate_one[:max_allowed_len]
+
     tokens_after = TokenBudget.estimate_tokens([{"content": summary_text}] + recent_messages)
+    # Re-inject accurate tokens_after count into final header
+    summary_text = summary_text.replace("→ 0 tokens", f"→ {tokens_after} tokens")
 
     # Store summary in CogniCore memory
     entry = MemoryEntry(

@@ -131,4 +131,53 @@ def test_structured_summary_extraction():
     assert data["messages_compressed"] == 6
 
 
+def test_bug1_summary_length_hard_limit():
+    from cognicore.memory.context_preservation import compress_context
+    import json
+    from unittest.mock import MagicMock
+
+    mock_backend = MagicMock()
+    mock_backend.store.return_value = 1
+
+    msg = "CogniCore version 2.0 release candidate is under active testing with 7000 users. " * 50
+    input_len = len(msg)
+    conversation = [
+        {"role": "user", "content": msg},
+        {"role": "assistant", "content": "Recent message 1"},
+        {"role": "user", "content": "Recent message 2"}
+    ]
+
+    res_json = compress_context(mock_backend, conversation, keep_last_n=2)
+    data = json.loads(res_json)
+    summary = data["summary"]
+
+    assert len(summary) <= max(50, int(input_len * 0.4))
+
+
+def test_bug2_key_numbers_decimal_and_filtering():
+    from cognicore.memory.context_preservation import compress_context
+    import json
+    from unittest.mock import MagicMock
+
+    mock_backend = MagicMock()
+    mock_backend.store.return_value = 1
+
+    conversation = [
+        {"role": "user", "content": "Accuracy reached 98.2 percent on benchmark."},
+        {"role": "user", "content": "What is the total download count?"},
+        {"role": "user", "content": "I think numbers are cool."},
+        {"role": "assistant", "content": "Recent msg 1"}
+    ]
+
+    res_json = compress_context(mock_backend, conversation, keep_last_n=1)
+    data = json.loads(res_json)
+    summary = data["summary"]
+
+    assert "98.2 percent" in summary
+    assert "98." not in summary.replace("98.2", "")
+    assert "What is the total download count?" not in summary
+    assert "I think numbers are cool" not in summary
+
+
+
 
