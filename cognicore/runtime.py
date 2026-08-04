@@ -475,3 +475,76 @@ class CogniCoreRuntime:
         self.stats = RuntimeStats()
         self._categories.clear()
         self._execution_log.clear()
+
+    # ------------------------------------------------------------------
+    # Memory Sharing — Direct inter-agent transfer
+    # ------------------------------------------------------------------
+
+    def share_memories(
+        self,
+        target: "CogniCoreRuntime",
+        category: str = "",
+        memory_type: str = "all",
+        min_confidence: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Share this runtime's memories with another runtime.
+        
+        Directly transfers knowledge between two CogniCoreRuntime instances
+        running in the same process. No marketplace or API calls needed.
+        
+        Args:
+            target: The CogniCoreRuntime to share memories WITH.
+            category: Only share this category (empty = all).
+            memory_type: Filter: 'episodic', 'semantic', 'procedural', or 'all'.
+            min_confidence: Minimum confidence threshold.
+            
+        Returns:
+            Dict with transfer results.
+            
+        Example:
+            >>> agent_a = CogniCoreRuntime(name="veteran")
+            >>> agent_b = CogniCoreRuntime(name="rookie")
+            >>> # After agent_a has accumulated experience...
+            >>> result = agent_a.share_memories(agent_b)
+            >>> print(f"Shared {result['transferred']} memories")
+        """
+        from cognicore.commerce.transfer import MemoryTransfer
+        return MemoryTransfer.share(
+            source_backend=self.backend,
+            target_backend=target.backend,
+            source_agent_id=self.name,
+            category=category,
+            memory_type=memory_type,
+            min_confidence=min_confidence,
+        )
+
+    def receive_memories(
+        self,
+        source: "CogniCoreRuntime",
+        category: str = "",
+        memory_type: str = "all",
+        min_confidence: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Receive memories from another runtime.
+        
+        Inverse of share_memories — pull knowledge from a source agent.
+        
+        Args:
+            source: The CogniCoreRuntime to receive memories FROM.
+            category: Only receive this category (empty = all).
+            memory_type: Filter: 'episodic', 'semantic', 'procedural', or 'all'.
+            min_confidence: Minimum confidence threshold.
+            
+        Returns:
+            Dict with transfer results.
+            
+        Example:
+            >>> rookie.receive_memories(veteran, category="django")
+        """
+        return source.share_memories(
+            self,
+            category=category,
+            memory_type=memory_type,
+            min_confidence=min_confidence,
+        )
+

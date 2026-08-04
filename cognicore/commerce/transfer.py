@@ -7,7 +7,136 @@ from cognicore.memory.base import MemoryEntry, MemoryScope
 logger = logging.getLogger('cognicore.commerce.transfer')
 
 class MemoryTransfer:
-    """Utility class for Memory Commerce operations."""
+    """Utility class for Memory Commerce and direct memory sharing.
+    
+    Two modes of operation:
+    
+    1. DIRECT SHARING (no marketplace needed):
+       MemoryTransfer.share(agent_a_backend, agent_b_backend)
+       MemoryTransfer.clone(source_backend, target_backend)
+       
+    2. MARKETPLACE (pricing, reputation, discovery):
+       MemoryTransfer.list_for_sale(...)
+       MemoryTransfer.purchase(...)
+       MemoryTransfer.value_memories(...)
+    """
+
+    @staticmethod
+    def share(
+        source_backend: Any,
+        target_backend: Any,
+        source_agent_id: str = "source",
+        category: str = "",
+        memory_type: str = "all",
+        min_confidence: float = 0.0,
+        top_k: int = 10000,
+        merge_strategy: str = "copy",
+    ) -> Dict[str, Any]:
+        """Share memories directly between two backends in Python code.
+        
+        This is the simplest way to transfer knowledge between agents.
+        No marketplace, no pricing, no registration needed.
+        
+        Args:
+            source_backend: The backend to copy memories FROM.
+            target_backend: The backend to copy memories INTO.
+            source_agent_id: ID to tag as source_agent on copied memories.
+            category: Only share memories in this category (empty = all).
+            memory_type: Filter by type: 'episodic', 'semantic', 'procedural', or 'all'.
+            min_confidence: Minimum confidence threshold (0.0 = share everything).
+            top_k: Maximum number of memories to transfer.
+            merge_strategy: 'copy' (duplicate into target) or 'move' (copy + delete from source).
+            
+        Returns:
+            Dict with transferred count, categories, and summary.
+            
+        Example:
+            >>> from cognicore.commerce.transfer import MemoryTransfer
+            >>> result = MemoryTransfer.share(agent_a.backend, agent_b.backend)
+            >>> print(f"Transferred {result['transferred']} memories")
+        """
+        results = source_backend.search(query='', top_k=top_k, scope=None)
+        entries = [r.entry for r in results]
+        
+        # Apply filters
+        filtered = []
+        for entry in entries:
+            if entry.confidence < min_confidence:
+                continue
+            if category and entry.category != category:
+                continue
+            if memory_type != 'all' and entry.memory_type != memory_type:
+                continue
+            filtered.append(entry)
+        
+        # Transfer
+        transferred = []
+        categories_transferred = set()
+        types_transferred = set()
+        
+        for entry in filtered:
+            new_entry = MemoryEntry(
+                text=entry.text,
+                category=entry.category,
+                memory_type=entry.memory_type,
+                confidence=entry.confidence,
+                action=entry.action,
+                metadata=entry.metadata.copy() if entry.metadata else {},
+                source_agent=source_agent_id,
+                creation_reason="shared",
+                scope=entry.scope,
+                scope_id=entry.scope_id,
+            )
+            new_id = target_backend.store(new_entry)
+            transferred.append(new_id)
+            categories_transferred.add(entry.category)
+            types_transferred.add(entry.memory_type)
+            
+            if merge_strategy == "move" and hasattr(source_backend, 'delete'):
+                source_backend.delete(entry.entry_id)
+        
+        logger.info(f"Shared {len(transferred)} memories from {source_agent_id} → target")
+        
+        return {
+            "transferred": len(transferred),
+            "categories": sorted(categories_transferred),
+            "memory_types": sorted(types_transferred),
+            "source_agent": source_agent_id,
+            "strategy": merge_strategy,
+            "new_entry_ids": transferred,
+        }
+
+    @staticmethod
+    def clone(
+        source_backend: Any,
+        target_backend: Any,
+        source_agent_id: str = "source",
+    ) -> Dict[str, Any]:
+        """Clone ALL memories from one backend to another.
+        
+        Convenience wrapper — shares everything with no filters.
+        Use this when deploying a new agent that should start with
+        all knowledge from an experienced agent.
+        
+        Args:
+            source_backend: The backend to clone FROM.
+            target_backend: The backend to clone INTO.
+            source_agent_id: ID to tag as source on cloned memories.
+            
+        Returns:
+            Dict with transfer results.
+            
+        Example:
+            >>> result = MemoryTransfer.clone(veteran.backend, rookie.backend, "veteran_agent")
+            >>> # rookie now has all of veteran's memories
+        """
+        return MemoryTransfer.share(
+            source_backend=source_backend,
+            target_backend=target_backend,
+            source_agent_id=source_agent_id,
+            min_confidence=0.0,
+            top_k=100000,
+        )
 
     @staticmethod
     def list_for_sale(backend: Any, agent_id: str, registry: Any, pricing_engine: Any, 
@@ -17,7 +146,7 @@ class MemoryTransfer:
         List memories available for sale from a given agent's backend.
         """
         # Search backend for all memories
-        results = backend.search(query='', top_k=10000, scope=MemoryScope.USER)
+        results = backend.search(query='', top_k=10000, scope=None)
         entries = [r.entry for r in results]
         
         filtered = []
@@ -79,7 +208,7 @@ class MemoryTransfer:
                 if e:
                     entries.append(e)
         else:
-            results = seller_backend.search(query='', top_k=10000, scope=MemoryScope.USER)
+            results = seller_backend.search(query='', top_k=10000, scope=None)
             entries = [r.entry for r in results]
             
         # Step 2: Filter memories
@@ -176,7 +305,7 @@ class MemoryTransfer:
         """
         Value all memories for a given agent and return a detailed breakdown.
         """
-        results = backend.search(query='', top_k=10000, scope=MemoryScope.USER)
+        results = backend.search(query='', top_k=10000, scope=None)
         entries = [r.entry for r in results]
         
         if category:

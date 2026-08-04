@@ -160,7 +160,8 @@ class TFIDFMemoryBackend(MemoryBackend):
         question_timestamp: Optional[float] = None
     ) -> List[SearchResult]:
         """Semantic search with optional filters."""
-        query_vec = self._tfidf_vector(query)
+        is_empty_query = not query or not query.strip()
+        query_vec = self._tfidf_vector(query) if not is_empty_query else {}
         results: List[SearchResult] = []
         
         for entry in self.entries:
@@ -176,19 +177,24 @@ class TFIDFMemoryBackend(MemoryBackend):
             if category and entry.category != category:
                 continue
                 
-            entry_vec = entry.metadata.get("_tfidf_vector", {})
-            if not entry_vec:
-                # Fallback if cached vector is missing
-                entry_vec = self._tfidf_vector(f"{entry.category} {entry.text}")
-                entry.metadata["_tfidf_vector"] = entry_vec
-                
-            raw_sim = self._cosine_similarity(query_vec, entry_vec)
-            if raw_sim >= self.similarity_threshold:
-                # Score combines semantic similarity with relevance (recency)
-                step_diff = self._step_count - entry.metadata.get("_inserted_at_step", self._step_count)
-                dynamic_relevance = entry.relevance * (self.decay_rate ** step_diff)
-                final_score = raw_sim * dynamic_relevance
-                results.append(SearchResult(entry=entry, score=final_score, source="semantic"))
+            step_diff = self._step_count - entry.metadata.get("_inserted_at_step", self._step_count)
+            dynamic_relevance = entry.relevance * (self.decay_rate ** step_diff)
+
+            if is_empty_query:
+                # If query is empty, just return all matching entries sorted by relevance
+                results.append(SearchResult(entry=entry, score=dynamic_relevance, source="semantic"))
+            else:
+                entry_vec = entry.metadata.get("_tfidf_vector", {})
+                if not entry_vec:
+                    # Fallback if cached vector is missing
+                    entry_vec = self._tfidf_vector(f"{entry.category} {entry.text}")
+                    entry.metadata["_tfidf_vector"] = entry_vec
+                    
+                raw_sim = self._cosine_similarity(query_vec, entry_vec)
+                if raw_sim >= self.similarity_threshold:
+                    # Score combines semantic similarity with relevance (recency)
+                    final_score = raw_sim * dynamic_relevance
+                    results.append(SearchResult(entry=entry, score=final_score, source="semantic"))
                 
         # Sort descending by score
         results.sort(key=lambda x: x.score, reverse=True)

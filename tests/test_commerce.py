@@ -540,3 +540,159 @@ class TestMarketplaceIntegration:
         for forbidden in forbidden_imports:
             assert forbidden not in marketplace_source, f"marketplace.py imports {forbidden}"
             assert forbidden not in transfer_source, f"transfer.py imports {forbidden}"
+
+
+# ═══════════════════════════════════════════════════════════
+# Direct Sharing Tests — share(), clone(), move
+# ═══════════════════════════════════════════════════════════
+
+class TestDirectSharing:
+    def test_share_all_memories(self):
+        """Share all memories between two backends."""
+        source = MockBackend()
+        target = MockBackend()
+        source.store(_make_entry("Django tip 1", "django", "semantic", 0.9))
+        source.store(_make_entry("Django tip 2", "django", "episodic", 0.8))
+        source.store(_make_entry("Python trick", "python", "procedural", 0.95))
+
+        result = MemoryTransfer.share(source, target, source_agent_id="agent_a")
+        assert result["transferred"] == 3
+        assert "django" in result["categories"]
+        assert "python" in result["categories"]
+        assert result["source_agent"] == "agent_a"
+        # Target now has all 3
+        assert len(target.search(query="", top_k=100)) == 3
+
+    def test_share_by_category(self):
+        """Only share memories in a specific category."""
+        source = MockBackend()
+        target = MockBackend()
+        source.store(_make_entry("Django tip", "django", "semantic", 0.9))
+        source.store(_make_entry("JS tip", "javascript", "semantic", 0.9))
+
+        result = MemoryTransfer.share(source, target, category="django")
+        assert result["transferred"] == 1
+        assert result["categories"] == ["django"]
+
+    def test_share_by_memory_type(self):
+        """Only share a specific memory type."""
+        source = MockBackend()
+        target = MockBackend()
+        source.store(_make_entry("Episodic 1", "general", "episodic", 0.9))
+        source.store(_make_entry("Semantic 1", "general", "semantic", 0.9))
+        source.store(_make_entry("Procedural 1", "general", "procedural", 0.9))
+
+        result = MemoryTransfer.share(source, target, memory_type="procedural")
+        assert result["transferred"] == 1
+        assert result["memory_types"] == ["procedural"]
+
+    def test_share_with_confidence_filter(self):
+        """Only share high-confidence memories."""
+        source = MockBackend()
+        target = MockBackend()
+        source.store(_make_entry("High conf", "general", "semantic", 0.95))
+        source.store(_make_entry("Low conf", "general", "semantic", 0.3))
+
+        result = MemoryTransfer.share(source, target, min_confidence=0.7)
+        assert result["transferred"] == 1
+
+    def test_share_move_strategy(self):
+        """Move strategy: copy + delete from source."""
+        source = MockBackend()
+        target = MockBackend()
+        source.store(_make_entry("Moving memory", "general", "semantic", 0.9))
+
+        result = MemoryTransfer.share(source, target, merge_strategy="move")
+        assert result["transferred"] == 1
+        assert result["strategy"] == "move"
+        # Source should be empty now
+        assert len(source.search(query="", top_k=100)) == 0
+        # Target should have it
+        assert len(target.search(query="", top_k=100)) == 1
+
+    def test_clone_copies_everything(self):
+        """Clone copies all memories with no filters."""
+        source = MockBackend()
+        target = MockBackend()
+        for i in range(10):
+            source.store(_make_entry(f"Memory {i}", "general", "semantic", 0.1 * (i + 1)))
+
+        result = MemoryTransfer.clone(source, target, source_agent_id="veteran")
+        assert result["transferred"] == 10
+        assert len(target.search(query="", top_k=100)) == 10
+
+    def test_share_tags_source_agent(self):
+        """Shared memories are tagged with source_agent."""
+        source = MockBackend()
+        target = MockBackend()
+        source.store(_make_entry("Tagged memory", "general", "semantic", 0.9))
+
+        MemoryTransfer.share(source, target, source_agent_id="expert_agent")
+        # Check that stored entry has source_agent set
+        target_results = target.search(query="", top_k=1)
+        assert target_results[0].entry.source_agent == "expert_agent"
+        assert target_results[0].entry.creation_reason == "shared"
+
+    def test_share_empty_source(self):
+        """Sharing from empty backend returns 0 transferred."""
+        source = MockBackend()
+        target = MockBackend()
+        result = MemoryTransfer.share(source, target)
+        assert result["transferred"] == 0
+        assert result["categories"] == []
+
+
+# ═══════════════════════════════════════════════════════════
+# CogniCoreRuntime Memory Sharing Tests
+# ═══════════════════════════════════════════════════════════
+
+class TestRuntimeSharing:
+    def test_share_memories_between_runtimes(self):
+        """Two CogniCoreRuntime instances share memories directly."""
+        from cognicore.runtime import CogniCoreRuntime, RuntimeConfig
+
+        veteran = CogniCoreRuntime(name="veteran")
+        rookie = CogniCoreRuntime(name="rookie")
+
+        # Veteran learns something
+        from cognicore.memory.base import MemoryEntry
+        veteran.backend.store(MemoryEntry(text="Always validate input before DB writes", category="django", memory_type="semantic", confidence=0.95))
+        veteran.backend.store(MemoryEntry(text="Use connection pooling for Redis", category="redis", memory_type="procedural", confidence=0.90))
+
+        # Share with rookie
+        result = veteran.share_memories(rookie)
+        assert result["transferred"] == 2
+        assert result["source_agent"] == "veteran"
+
+        # Rookie can now search for the knowledge
+        found = rookie.backend.search("validate input", top_k=5)
+        assert len(found) > 0
+
+    def test_receive_memories(self):
+        """Test the pull-based receive_memories API."""
+        from cognicore.runtime import CogniCoreRuntime
+
+        source = CogniCoreRuntime(name="source_agent")
+        target = CogniCoreRuntime(name="target_agent")
+
+        from cognicore.memory.base import MemoryEntry
+        source.backend.store(MemoryEntry(text="Critical pattern", category="patterns", memory_type="semantic", confidence=0.9))
+
+        result = target.receive_memories(source)
+        assert result["transferred"] == 1
+
+    def test_share_with_category_filter(self):
+        """Runtime sharing respects category filters."""
+        from cognicore.runtime import CogniCoreRuntime
+
+        a = CogniCoreRuntime(name="a")
+        b = CogniCoreRuntime(name="b")
+
+        from cognicore.memory.base import MemoryEntry
+        a.backend.store(MemoryEntry(text="Django tip", category="django", memory_type="semantic"))
+        a.backend.store(MemoryEntry(text="JS tip", category="javascript", memory_type="semantic"))
+
+        result = a.share_memories(b, category="django")
+        assert result["transferred"] == 1
+        assert result["categories"] == ["django"]
+
