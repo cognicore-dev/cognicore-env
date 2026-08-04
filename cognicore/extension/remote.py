@@ -174,8 +174,55 @@ from cognicore.memory.context_preservation import (
     save_session,
     resume_session,
 )
+from cognicore.commerce.marketplace import (
+    AgentRegistry,
+    TransactionLedger,
+    ReputationEngine,
+    PricingEngine,
+)
+from cognicore.commerce.transfer import MemoryTransfer
 from typing import Optional, List, Dict, Any
 import json
+
+# --- Commerce infrastructure (shared across all agents) ---
+_commerce_db_path = None
+_agent_registry = None
+_transaction_ledger = None
+_reputation_engine = None
+_pricing_engine = PricingEngine()
+
+def _get_commerce_db_path() -> str:
+    """Returns the shared commerce database path."""
+    global _commerce_db_path
+    if _commerce_db_path is None:
+        commerce_dir = Path.home() / ".cognicore" / "remote"
+        commerce_dir.mkdir(parents=True, exist_ok=True)
+        _commerce_db_path = str(commerce_dir / "commerce.db")
+    return _commerce_db_path
+
+def _get_registry() -> AgentRegistry:
+    global _agent_registry
+    if _agent_registry is None:
+        _agent_registry = AgentRegistry(_get_commerce_db_path())
+    return _agent_registry
+
+def _get_ledger() -> TransactionLedger:
+    global _transaction_ledger
+    if _transaction_ledger is None:
+        _transaction_ledger = TransactionLedger(_get_commerce_db_path())
+    return _transaction_ledger
+
+def _get_reputation() -> ReputationEngine:
+    global _reputation_engine
+    if _reputation_engine is None:
+        _reputation_engine = ReputationEngine(_get_commerce_db_path())
+    return _reputation_engine
+
+def _get_agent_id(ctx: Context) -> str:
+    """Extract a stable agent_id from the request context."""
+    user_id = get_user_id(ctx.request_context)
+    return user_id
+
 
 def apply_auto_compression(ctx: Context, conversation: Optional[list], current_response: str) -> str:
     """Check token count and automatically compress if over 150,000 tokens."""
@@ -374,6 +421,165 @@ def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int
     """Called at START of every new conversation. Reconstructs context brief from past sessions instantly."""
     backend = get_backend(ctx)
     res = resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+# ═══════════════════════════════════════════════════════════
+# MEMORY COMMERCE TOOLS — Agent Knowledge Marketplace
+# ═══════════════════════════════════════════════════════════
+
+@mcp.tool()
+def cognicore_list_for_sale(ctx: Context, category: str = "", memory_type: str = "all", min_confidence: float = 0.7, top_k: int = 20, conversation: Optional[list] = None) -> str:
+    """Lists memories available for purchase from this agent. Filter by category, memory_type (episodic/semantic/procedural/all), and min_confidence."""
+    backend = get_backend(ctx)
+    agent_id = _get_agent_id(ctx)
+    registry = _get_registry()
+
+    # Auto-register agent if not already in registry
+    if not registry.get(agent_id):
+        registry.register(agent_id, name=agent_id)
+    registry.set_for_sale(agent_id, True)
+
+    result = MemoryTransfer.list_for_sale(
+        backend=backend,
+        agent_id=agent_id,
+        registry=registry,
+        pricing_engine=_pricing_engine,
+        category=category,
+        memory_type=memory_type,
+        min_confidence=min_confidence,
+        top_k=top_k,
+    )
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_purchase_memory(ctx: Context, seller_agent_id: str, memory_type: str = "all", category_filter: str = "", max_price_usd: float = 10.0, conversation: Optional[list] = None) -> str:
+    """Purchases memories from another agent. Transfers knowledge to your memory store. Specify seller_agent_id, optional memory_type filter, category_filter, and max_price_usd budget."""
+    buyer_backend = get_backend(ctx)
+    buyer_id = _get_agent_id(ctx)
+    registry = _get_registry()
+    ledger = _get_ledger()
+
+    # Auto-register buyer if needed
+    if not registry.get(buyer_id):
+        registry.register(buyer_id, name=buyer_id)
+
+    # Resolve seller's backend
+    seller_info = registry.get(seller_agent_id)
+    if not seller_info:
+        return json.dumps({"error": f"Seller '{seller_agent_id}' not found in marketplace registry."})
+
+    seller_db_path = get_db_path_for_user(seller_agent_id)
+    from cognicore.memory import SQLiteMemoryBackend
+    seller_backend = SQLiteMemoryBackend(seller_db_path, provider=_get_shared_provider())
+
+    result = MemoryTransfer.purchase(
+        seller_backend=seller_backend,
+        buyer_backend=buyer_backend,
+        seller_id=seller_agent_id,
+        buyer_id=buyer_id,
+        registry=registry,
+        ledger=ledger,
+        pricing_engine=_pricing_engine,
+        memory_type=memory_type,
+        category_filter=category_filter,
+        max_price_usd=max_price_usd,
+    )
+
+    # Update reputation after transaction
+    _get_reputation().update(seller_agent_id)
+
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_value_my_memory(ctx: Context, category: str = "", conversation: Optional[list] = None) -> str:
+    """Estimates how much your accumulated memories are worth in the marketplace. Breaks down value by memory type (episodic, semantic, procedural)."""
+    backend = get_backend(ctx)
+    agent_id = _get_agent_id(ctx)
+    registry = _get_registry()
+
+    # Auto-register
+    if not registry.get(agent_id):
+        registry.register(agent_id, name=agent_id)
+
+    result = MemoryTransfer.value_memories(
+        backend=backend,
+        agent_id=agent_id,
+        registry=registry,
+        pricing_engine=_pricing_engine,
+        category=category,
+    )
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_reputation(ctx: Context, agent_id: str = "", conversation: Optional[list] = None) -> str:
+    """Gets reputation score and breakdown for an agent. Built on transaction history — cannot be faked. Leave agent_id empty to check your own reputation."""
+    if not agent_id:
+        agent_id = _get_agent_id(ctx)
+
+    registry = _get_registry()
+    reputation = _get_reputation()
+
+    # Auto-register
+    if not registry.get(agent_id):
+        registry.register(agent_id, name=agent_id)
+
+    rep_data = reputation.get(agent_id)
+    agent_info = registry.get(agent_id)
+
+    result = {
+        "agent_id": agent_id,
+        "reputation_score": rep_data.get("score", 0.5),
+        "total_transactions": rep_data.get("total_transactions", 0),
+        "breakdown": rep_data.get("breakdown", {}),
+        "categories": json.loads(agent_info.get("categories", "[]")) if agent_info else [],
+        "for_sale": bool(agent_info.get("for_sale", False)) if agent_info else False,
+        "registered_at": agent_info.get("registered_at", "") if agent_info else "",
+    }
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_discover_sellers(ctx: Context, query: str = "", category: str = "", min_reputation: float = 0.7, max_price_usd: float = 100.0, memory_type: str = "all", conversation: Optional[list] = None) -> str:
+    """Finds agents selling memories relevant to your query. This is the marketplace discovery layer. Search by query, category, min_reputation, and budget."""
+    registry = _get_registry()
+
+    sellers = registry.search_sellers(
+        query=query,
+        min_reputation=min_reputation,
+        category=category,
+        top_k=10,
+    )
+
+    seller_list = []
+    for s in sellers:
+        agent_id = s["agent_id"]
+        cats = json.loads(s.get("categories", "[]")) if isinstance(s.get("categories"), str) else s.get("categories", [])
+        seller_list.append({
+            "agent_id": agent_id,
+            "reputation": s.get("reputation_score", 0.5),
+            "total_memories": s.get("total_memories", 0),
+            "categories": cats,
+            "name": s.get("name", agent_id),
+            "description": s.get("description", ""),
+        })
+
+    recommended = seller_list[0]["agent_id"] if seller_list else None
+
+    result = {
+        "query": query,
+        "sellers": seller_list,
+        "total_sellers": len(seller_list),
+        "recommended": recommended,
+    }
+    res = json.dumps(result, indent=2)
     return apply_auto_compression(ctx, conversation, res)
 
 
