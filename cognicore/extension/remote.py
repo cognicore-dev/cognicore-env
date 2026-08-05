@@ -583,6 +583,99 @@ def cognicore_discover_sellers(ctx: Context, query: str = "", category: str = ""
     return apply_auto_compression(ctx, conversation, res)
 
 
+# --- ElevenLabs Integration ---
+from cognicore.integrations.elevenlabs import ElevenLabsIntegration
+
+@mcp.tool()
+def cognicore_elevenlabs_sync(
+    ctx: Context,
+    voice_id: str,
+    voice_name: str = "",
+    stability: float = 0.75,
+    similarity_boost: float = 0.85,
+    style_exaggeration: float = 0.0,
+    speed: float = 1.0,
+    content_type: str = "",
+    audience: str = "",
+    tone: str = "",
+    language: str = "en",
+    model_id: str = "eleven_multilingual_v2",
+    custom_pronunciations: str = "",
+    conversation: Optional[list] = None,
+) -> str:
+    """Store ElevenLabs voice preferences, settings, and usage context.
+    Call this when the user specifies voice preferences, or after generating audio.
+    Stores voice_id, stability, similarity_boost, speed, content_type, audience, tone.
+    Also stores custom pronunciation overrides as a JSON dict string.
+    """
+    backend = get_backend(ctx)
+    el = ElevenLabsIntegration(backend)
+
+    # Sync voice preferences (Tier 1)
+    result = el.sync(
+        voice_id=voice_id,
+        voice_name=voice_name,
+        stability=stability,
+        similarity_boost=similarity_boost,
+        style_exaggeration=style_exaggeration,
+        speed=speed,
+        content_type=content_type,
+        audience=audience,
+        tone=tone,
+        language=language,
+        model_id=model_id,
+    )
+
+    # Store pronunciations if provided (Tier 2)
+    if custom_pronunciations:
+        try:
+            prons = json.loads(custom_pronunciations)
+            if isinstance(prons, dict) and prons:
+                el.log_usage(
+                    voice_used=voice_name or voice_id,
+                    content_type=content_type,
+                    success=True,
+                    custom_pronunciations=prons,
+                )
+                result["custom_pronunciations_stored"] = len(prons)
+        except json.JSONDecodeError:
+            result["pronunciation_warning"] = "custom_pronunciations must be valid JSON dict"
+
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_elevenlabs_recall(
+    ctx: Context,
+    include_usage: bool = True,
+    include_advanced: bool = False,
+    conversation: Optional[list] = None,
+) -> str:
+    """Retrieve stored ElevenLabs preferences as ready-to-use API parameters.
+    Call this before generating any ElevenLabs audio.
+    Returns voice_id, voice_settings (stability, similarity_boost, style, speed),
+    model_id, content_context (type, audience, tone), and optionally usage patterns.
+    The returned voice_settings can be passed directly to the ElevenLabs API.
+    """
+    backend = get_backend(ctx)
+    el = ElevenLabsIntegration(backend)
+
+    if include_usage and include_advanced:
+        result = el.recall_all()
+    elif include_usage:
+        result = el.recall()
+        result["usage_patterns"] = el.recall_usage()
+    else:
+        result = el.recall()
+
+    if include_advanced and not include_usage:
+        result["advanced"] = el.recall_advanced()
+
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
 # Create the FastAPI app
 app = FastAPI(title="CogniCore Remote MCP Server")
 

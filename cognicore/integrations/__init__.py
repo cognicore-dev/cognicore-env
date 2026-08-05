@@ -8,6 +8,7 @@ Integrations:
   - Linear: ticket assignment triggers
   - Scheduler: cron-based recurring tasks
   - PR Reviewer: memory-backed code review
+  - ElevenLabs: persistent voice preference memory layer
 
 Usage:
   cognicore integrations setup    # Interactive setup
@@ -16,7 +17,9 @@ Usage:
   cognicore webhooks start        # Start webhook server
 """
 from cognicore.integrations.task_queue import NexusTask, NexusTaskQueue, TaskSource, TaskPriority
+from cognicore.integrations.elevenlabs import ElevenLabsIntegration
 
 __all__ = [
     "NexusTask", "NexusTaskQueue", "TaskSource", "TaskPriority",
+    "ElevenLabsIntegration",
 ]
