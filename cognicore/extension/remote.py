@@ -676,6 +676,94 @@ def cognicore_elevenlabs_recall(
     return apply_auto_compression(ctx, conversation, res)
 
 
+@mcp.tool()
+def cognicore_elevenlabs_learn(
+    ctx: Context,
+    voice_id: str,
+    voice_name: str = "",
+    stability: float = 0.75,
+    similarity_boost: float = 0.85,
+    speed: float = 1.0,
+    content_type: str = "",
+    content_text: str = "",
+    audio_length_sec: float = 0.0,
+    conversation: Optional[list] = None,
+) -> str:
+    """Record an ElevenLabs generation so CogniCore learns from it over time.
+    Call this after every audio generation. Returns a generation_id to use
+    with cognicore_elevenlabs_feedback when audience feedback comes in.
+    Over time, this powers cognicore_elevenlabs_recommend to automatically
+    pick the best voice and settings.
+    """
+    backend = get_backend(ctx)
+    el = ElevenLabsIntegration(backend)
+    gen_id = el.learn_from_generation(
+        voice_id=voice_id,
+        voice_name=voice_name,
+        stability=stability,
+        similarity_boost=similarity_boost,
+        speed=speed,
+        content_type=content_type,
+        content_text=content_text,
+        audio_length_sec=audio_length_sec,
+    )
+    result = {"status": "success", "generation_id": gen_id, "message": f"Generation recorded. Pass '{gen_id}' to cognicore_elevenlabs_feedback when you get audience feedback."}
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_elevenlabs_feedback(
+    ctx: Context,
+    generation_id: str,
+    rating: float = 0.0,
+    engagement_percent: float = 0.0,
+    audience_feedback: str = "",
+    conversation: Optional[list] = None,
+) -> str:
+    """Record feedback for a previous ElevenLabs generation.
+    This is how CogniCore learns what works. Pass the generation_id from
+    cognicore_elevenlabs_learn, plus a rating (1-5), engagement percentage,
+    and any audience feedback text. The more feedback you provide, the better
+    cognicore_elevenlabs_recommend becomes.
+    """
+    backend = get_backend(ctx)
+    el = ElevenLabsIntegration(backend)
+    result = el.record_feedback(
+        generation_id=generation_id,
+        rating=rating,
+        engagement_percent=engagement_percent,
+        audience_feedback=audience_feedback,
+    )
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_elevenlabs_recommend(
+    ctx: Context,
+    content_type: str = "",
+    voice_id: str = "",
+    include_profile: bool = True,
+    conversation: Optional[list] = None,
+) -> str:
+    """Get AI-powered recommendations for the best ElevenLabs voice and settings.
+    Analyzes all past generation outcomes and feedback to recommend the optimal
+    voice (recommend_voice) and settings like stability and speed (recommend_settings).
+    Optionally includes a full intelligence profile with trend analysis and insights.
+    """
+    backend = get_backend(ctx)
+    el = ElevenLabsIntegration(backend)
+    result = {
+        "voice_recommendation": el.recommend_voice(content_type=content_type),
+        "settings_recommendation": el.recommend_settings(content_type=content_type, voice_id=voice_id),
+    }
+    if include_profile:
+        result["profile"] = el.improve_profile()
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
 # Create the FastAPI app
 app = FastAPI(title="CogniCore Remote MCP Server")
 

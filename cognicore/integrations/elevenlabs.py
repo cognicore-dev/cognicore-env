@@ -1,23 +1,44 @@
 """
-CogniCore ElevenLabs Integration — Persistent memory layer for ElevenLabs API.
+CogniCore ElevenLabs Integration — Intelligence layer for ElevenLabs API.
 
-Stores voice preferences, usage patterns, and advanced settings as structured
-MemoryEntry objects. Provides recall methods that return parameters in the exact
-format the ElevenLabs API expects, so developers can do:
+Goes beyond storing settings. Learns from every generation, records audience
+feedback, and automatically recommends the best voice and settings over time.
 
-    params = integration.recall()
-    elevenlabs_client.generate(text="Hello", **params)
+Two layers:
+  Layer 1 — Storage (sync/recall): Voice preferences, usage patterns, advanced settings.
+  Layer 2 — Intelligence (learn/recommend): Learns from outcomes, recommends optimal config.
 
-Three tiers of memory:
-  - Tier 1: Voice Preferences (voice_id, stability, similarity_boost, speed, etc.)
-  - Tier 2: Usage Patterns (best voices, rejections, pronunciations)
-  - Tier 3: Advanced Features (remix, streaming, cloning, pronunciation dicts)
+Usage:
+
+    el = ElevenLabsIntegration(backend)
+
+    # After each audio generation, teach it what happened
+    gen_id = el.learn_from_generation(
+        voice_id="pNInz6obpgDQGcFmaJgB", voice_name="Adam",
+        stability=0.75, speed=0.85,
+        content_type="podcast", content_text="Episode 12 intro",
+        audio_length_sec=180.0
+    )
+
+    # When feedback comes in, record it
+    el.record_feedback(gen_id, rating=4.5, engagement_percent=72,
+                       audience_feedback="Loved the pace, voice was perfect")
+
+    # Next time — ask CogniCore what to use
+    rec = el.recommend_voice(content_type="podcast")
+    # → {"voice_id": "pNInz6obpgDQGcFmaJgB", "voice_name": "Adam",
+    #    "confidence": 0.92, "reason": "Highest rated for podcast (avg 4.5/5)"}
+
+    rec_settings = el.recommend_settings(content_type="podcast")
+    # → {"stability": 0.75, "speed": 0.85, "similarity_boost": 0.85,
+    #    "reason": "Optimal settings based on 47 generations with 4.2+ avg rating"}
 """
 
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 from cognicore.memory.base import MemoryEntry, MemoryScope
 
@@ -27,6 +48,9 @@ logger = logging.getLogger("cognicore.integrations.elevenlabs")
 CATEGORY_VOICE = "elevenlabs_voice"
 CATEGORY_USAGE = "elevenlabs_usage"
 CATEGORY_ADVANCED = "elevenlabs_advanced"
+CATEGORY_GENERATION = "elevenlabs_generation"
+CATEGORY_FEEDBACK = "elevenlabs_feedback"
+CATEGORY_PROFILE = "elevenlabs_profile"
 
 
 class ElevenLabsIntegration:
@@ -423,20 +447,502 @@ class ElevenLabsIntegration:
     # ------------------------------------------------------------------
 
     def recall_all(self) -> Dict[str, Any]:
-        """Recall all stored ElevenLabs preferences across all three tiers.
+        """Recall all stored ElevenLabs data across all tiers + intelligence.
 
         Returns:
-            Combined dict with voice_preferences, usage_patterns, and advanced.
+            Combined dict with preferences, usage, advanced, and profile.
         """
         return {
             "voice_preferences": self.recall(),
             "usage_patterns": self.recall_usage(),
             "advanced": self.recall_advanced(),
+            "intelligence": self.improve_profile(),
+        }
+
+    # ------------------------------------------------------------------
+    # Layer 2: Intelligence — Learn, Recommend, Improve
+    # ------------------------------------------------------------------
+
+    def learn_from_generation(
+        self,
+        voice_id: str,
+        voice_name: str = "",
+        stability: float = 0.75,
+        similarity_boost: float = 0.85,
+        style_exaggeration: float = 0.0,
+        speed: float = 1.0,
+        content_type: str = "",
+        content_text: str = "",
+        audio_length_sec: float = 0.0,
+        model_id: str = "eleven_multilingual_v2",
+    ) -> str:
+        """Record a generation event so CogniCore can learn from it.
+
+        Call this after every ElevenLabs generation. Over time, this builds
+        a dataset that powers recommend_voice() and recommend_settings().
+
+        Args:
+            voice_id: ElevenLabs voice ID used.
+            voice_name: Human-readable voice name.
+            stability: Stability setting used (0-1).
+            similarity_boost: Similarity boost used (0-1).
+            style_exaggeration: Style exaggeration used (0-1).
+            speed: Speed setting used.
+            content_type: Type of content (podcast, meditation, narration, etc.).
+            content_text: The text that was spoken (first 200 chars stored).
+            audio_length_sec: Duration of generated audio.
+            model_id: ElevenLabs model used.
+
+        Returns:
+            generation_id: A unique ID for this generation. Pass this to
+                          record_feedback() when feedback comes in.
+        """
+        gen_id = f"gen_{uuid.uuid4().hex[:12]}"
+        preview = content_text[:200] if content_text else ""
+
+        text = (
+            f"Generated {content_type or 'audio'} using {voice_name or voice_id} "
+            f"({audio_length_sec:.0f}s, stability={stability}, speed={speed})"
+        )
+
+        entry = MemoryEntry(
+            text=text,
+            category=CATEGORY_GENERATION,
+            memory_type="episodic",
+            confidence=1.0,
+            metadata={
+                "generation_id": gen_id,
+                "voice_id": voice_id,
+                "voice_name": voice_name,
+                "stability": stability,
+                "similarity_boost": similarity_boost,
+                "style_exaggeration": style_exaggeration,
+                "speed": speed,
+                "content_type": content_type,
+                "content_preview": preview,
+                "audio_length_sec": audio_length_sec,
+                "model_id": model_id,
+                "timestamp": time.time(),
+                # Feedback fields — filled in by record_feedback()
+                "rating": None,
+                "engagement_percent": None,
+                "audience_feedback": "",
+                "has_feedback": False,
+            },
+        )
+        self.backend.store(entry)
+        logger.info(f"Learned from generation {gen_id}: {voice_name} for {content_type}")
+        return gen_id
+
+    def record_feedback(
+        self,
+        generation_id: str,
+        rating: float = 0.0,
+        engagement_percent: float = 0.0,
+        audience_feedback: str = "",
+    ) -> Dict[str, Any]:
+        """Attach feedback to a previous generation so CogniCore can learn what works.
+
+        Args:
+            generation_id: The ID returned by learn_from_generation().
+            rating: Quality rating 1.0-5.0 (higher = better).
+            engagement_percent: Audience engagement 0-100%.
+            audience_feedback: Free-text feedback (e.g. "too fast", "perfect voice").
+
+        Returns:
+            Dict with status and updated generation details.
+        """
+        entries = self.backend.get_by_category(CATEGORY_GENERATION, top_k=500)
+        target = None
+        for entry in entries:
+            meta = entry.metadata if hasattr(entry, "metadata") else {}
+            if meta.get("generation_id") == generation_id:
+                target = entry
+                break
+
+        if not target:
+            return {"status": "error", "message": f"Generation {generation_id} not found."}
+
+        # Update the metadata
+        new_meta = dict(target.metadata)
+        new_meta["rating"] = rating
+        new_meta["engagement_percent"] = engagement_percent
+        new_meta["audience_feedback"] = audience_feedback
+        new_meta["has_feedback"] = True
+        new_meta["feedback_timestamp"] = time.time()
+
+        # Delete the old entry and insert a new one since metadata updates aren't guaranteed by backends
+        if hasattr(self.backend, "delete") and hasattr(target, "entry_id") and target.entry_id:
+            self.backend.delete(target.entry_id)
+
+        # Create new entry with same core fields but updated metadata
+        updated_entry = MemoryEntry(
+            text=target.text,
+            category=target.category,
+            memory_type=target.memory_type,
+            confidence=target.confidence,
+            metadata=new_meta,
+        )
+        self.backend.store(updated_entry)
+
+        logger.info(f"Recorded feedback for {generation_id}: {rating}/5, {engagement_percent}% engagement")
+        return {
+            "status": "success",
+            "generation_id": generation_id,
+            "rating": rating,
+            "engagement_percent": engagement_percent,
+        }
+
+    def recommend_voice(
+        self,
+        content_type: str = "",
+        top_k: int = 3,
+    ) -> Dict[str, Any]:
+        """Recommend the best voice based on learned generation outcomes.
+
+        Analyzes all past generations with feedback to find the voice that
+        consistently gets the highest ratings for the given content type.
+
+        Args:
+            content_type: Filter recommendations for this content type (optional).
+            top_k: Number of recommendations to return.
+
+        Returns:
+            Dict with top recommended voices, their scores, and reasoning.
+        """
+        generations = self._get_rated_generations(content_type)
+
+        if not generations:
+            # Fall back to stored preferences
+            prefs = self.recall()
+            if prefs.get("has_preferences"):
+                return {
+                    "recommendations": [{
+                        "voice_id": prefs["voice_id"],
+                        "voice_name": prefs["content_context"].get("voice_name", ""),
+                        "avg_rating": 0.0,
+                        "total_uses": 0,
+                        "confidence": 0.3,
+                        "reason": "Based on stored preference (no generation data yet).",
+                    }],
+                    "total_generations_analyzed": 0,
+                    "data_source": "preference",
+                }
+            return {
+                "recommendations": [],
+                "total_generations_analyzed": 0,
+                "data_source": "none",
+                "message": "No generation data or preferences found. Use learn_from_generation() to start teaching.",
+            }
+
+        # Aggregate by voice
+        voice_stats: Dict[str, Dict[str, Any]] = {}
+        for gen in generations:
+            vid = gen["voice_id"]
+            vname = gen["voice_name"]
+            key = vid or vname
+
+            if key not in voice_stats:
+                voice_stats[key] = {
+                    "voice_id": vid,
+                    "voice_name": vname,
+                    "ratings": [],
+                    "engagements": [],
+                    "total_uses": 0,
+                }
+
+            voice_stats[key]["total_uses"] += 1
+            if gen["rating"] is not None:
+                voice_stats[key]["ratings"].append(gen["rating"])
+            if gen["engagement_percent"] is not None and gen["engagement_percent"] > 0:
+                voice_stats[key]["engagements"].append(gen["engagement_percent"])
+
+        # Score each voice: weighted avg of rating (60%) + engagement (40%)
+        scored: List[Tuple[float, Dict[str, Any]]] = []
+        for key, stats in voice_stats.items():
+            avg_rating = sum(stats["ratings"]) / len(stats["ratings"]) if stats["ratings"] else 0
+            avg_engagement = sum(stats["engagements"]) / len(stats["engagements"]) if stats["engagements"] else 0
+
+            # Normalize: rating is /5, engagement is /100
+            norm_rating = avg_rating / 5.0
+            norm_engagement = avg_engagement / 100.0
+            score = (norm_rating * 0.6 + norm_engagement * 0.4) if stats["ratings"] else 0.0
+
+            # Confidence increases with more data points
+            data_points = len(stats["ratings"])
+            confidence = min(1.0, data_points / 10.0)  # Full confidence at 10+ ratings
+
+            scored.append((score, {
+                "voice_id": stats["voice_id"],
+                "voice_name": stats["voice_name"],
+                "avg_rating": round(avg_rating, 2),
+                "avg_engagement": round(avg_engagement, 1),
+                "total_uses": stats["total_uses"],
+                "rated_uses": len(stats["ratings"]),
+                "confidence": round(confidence, 2),
+                "score": round(score, 3),
+            }))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        recommendations = [s[1] for s in scored[:top_k]]
+
+        # Generate reason for top pick
+        if recommendations:
+            top = recommendations[0]
+            content_desc = f" for {content_type}" if content_type else ""
+            if top["rated_uses"] > 0:
+                top["reason"] = (
+                    f"Highest rated voice{content_desc} with avg {top['avg_rating']}/5 "
+                    f"across {top['rated_uses']} rated generation(s)."
+                )
+            else:
+                top["reason"] = f"Most used voice{content_desc} ({top['total_uses']} generations)."
+
+        return {
+            "recommendations": recommendations,
+            "total_generations_analyzed": len(generations),
+            "content_type_filter": content_type or "all",
+            "data_source": "learned",
+        }
+
+    def recommend_settings(
+        self,
+        content_type: str = "",
+        voice_id: str = "",
+    ) -> Dict[str, Any]:
+        """Recommend optimal voice settings based on what got the best feedback.
+
+        Analyzes all rated generations to find the stability, speed, and
+        similarity_boost values that correlate with the highest ratings.
+
+        Args:
+            content_type: Filter to this content type (optional).
+            voice_id: Filter to this voice (optional).
+
+        Returns:
+            Dict with recommended settings and reasoning.
+        """
+        generations = self._get_rated_generations(content_type)
+
+        # Further filter by voice if specified
+        if voice_id:
+            generations = [g for g in generations if g["voice_id"] == voice_id]
+
+        if not generations:
+            # Fall back to stored preferences
+            prefs = self.recall()
+            if prefs.get("has_preferences"):
+                return {
+                    "stability": prefs["voice_settings"]["stability"],
+                    "similarity_boost": prefs["voice_settings"]["similarity_boost"],
+                    "speed": prefs["voice_settings"]["speed"],
+                    "style_exaggeration": prefs["voice_settings"]["style"],
+                    "total_generations_analyzed": 0,
+                    "confidence": 0.3,
+                    "reason": "Based on stored preferences (no rated generations yet).",
+                    "data_source": "preference",
+                }
+            return {
+                "stability": 0.75,
+                "similarity_boost": 0.85,
+                "speed": 1.0,
+                "style_exaggeration": 0.0,
+                "total_generations_analyzed": 0,
+                "confidence": 0.0,
+                "reason": "Using defaults. No generation data found.",
+                "data_source": "default",
+            }
+
+        # Separate into good (rating >= 4.0) and bad (rating < 3.0)
+        good = [g for g in generations if g["rating"] is not None and g["rating"] >= 4.0]
+        bad = [g for g in generations if g["rating"] is not None and g["rating"] < 3.0]
+
+        if good:
+            # Average the settings from high-rated generations
+            avg_stability = sum(g["stability"] for g in good) / len(good)
+            avg_similarity = sum(g["similarity_boost"] for g in good) / len(good)
+            avg_speed = sum(g["speed"] for g in good) / len(good)
+            avg_style = sum(g["style_exaggeration"] for g in good) / len(good)
+            avg_rating = sum(g["rating"] for g in good) / len(good)
+            confidence = min(1.0, len(good) / 10.0)
+
+            result = {
+                "stability": round(avg_stability, 2),
+                "similarity_boost": round(avg_similarity, 2),
+                "speed": round(avg_speed, 2),
+                "style_exaggeration": round(avg_style, 2),
+                "total_generations_analyzed": len(generations),
+                "high_rated_generations": len(good),
+                "low_rated_generations": len(bad),
+                "avg_rating_of_recommendations": round(avg_rating, 2),
+                "confidence": round(confidence, 2),
+                "data_source": "learned",
+            }
+
+            # Build human-readable reason
+            parts = [f"Optimal settings based on {len(good)} generation(s) rated {avg_rating:.1f}/5 avg"]
+            if bad:
+                # Find what to avoid
+                bad_avg_speed = sum(g["speed"] for g in bad) / len(bad)
+                if abs(bad_avg_speed - avg_speed) > 0.1:
+                    direction = "faster" if bad_avg_speed > avg_speed else "slower"
+                    parts.append(f"Low-rated generations were {direction} (avoid {bad_avg_speed:.2f} speed)")
+            result["reason"] = ". ".join(parts) + "."
+
+            return result
+        else:
+            # No highly-rated generations — average all
+            avg_stability = sum(g["stability"] for g in generations) / len(generations)
+            avg_similarity = sum(g["similarity_boost"] for g in generations) / len(generations)
+            avg_speed = sum(g["speed"] for g in generations) / len(generations)
+            avg_style = sum(g["style_exaggeration"] for g in generations) / len(generations)
+
+            return {
+                "stability": round(avg_stability, 2),
+                "similarity_boost": round(avg_similarity, 2),
+                "speed": round(avg_speed, 2),
+                "style_exaggeration": round(avg_style, 2),
+                "total_generations_analyzed": len(generations),
+                "high_rated_generations": 0,
+                "low_rated_generations": len(bad),
+                "confidence": 0.4,
+                "reason": f"Averaged from {len(generations)} generation(s). No high-rated data yet — keep recording feedback!",
+                "data_source": "averaged",
+            }
+
+    def improve_profile(self) -> Dict[str, Any]:
+        """Analyze all generation history and produce an intelligence report.
+
+        This is the "brain" of the integration — it synthesizes everything
+        CogniCore has learned into actionable insights.
+
+        Returns:
+            Dict with profile summary, top voices, optimal settings,
+            content preferences, and improvement suggestions.
+        """
+        generations = self._get_all_generations()
+        rated = [g for g in generations if g.get("rating") is not None]
+
+        if not generations:
+            return {
+                "total_generations": 0,
+                "total_rated": 0,
+                "profile_ready": False,
+                "message": "No generation data yet. Use learn_from_generation() to start building your profile.",
+            }
+
+        # Voice distribution
+        voice_counts: Dict[str, int] = {}
+        for g in generations:
+            vname = g.get("voice_name") or g.get("voice_id", "unknown")
+            voice_counts[vname] = voice_counts.get(vname, 0) + 1
+
+        # Content type distribution
+        content_counts: Dict[str, int] = {}
+        for g in generations:
+            ct = g.get("content_type", "unspecified")
+            content_counts[ct] = content_counts.get(ct, 0) + 1
+
+        # Rating analysis
+        avg_rating = 0.0
+        rating_trend = "stable"
+        if rated:
+            ratings = [g["rating"] for g in rated]
+            avg_rating = sum(ratings) / len(ratings)
+
+            # Trend: compare first half (most recent) vs second half (oldest)
+            if len(ratings) >= 4:
+                mid = len(ratings) // 2
+                first_half = sum(ratings[:mid]) / mid
+                second_half = sum(ratings[mid:]) / (len(ratings) - mid)
+                diff = first_half - second_half
+                if diff > 0.3:
+                    rating_trend = "improving"
+                elif diff < -0.3:
+                    rating_trend = "declining"
+
+        # Total audio generated
+        total_audio_sec = sum(g.get("audio_length_sec", 0) for g in generations)
+        total_audio_min = total_audio_sec / 60.0
+
+        # Most used voice
+        most_used = max(voice_counts, key=voice_counts.get) if voice_counts else "none"
+
+        # Best voice (by rating)
+        best_rec = self.recommend_voice()
+        best_voice = "unknown"
+        if best_rec.get("recommendations"):
+            best_voice = best_rec["recommendations"][0].get("voice_name", "unknown")
+
+        # Insights
+        insights = []
+        if len(generations) >= 5 and not rated:
+            insights.append("You have generations but no feedback. Use record_feedback() to unlock recommendations!")
+        if rating_trend == "improving":
+            insights.append("Your audio quality is trending upward — the system is learning your preferences.")
+        if rating_trend == "declining":
+            insights.append("Quality is dipping. Consider trying recommend_voice() for a fresh suggestion.")
+        if len(voice_counts) == 1 and len(generations) >= 10:
+            insights.append(f"You've only used one voice ({most_used}). Experiment with others to find your best fit!")
+        if total_audio_min > 60:
+            insights.append(f"You've generated {total_audio_min:.0f} minutes of audio — impressive pipeline!")
+
+        return {
+            "total_generations": len(generations),
+            "total_rated": len(rated),
+            "total_audio_minutes": round(total_audio_min, 1),
+            "avg_rating": round(avg_rating, 2) if rated else None,
+            "rating_trend": rating_trend,
+            "most_used_voice": most_used,
+            "best_rated_voice": best_voice,
+            "voices_used": dict(sorted(voice_counts.items(), key=lambda x: x[1], reverse=True)),
+            "content_types": dict(sorted(content_counts.items(), key=lambda x: x[1], reverse=True)),
+            "insights": insights,
+            "profile_ready": len(rated) >= 3,
         }
 
     # ------------------------------------------------------------------
     # Internal Helpers
     # ------------------------------------------------------------------
+
+    def _get_all_generations(self) -> List[Dict[str, Any]]:
+        """Retrieve all generation entries as dicts."""
+        entries = self.backend.get_by_category(CATEGORY_GENERATION, top_k=1000)
+        results = []
+        for entry in entries:
+            meta = entry.metadata if hasattr(entry, "metadata") else {}
+            results.append(meta)
+
+        # Also check for separate feedback entries and merge them
+        feedback_entries = self.backend.get_by_category(CATEGORY_FEEDBACK, top_k=1000)
+        feedback_map: Dict[str, Dict] = {}
+        for fb in feedback_entries:
+            fb_meta = fb.metadata if hasattr(fb, "metadata") else {}
+            gen_id = fb_meta.get("generation_id")
+            if gen_id:
+                feedback_map[gen_id] = fb_meta
+
+        # Merge feedback into generations
+        for gen in results:
+            gen_id = gen.get("generation_id")
+            if gen_id and gen_id in feedback_map and not gen.get("has_feedback"):
+                fb = feedback_map[gen_id]
+                gen["rating"] = fb.get("rating")
+                gen["engagement_percent"] = fb.get("engagement_percent")
+                gen["audience_feedback"] = fb.get("audience_feedback", "")
+                gen["has_feedback"] = True
+
+        return results
+
+    def _get_rated_generations(self, content_type: str = "") -> List[Dict[str, Any]]:
+        """Retrieve generations that have feedback, optionally filtered by content type."""
+        all_gens = self._get_all_generations()
+
+        # Filter by content type if specified
+        if content_type:
+            all_gens = [g for g in all_gens if g.get("content_type", "").lower() == content_type.lower()]
+
+        return all_gens
 
     def _clear_category(self, category: str) -> None:
         """Remove all existing entries for a category (for single-source-of-truth updates)."""
@@ -448,3 +954,4 @@ class ElevenLabsIntegration:
                     self.backend.delete(entry_id)
         except Exception as e:
             logger.warning(f"Could not clear category '{category}': {e}")
+

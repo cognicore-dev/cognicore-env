@@ -261,6 +261,7 @@ class TestElevenLabsRecallAll:
         assert "voice_preferences" in all_prefs
         assert "usage_patterns" in all_prefs
         assert "advanced" in all_prefs
+        assert "intelligence" in all_prefs
 
         assert all_prefs["voice_preferences"]["has_preferences"] is True
         assert all_prefs["usage_patterns"]["total_generations"] == 1
@@ -271,3 +272,228 @@ class TestElevenLabsRecallAll:
         assert all_prefs["voice_preferences"]["has_preferences"] is False
         assert all_prefs["usage_patterns"]["total_generations"] == 0
         assert all_prefs["advanced"]["has_advanced_config"] is False
+
+
+# ------------------------------------------------------------------
+# Layer 2: Intelligence Tests
+# ------------------------------------------------------------------
+
+class TestLearnFromGeneration:
+    """Test recording generation events."""
+
+    def test_learn_returns_generation_id(self, el):
+        gen_id = el.learn_from_generation(
+            voice_id="pNInz6obpgDQGcFmaJgB",
+            voice_name="Adam",
+            stability=0.8,
+            speed=0.85,
+            content_type="podcast",
+            content_text="Welcome to episode 12",
+            audio_length_sec=180.0,
+        )
+        assert gen_id.startswith("gen_")
+        assert len(gen_id) > 4
+
+    def test_learn_stores_all_metadata(self, el, backend):
+        gen_id = el.learn_from_generation(
+            voice_id="test_voice",
+            voice_name="TestVoice",
+            stability=0.6,
+            similarity_boost=0.7,
+            speed=0.9,
+            content_type="meditation",
+            content_text="Breathe deeply and relax",
+            audio_length_sec=300.0,
+            model_id="eleven_turbo_v2",
+        )
+        entries = backend.get_by_category("elevenlabs_generation", top_k=5)
+        assert len(entries) == 1
+        meta = entries[0].metadata
+        assert meta["generation_id"] == gen_id
+        assert meta["voice_id"] == "test_voice"
+        assert meta["stability"] == 0.6
+        assert meta["speed"] == 0.9
+        assert meta["content_type"] == "meditation"
+        assert meta["has_feedback"] is False
+
+    def test_learn_multiple_generations(self, el, backend):
+        el.learn_from_generation(voice_id="v1", voice_name="Voice1")
+        el.learn_from_generation(voice_id="v2", voice_name="Voice2")
+        el.learn_from_generation(voice_id="v1", voice_name="Voice1")
+
+        entries = backend.get_by_category("elevenlabs_generation", top_k=10)
+        assert len(entries) == 3
+
+
+class TestRecordFeedback:
+    """Test attaching feedback to generations."""
+
+    def test_record_feedback_success(self, el):
+        gen_id = el.learn_from_generation(voice_id="v1", voice_name="Adam")
+        result = el.record_feedback(gen_id, rating=4.5, engagement_percent=72.0,
+                                     audience_feedback="Perfect pace")
+        assert result["status"] == "success"
+        assert result["rating"] == 4.5
+
+    def test_record_feedback_not_found(self, el):
+        result = el.record_feedback("gen_nonexistent", rating=3.0)
+        assert result["status"] == "error"
+
+    def test_feedback_is_retrievable(self, el):
+        gen_id = el.learn_from_generation(
+            voice_id="v1", voice_name="Adam",
+            content_type="podcast", stability=0.8, speed=0.85,
+        )
+        el.record_feedback(gen_id, rating=4.5, engagement_percent=72.0)
+
+        # Feedback should be visible in recommendations
+        rec = el.recommend_voice()
+        assert rec["total_generations_analyzed"] == 1
+
+
+class TestRecommendVoice:
+    """Test voice recommendation engine."""
+
+    def test_recommend_with_no_data(self, el):
+        rec = el.recommend_voice()
+        assert rec["data_source"] == "none"
+        assert len(rec["recommendations"]) == 0
+
+    def test_recommend_falls_back_to_preferences(self, el):
+        el.sync(voice_id="pref_voice", voice_name="Preferred")
+        rec = el.recommend_voice()
+        assert rec["data_source"] == "preference"
+        assert rec["recommendations"][0]["voice_id"] == "pref_voice"
+        assert rec["recommendations"][0]["confidence"] == 0.3
+
+    def test_recommend_from_learned_data(self, el):
+        # Generate with two voices, rate one higher
+        for _ in range(3):
+            gid = el.learn_from_generation(voice_id="v1", voice_name="Adam",
+                                            content_type="podcast", stability=0.8, speed=0.85)
+            el.record_feedback(gid, rating=4.5, engagement_percent=80)
+
+        for _ in range(3):
+            gid = el.learn_from_generation(voice_id="v2", voice_name="Rachel",
+                                            content_type="podcast", stability=0.7, speed=1.0)
+            el.record_feedback(gid, rating=2.5, engagement_percent=30)
+
+        rec = el.recommend_voice()
+        assert rec["data_source"] == "learned"
+        assert rec["recommendations"][0]["voice_name"] == "Adam"
+        assert rec["recommendations"][0]["avg_rating"] == 4.5
+        assert rec["total_generations_analyzed"] == 6
+
+    def test_recommend_filters_by_content_type(self, el):
+        # Adam is good for podcasts
+        gid = el.learn_from_generation(voice_id="v1", voice_name="Adam", content_type="podcast")
+        el.record_feedback(gid, rating=5.0)
+
+        # Rachel is good for meditation
+        gid = el.learn_from_generation(voice_id="v2", voice_name="Rachel", content_type="meditation")
+        el.record_feedback(gid, rating=5.0)
+
+        # Ask for podcast recommendation
+        rec = el.recommend_voice(content_type="podcast")
+        assert rec["content_type_filter"] == "podcast"
+        assert rec["recommendations"][0]["voice_name"] == "Adam"
+
+        # Ask for meditation recommendation
+        rec = el.recommend_voice(content_type="meditation")
+        assert rec["recommendations"][0]["voice_name"] == "Rachel"
+
+
+class TestRecommendSettings:
+    """Test settings recommendation engine."""
+
+    def test_recommend_settings_defaults(self, el):
+        rec = el.recommend_settings()
+        assert rec["data_source"] == "default"
+        assert rec["stability"] == 0.75
+        assert rec["speed"] == 1.0
+
+    def test_recommend_settings_from_high_rated(self, el):
+        # Two high-rated generations with specific settings
+        gid = el.learn_from_generation(voice_id="v1", stability=0.8, speed=0.85, similarity_boost=0.9)
+        el.record_feedback(gid, rating=4.8)
+
+        gid = el.learn_from_generation(voice_id="v1", stability=0.7, speed=0.9, similarity_boost=0.8)
+        el.record_feedback(gid, rating=4.2)
+
+        rec = el.recommend_settings()
+        assert rec["data_source"] == "learned"
+        assert rec["stability"] == 0.75  # avg of 0.8 and 0.7
+        assert rec["speed"] == 0.88  # avg of 0.85 and 0.9 → 0.875 → rounds to 0.88
+        assert rec["high_rated_generations"] == 2
+        assert rec["confidence"] == 0.2  # 2/10
+
+    def test_recommend_settings_detects_bad_speed(self, el):
+        # Good generation: slow
+        gid = el.learn_from_generation(voice_id="v1", stability=0.8, speed=0.8)
+        el.record_feedback(gid, rating=4.5)
+
+        # Bad generation: fast
+        gid = el.learn_from_generation(voice_id="v1", stability=0.8, speed=1.3)
+        el.record_feedback(gid, rating=2.0)
+
+        rec = el.recommend_settings()
+        assert "avoid" in rec["reason"].lower() or "faster" in rec["reason"].lower()
+
+
+class TestImproveProfile:
+    """Test the intelligence profile generation."""
+
+    def test_profile_empty(self, el):
+        profile = el.improve_profile()
+        assert profile["total_generations"] == 0
+        assert profile["profile_ready"] is False
+
+    def test_profile_with_data(self, el):
+        # Create some history
+        for i in range(5):
+            gid = el.learn_from_generation(
+                voice_id="v1", voice_name="Adam",
+                content_type="podcast", audio_length_sec=180.0,
+            )
+            el.record_feedback(gid, rating=4.0 + i * 0.2)
+
+        profile = el.improve_profile()
+        assert profile["total_generations"] == 5
+        assert profile["total_rated"] == 5
+        assert profile["total_audio_minutes"] == 15.0  # 5 * 180 / 60
+        assert profile["most_used_voice"] == "Adam"
+        assert profile["best_rated_voice"] == "Adam"
+        assert profile["profile_ready"] is True
+        assert profile["avg_rating"] > 0
+
+    def test_profile_detects_improving_trend(self, el):
+        # First batch: low ratings
+        for _ in range(3):
+            gid = el.learn_from_generation(voice_id="v1", voice_name="Adam")
+            el.record_feedback(gid, rating=2.0)
+
+        # Second batch: high ratings
+        for _ in range(3):
+            gid = el.learn_from_generation(voice_id="v1", voice_name="Adam")
+            el.record_feedback(gid, rating=5.0)
+
+        profile = el.improve_profile()
+        assert profile["rating_trend"] == "improving"
+
+    def test_profile_suggests_feedback(self, el):
+        # 5 generations but no feedback
+        for _ in range(5):
+            el.learn_from_generation(voice_id="v1", voice_name="Adam")
+
+        profile = el.improve_profile()
+        assert any("feedback" in i.lower() for i in profile["insights"])
+
+    def test_profile_content_distribution(self, el):
+        el.learn_from_generation(voice_id="v1", content_type="podcast")
+        el.learn_from_generation(voice_id="v1", content_type="podcast")
+        el.learn_from_generation(voice_id="v1", content_type="meditation")
+
+        profile = el.improve_profile()
+        assert profile["content_types"]["podcast"] == 2
+        assert profile["content_types"]["meditation"] == 1
+
