@@ -103,14 +103,15 @@ class CognitiveFabric:
                     "stability": 0.80,
                     "tone": "warm and slow"
                 }
-            elif tool_name == "cursor":
+            elif tool_name in ["cursor", "claude"]:
                 return {
                     "reason": "Translated 'Minimalist' project vibe into coding instructions.",
                     "instructions": [
-                        "Use clean UI patterns.",
+                        "Use clean UI patterns (e.g., lots of padding, #F9F9F9 background).",
                         "Avoid flashy animations.",
                         "Keep component density low.",
-                        "Prioritize readability over complex layouts."
+                        "Prioritize readability over complex layouts.",
+                        "Follow the Figma design tokens implicitly."
                     ]
                 }
                 

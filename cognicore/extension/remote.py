@@ -583,6 +583,59 @@ def cognicore_discover_sellers(ctx: Context, query: str = "", category: str = ""
     return apply_auto_compression(ctx, conversation, res)
 
 
+# --- Cognitive Fabric ---
+from cognicore.fabric.registry import get_fabric, register_all_plugins
+
+@mcp.tool()
+def cognicore_fabric_recommend(
+    ctx: Context,
+    tool_name: str,
+    task: str = "",
+    conversation: Optional[list] = None
+) -> str:
+    """Ask the Cognitive Fabric for semantic rules and recommendations translated for your specific tool."""
+    backend = _get_backend()
+    fabric = get_fabric(backend)
+    register_all_plugins(fabric)
+    
+    # We allow the caller (e.g., Claude) to act as a generic "claude" or "cursor" tool
+    adapter = fabric.connect(tool_name) if tool_name in fabric._adapters else None
+    
+    if adapter:
+        rec = adapter.recommend(task=task)
+    else:
+        # If no adapter exists, just ask the fabric engine directly
+        rec = fabric.translate_for_tool(tool_name, {"task": task})
+        
+    result = {
+        "tool": tool_name,
+        "recommendations": rec,
+        "active_rules": [r["concept"] for r in fabric.derive_rules()]
+    }
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+@mcp.tool()
+def cognicore_fabric_sync_figma(
+    ctx: Context,
+    file_key: str,
+    token: str = "",
+    conversation: Optional[list] = None
+) -> str:
+    """Sync a Figma file into the Cognitive Fabric, allowing it to extract design semantic rules."""
+    backend = _get_backend()
+    fabric = get_fabric(backend)
+    register_all_plugins(fabric)
+    
+    try:
+        figma = fabric.connect("figma")
+        success = figma.sync_file(file_key, token)
+        result = {"success": success, "message": f"Successfully pulled design semantics for {file_key}"}
+    except Exception as e:
+        result = {"success": False, "error": str(e)}
+        
+    return apply_auto_compression(ctx, conversation, json.dumps(result, indent=2))
+
 # --- ElevenLabs Integration ---
 from cognicore.fabric.plugins.elevenlabs import ElevenLabsIntegration
 

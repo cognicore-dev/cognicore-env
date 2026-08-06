@@ -21,3 +21,9 @@ def register_all_plugins(fabric: CognitiveFabric):
         fabric.register_adapter("elevenlabs", ElevenLabsAdapter)
     except ImportError:
         pass
+        
+    try:
+        from cognicore.fabric.plugins.figma import FigmaAdapter
+        fabric.register_adapter("figma", FigmaAdapter)
+    except ImportError:
+        pass
