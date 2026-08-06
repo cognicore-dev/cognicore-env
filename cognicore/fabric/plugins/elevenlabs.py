@@ -41,6 +41,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from cognicore.memory.base import MemoryEntry, MemoryScope
+from cognicore.fabric.base import CognitiveAdapter
 
 logger = logging.getLogger("cognicore.integrations.elevenlabs")
 
@@ -53,19 +54,20 @@ CATEGORY_FEEDBACK = "elevenlabs_feedback"
 CATEGORY_PROFILE = "elevenlabs_profile"
 
 
-class ElevenLabsIntegration:
+class ElevenLabsAdapter(CognitiveAdapter):
     """Persistent memory layer for ElevenLabs voice preferences and settings.
 
-    Wraps any CogniCore memory backend to store and recall ElevenLabs-specific
-    configuration across sessions. Zero API calls — pure local storage.
+    Wraps the Cognitive Fabric to store and recall ElevenLabs-specific
+    configuration across sessions, and translates cross-tool intelligence.
 
     Example::
 
         from cognicore.memory import SQLiteMemoryBackend
-        from cognicore.integrations.elevenlabs import ElevenLabsIntegration
+        from cognicore.fabric.registry import get_fabric
+        from cognicore.fabric.plugins.elevenlabs import ElevenLabsAdapter
 
-        backend = SQLiteMemoryBackend("my_agent.db")
-        el = ElevenLabsIntegration(backend)
+        fabric = get_fabric(SQLiteMemoryBackend("my_agent.db"))
+        el = ElevenLabsAdapter(fabric)
 
         # Store preferences once
         el.sync(
@@ -82,14 +84,48 @@ class ElevenLabsIntegration:
         # {"voice_id": "pNInz...", "voice_settings": {...}, "model_id": "..."}
     """
 
-    def __init__(self, backend: Any) -> None:
-        """Initialize with a CogniCore memory backend.
+    def __init__(self, fabric: Any) -> None:
+        """Initialize with a Cognitive Fabric.
 
         Args:
-            backend: Any CogniCore memory backend (SQLiteMemoryBackend,
-                     TFIDFMemoryBackend, etc.) that supports store/search.
+            fabric: The Cognitive Fabric instance handling semantic translation. 
+                    (Or a raw MemoryBackend for backward compatibility).
         """
-        self.backend = backend
+        if hasattr(fabric, "backend"):
+            self.fabric = fabric
+            self.backend = self.fabric.backend
+        else:
+            # Backward compatibility mode (tests passing raw backend)
+            from cognicore.fabric.registry import get_fabric
+            self.fabric = get_fabric(fabric)
+            self.backend = fabric
+            
+        super().__init__(self.fabric)
+
+    def observe(self, action: str, context: Dict[str, Any]) -> str:
+        """Layer 1: Raw observation."""
+        return self.fabric.record_observation("elevenlabs", action, context)
+        
+    def learn(self, **kwargs) -> str:
+        """Alias for learn_from_generation to fulfill CognitiveAdapter."""
+        return self.learn_from_generation(**kwargs)
+        
+    def feedback(self, action_id: str, success_score: float, **kwargs) -> None:
+        """Alias for record_feedback to fulfill CognitiveAdapter."""
+        self.record_feedback(action_id, rating=success_score, **kwargs)
+        
+    def recommend(self, **kwargs) -> Dict[str, Any]:
+        """
+        Layer 3: Get translated recommendations from the Fabric.
+        Falls back to local recommendations if no universal rule applies.
+        """
+        # Ask fabric for cross-tool intelligence
+        fabric_rec = self.fabric.translate_for_tool("elevenlabs", kwargs)
+        if fabric_rec:
+            return fabric_rec
+            
+        # Fall back to local local intelligence
+        return self.recommend_settings(**kwargs)
 
     # ------------------------------------------------------------------
     # Tier 1: Voice Preferences
@@ -955,3 +991,4 @@ class ElevenLabsIntegration:
         except Exception as e:
             logger.warning(f"Could not clear category '{category}': {e}")
 
+ElevenLabsIntegration = ElevenLabsAdapter

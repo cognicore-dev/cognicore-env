@@ -584,7 +584,7 @@ def cognicore_discover_sellers(ctx: Context, query: str = "", category: str = ""
 
 
 # --- ElevenLabs Integration ---
-from cognicore.integrations.elevenlabs import ElevenLabsIntegration
+from cognicore.fabric.plugins.elevenlabs import ElevenLabsIntegration
 
 @mcp.tool()
 def cognicore_elevenlabs_sync(

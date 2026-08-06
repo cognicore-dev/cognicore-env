@@ -5,7 +5,7 @@ import tempfile
 import os
 
 from cognicore.memory import SQLiteMemoryBackend
-from cognicore.integrations.elevenlabs import (
+from cognicore.fabric.plugins.elevenlabs import (
     ElevenLabsIntegration,
     CATEGORY_VOICE,
     CATEGORY_USAGE,
