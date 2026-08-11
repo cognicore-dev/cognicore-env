@@ -25,6 +25,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 from cognicore.memory.sqlite_backend import SQLiteMemoryBackend
 from cognicore.memory.base import MemoryEntry, MemoryScope
+from cognicore.fabric.registry import get_fabric
+from cognicore.fabric.plugins.figma import FigmaAdapter
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
@@ -32,10 +34,12 @@ parser.add_argument("--figma-key",   default="", help="Figma file key")
 parser.add_argument("--figma-token", default="", help="Figma personal access token")
 args = parser.parse_args()
 
-# ── Setup persistent memory (survives sessions) ──────────────────────────────
+# ── Setup persistent memory + Fabric ────────────────────────────────────────
 DB = r"c:\Users\kaush\OneDrive\Documents\safetymind\cognicore-my-openenv\cognicore_fabric_transfer.db"
 backend = SQLiteMemoryBackend(DB)
 backend._init_db()
+fabric  = get_fabric(backend)
+figma_adapter = FigmaAdapter(fabric)
 
 # ── Inline mini-fabric (no complex imports) ───────────────────────────────────
 
@@ -201,7 +205,82 @@ def line(char="-", n=60):
 def run():
     print()
     line("=")
-    print("  CogniCore Cross-Tool Memory Transfer — Prototype")
+    print("  CogniCore Cross-Tool Memory Transfer -- Prototype")
+    line("=")
+    print()
+
+    # Step 1 — Figma API -> Fabric
+    print("STEP 1  Figma  ->  Fabric")
+    line()
+    if args.figma_key and args.figma_token:
+        result = figma_adapter.sync(
+            file_key=args.figma_key,
+            access_token=args.figma_token,
+        )
+        print(f"  [Figma API] {result['message']}")
+    else:
+        print("  [Figma] Using stored/mock tokens (pass --figma-key + --figma-token for live API)")
+        # Push mock tokens so the rest of the flow works without an API key
+        figma_adapter._store_entry(
+            'figma_file', 'Figma file: CogniCore Design System (mock)',
+            metadata={'file_key':'mock','file_name':'CogniCore Design System',
+                      'background_color':'#F9F9F9','fonts_used':['Inter'],'page_count':3})
+        figma_adapter._store_entry(
+            'figma_styles', 'Figma styles: colors and typography',
+            metadata={'colors':[{'name':'Primary','description':''}],'typography':[{'name':'H1','description':''}],'effects':[],'total':9})
+        figma_adapter._store_entry(
+            'figma_variables', 'Figma design tokens: spacing and radius',
+            metadata={'tokens':{'spacing/md':{'type':'FLOAT','value':32},'radius/card':{'type':'FLOAT','value':16}},'total':12,'collections':2})
+
+    tokens = figma_adapter.recall()
+    print(f"  File      : {tokens['file_name']}")
+    print(f"  Background: {tokens['background_color']}")
+    print(f"  Fonts     : {', '.join(tokens['fonts_used']) or 'Inter'}")
+    print(f"  Variables : {tokens.get('variable_count', len(tokens.get('variables',{})))} design tokens stored")
+
+    # Step 2 — Fabric derives semantic concept
+    print()
+    print("STEP 2  Fabric  ->  Semantic Concept")
+    line()
+    concept = figma_adapter.get_design_concept()
+    print(f"  Detected concept : {concept['concept']}")
+    print(f"  Confidence       : {concept['confidence']:.0%}")
+    print(f"  Score            : {concept['score']}/6")
+
+    # Step 3 — Fabric -> ElevenLabs
+    print()
+    print("STEP 3  Fabric  ->  ElevenLabs (voice settings)")
+    line()
+    el_rec = figma_adapter.recommend(target_tool="elevenlabs")
+    for k, v in el_rec.items():
+        if k != 'reason':
+            print(f"  {k:<14}: {v}")
+    print(f"  reason        : {el_rec.get('reason','')}")
+    print()
+    print("  -> Stored as persistent memory. ElevenLabs reads these every session.")
+
+    # Step 4 — Fabric -> Cursor / Claude
+    print()
+    print("STEP 4  Fabric  ->  Cursor / Claude (coding rules)")
+    line()
+    cur_rec = figma_adapter.recommend(target_tool="cursor")
+    for inst in cur_rec.get('instructions', []):
+        print(f"  - {inst}")
+    print(f"  reason: {cur_rec.get('reason','')}")
+    print()
+    print("  -> Stored as persistent memory. Cursor MCP surfaces these automatically.")
+
+    # Step 5 — Verify persistence
+    print()
+    print("STEP 5  Verify persistence")
+    line()
+    stored_tokens = figma_adapter.recall()
+    print(f"  File synced  : {stored_tokens['synced']}")
+    print(f"  File name    : {stored_tokens['file_name']}")
+    print(f"  DB location  : {DB}")
+    print()
+    line("=")
+    print(f"  Transfer complete. Concept: {concept['concept']}  ({concept['confidence']:.0%} confidence)")
     line("=")
     print()
 
