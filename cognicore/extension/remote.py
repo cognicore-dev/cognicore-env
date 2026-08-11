@@ -986,6 +986,267 @@ async def token(request: Request):
     }
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# FIGMA INTEGRATION — real MCP tools + webhook receiver
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+from cognicore.fabric.registry import get_fabric
+from cognicore.fabric.plugins.figma import FigmaAdapter
+from cognicore.fabric.plugins.figma_experience import FigmaExperienceAdapter
+
+def _get_figma_adapters(ctx: Context):
+    """Return (FigmaAdapter, FigmaExperienceAdapter) for the current user's backend."""
+    backend = get_backend(ctx)
+    fabric  = get_fabric(backend)
+    return FigmaAdapter(fabric), FigmaExperienceAdapter(fabric)
+
+
+@mcp.tool()
+def cognicore_figma_sync(
+    file_key: str,
+    ctx: Context,
+    access_token: str = "",
+) -> str:
+    """Pull design tokens, styles, components, and variables from a real Figma file
+    and store them in CogniCore memory.
+
+    After syncing, all design data is available via cognicore_figma_recall
+    without needing the token again.
+
+    Args:
+        file_key: Figma file key from the URL (figma.com/file/<KEY>/...).
+        access_token: Figma Personal Access Token. If empty, reads from
+                      env var FIGMA_ACCESS_TOKEN.
+    """
+    token = access_token or os.environ.get("FIGMA_ACCESS_TOKEN", "")
+    if not token:
+        return "Error: provide access_token or set FIGMA_ACCESS_TOKEN env var."
+    if not file_key:
+        return "Error: file_key is required."
+
+    figma, _ = _get_figma_adapters(ctx)
+    result = figma.sync(file_key=file_key, access_token=token)
+
+    if result.get("status") == "success":
+        stored = result.get("stored", {})
+        return (
+            f"Figma sync complete: '{result['file_name']}'\n"
+            f"  Stored: {stored.get('file', 0)} file meta, "
+            f"{stored.get('styles', 0)} styles, "
+            f"{stored.get('components', 0)} components, "
+            f"{stored.get('variables', 0)} design tokens."
+        )
+    return f"Figma sync failed: {result.get('message', 'unknown error')}"
+
+
+@mcp.tool()
+def cognicore_figma_recall(ctx: Context) -> str:
+    """Retrieve all stored Figma design tokens, typography, colors, and variables.
+
+    Works across sessions — no Figma token needed after the first sync.
+    Returns a JSON summary of the design system.
+    """
+    figma, _ = _get_figma_adapters(ctx)
+    tokens = figma.recall()
+
+    if not tokens.get("synced"):
+        return "No Figma data synced yet. Run cognicore_figma_sync first."
+
+    concept = figma.get_design_concept()
+    out = {
+        "file_name":        tokens.get("file_name"),
+        "background_color": tokens.get("background_color"),
+        "fonts":            tokens.get("fonts_used", []),
+        "variable_count":   tokens.get("variable_count", 0),
+        "styles":           tokens.get("styles", {}),
+        "design_concept":   concept,
+    }
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def cognicore_figma_check_component(
+    figma_component: str,
+    ctx: Context,
+) -> str:
+    """Check if a Figma component has already been implemented in the codebase.
+
+    Call this BEFORE writing any new component. CogniCore will tell you:
+    - REUSE: implementation exists and is verified — use it, don't duplicate
+    - UPDATE: implementation exists but unverified — review before reusing
+    - IMPLEMENT: not found — implement fresh
+
+    Args:
+        figma_component: Figma component name, e.g. "Button/Primary".
+    """
+    _, exp = _get_figma_adapters(ctx)
+    result = exp.check_before_implement(figma_component)
+
+    lines = [
+        f"Component: {figma_component}",
+        f"Recommendation: {result['recommendation']}",
+        f"Already implemented: {result['already_implemented']}",
+    ]
+    if result["already_implemented"]:
+        lines += [
+            f"Code file: {result.get('code_file', '')}",
+            f"Notes: {result.get('notes', '')}",
+            f"Verified: {result.get('verified', False)}",
+            f"Message: {result['message']}",
+        ]
+        if result.get("test_file"):
+            lines.append(f"Test file: {result['test_file']}")
+    else:
+        lines.append(f"Message: {result['message']}")
+        if result.get("known_mistakes"):
+            lines.append("Known mistakes to avoid:")
+            for m in result["known_mistakes"]:
+                lines.append(f"  MISTAKE: {m['what_happened']}")
+                lines.append(f"  CORRECT: {m['correct_approach']}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def cognicore_figma_record_implementation(
+    figma_component: str,
+    code_file: str,
+    ctx: Context,
+    figma_node_id: str = "",
+    notes: str = "",
+    framework: str = "React",
+    verified: bool = False,
+    test_file: str = "",
+) -> str:
+    """Record that a Figma component has been implemented.
+
+    Call this after successfully implementing a Figma component.
+    CogniCore stores the mapping permanently so future agents can reuse it.
+
+    Args:
+        figma_component: Figma component name, e.g. "Button/Primary".
+        code_file: Path to implementation, e.g. "src/components/Button.tsx".
+        figma_node_id: Figma node ID for direct linking (optional).
+        notes: Context, e.g. "Uses shadcn base, adds brand color override".
+        framework: Framework used (React, Vue, etc.).
+        verified: True if it passed visual regression / tests.
+        test_file: Path to associated test file.
+    """
+    _, exp = _get_figma_adapters(ctx)
+    entry_id = exp.record_implementation(
+        figma_component=figma_component,
+        code_file=code_file,
+        figma_node_id=figma_node_id,
+        notes=notes,
+        framework=framework,
+        verified=verified,
+        test_file=test_file,
+    )
+    return (
+        f"Recorded: '{figma_component}' -> {code_file} (id={entry_id})\n"
+        f"Verified: {verified}. Future agents will reuse this instead of recreating it."
+    )
+
+
+@mcp.tool()
+def cognicore_figma_design_system(ctx: Context) -> str:
+    """Get the full accumulated design-system knowledge for this project.
+
+    Returns all implemented component mappings, project conventions,
+    and recorded mistakes — everything CogniCore knows about this
+    project's Figma-to-code translation.
+    """
+    _, exp = _get_figma_adapters(ctx)
+    ds = exp.get_design_system()
+
+    lines = [ds["summary"], ""]
+
+    if ds["components"]:
+        lines.append("COMPONENT MAP:")
+        for c in ds["components"]:
+            tag = "[verified]" if c["verified"] else "[unverified]"
+            lines.append(f"  {c['figma_component']:<26} -> {c['code_file']} {tag}")
+
+    if ds["conventions"]:
+        lines.append("\nCONVENTIONS:")
+        for conv in ds["conventions"]:
+            lines.append(f"  [{conv['category']}] {conv['rule']}")
+
+    if ds["mistakes"]:
+        lines.append("\nKNOWN MISTAKES (do not repeat):")
+        for m in ds["mistakes"]:
+            lines.append(f"  MISTAKE : {m['what_happened']}")
+            lines.append(f"  CORRECT : {m['correct_approach']}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def cognicore_figma_recommend(
+    target_tool: str,
+    ctx: Context,
+) -> str:
+    """Translate stored Figma design tokens into tool-specific instructions.
+
+    Args:
+        target_tool: One of "elevenlabs", "cursor", "claude".
+
+    Returns tool-specific recommendations derived from the Figma design.
+    For example: elevenlabs -> voice settings, cursor -> coding conventions.
+    """
+    figma, _ = _get_figma_adapters(ctx)
+    rec = figma.recommend(target_tool=target_tool)
+
+    if not rec:
+        return f"No Figma data found. Run cognicore_figma_sync first."
+
+    return json.dumps(rec, indent=2)
+
+
+# ── Figma Webhook receiver ────────────────────────────────────────────────────
+
+from fastapi import status as _status
+
+@app.post("/webhooks/figma", status_code=_status.HTTP_200_OK)
+async def figma_webhook(request: Request):
+    """Figma Webhook endpoint.
+
+    Register this URL in Figma (Settings -> Webhooks):
+        POST https://your-cognicore-server/webhooks/figma
+
+    When Figma fires a FILE_UPDATE or FILE_VERSION_UPDATE event,
+    CogniCore stores it as memory so agents know when designs changed.
+
+    Figma docs: https://developers.figma.com/docs/rest-api/webhooks/
+    """
+    try:
+        event = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type = event.get("event_type", "UNKNOWN")
+    file_key   = event.get("file_key", "")
+    file_name  = event.get("file_name", "")
+
+    # Store in the shared backend (user = figma_webhook)
+    from cognicore.memory import SQLiteMemoryBackend, MemoryEntry, MemoryScope
+    db_dir = Path.home() / ".cognicore" / "remote"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    webhook_backend = SQLiteMemoryBackend(str(db_dir / "figma_webhooks.db"))
+    webhook_backend._init_db()
+
+    fabric = get_fabric(webhook_backend)
+    exp    = FigmaExperienceAdapter(fabric)
+    entry_id = exp.ingest_webhook_event(event)
+
+    print(f"[FigmaWebhook] {event_type} | file='{file_name}' ({file_key}) | id={entry_id}")
+
+    return {
+        "status":   "ok",
+        "event":    event_type,
+        "file":     file_name,
+        "entry_id": entry_id,
+    }
 
 
 app.mount("/mcp", mcp_app)
