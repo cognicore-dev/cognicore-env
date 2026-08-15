@@ -104,6 +104,7 @@ from cognicore.experiment import Experiment
 
 # Premium features
 from cognicore.advanced_memory import SemanticMemory
+Memory = SemanticMemory
 from cognicore.explainer import Explainer
 from cognicore.adversarial import AdversarialTester
 from cognicore.smart_agents import AutoLearner, SafeAgent, AdaptiveAgent

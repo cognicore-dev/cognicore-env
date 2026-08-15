@@ -20,7 +20,7 @@ Run:
 import sys, os, json, argparse, time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(r"c:\Users\kaush\OneDrive\Documents\safetymind\cognicore-my-openenv").absolute()))
+sys.path.insert(0, str(Path(__file__).parent.absolute()))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from cognicore.memory.sqlite_backend import SQLiteMemoryBackend
@@ -35,7 +35,7 @@ parser.add_argument("--figma-token", default="", help="Figma personal access tok
 args = parser.parse_args()
 
 # ── Setup persistent memory + Fabric ────────────────────────────────────────
-DB = r"c:\Users\kaush\OneDrive\Documents\safetymind\cognicore-my-openenv\cognicore_fabric_transfer.db"
+DB = str(Path(__file__).parent / "cognicore_fabric_transfer.db")
 backend = SQLiteMemoryBackend(DB)
 backend._init_db()
 fabric  = get_fabric(backend)

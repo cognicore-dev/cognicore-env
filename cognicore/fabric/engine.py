@@ -60,21 +60,28 @@ class CognitiveFabric:
         if not observations:
             return []
             
-        # Discover "Calm/Minimalist" pattern if we see pastel colors and high whitespace
+        # Discover patterns dynamically based on observations
         is_minimalist = False
+        active_patterns = set()
+        
         for obs in observations:
             meta = obs.metadata or {}
+            
+            # Generalize pattern extraction based on LLM/heuristics in metadata
+            if "pattern" in meta:
+                active_patterns.add(meta["pattern"])
+                
+            # Legacy fallback for backward compatibility
             if meta.get("whitespace") == "high" or \
                meta.get("color_palette") == "pastel":
-                is_minimalist = True
-                break
+                active_patterns.add("Minimalist")
                 
         rules = []
-        if is_minimalist:
+        for pattern in active_patterns:
             rules.append({
-                "concept": "Minimalist",
+                "concept": pattern,
                 "confidence": 0.9,
-                "description": "The project favors calm, clean, and simple structures."
+                "description": f"The project favors {pattern.lower()} structures."
             })
             
         return rules
@@ -93,26 +100,28 @@ class CognitiveFabric:
             
         active_concepts = [r["concept"] for r in rules]
         
-        # Translating the "Minimalist" concept for different domains
-        if "Minimalist" in active_concepts:
+        # Dynamic translation
+        translations = {}
+        for concept in active_concepts:
             if tool_name == "elevenlabs":
-                return {
-                    "reason": "Translated 'Minimalist' project vibe into calm voice settings.",
-                    "voice": "Rachel",
+                # If we have a voice preference in the context, use it; otherwise fallback
+                translations.update({
+                    "reason": f"Translated '{concept}' project vibe into voice settings.",
+                    "voice": context.get("preferred_voice", "Rachel"),
                     "speed": 0.85,
                     "stability": 0.80,
                     "tone": "warm and slow"
-                }
+                })
             elif tool_name in ["cursor", "claude"]:
-                return {
-                    "reason": "Translated 'Minimalist' project vibe into coding instructions.",
-                    "instructions": [
-                        "Use clean UI patterns (e.g., lots of padding, #F9F9F9 background).",
-                        "Avoid flashy animations.",
-                        "Keep component density low.",
-                        "Prioritize readability over complex layouts.",
+                instructions = context.get("coding_instructions", [])
+                if not instructions:
+                    instructions = [
+                        f"Use UI patterns matching the '{concept}' aesthetic.",
                         "Follow the Figma design tokens implicitly."
                     ]
-                }
+                translations.update({
+                    "reason": f"Translated '{concept}' project vibe into coding instructions.",
+                    "instructions": instructions
+                })
                 
-        return {}
+        return translations

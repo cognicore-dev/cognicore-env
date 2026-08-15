@@ -17,7 +17,7 @@ Usage:
   cognicore webhooks start        # Start webhook server
 """
 from cognicore.integrations.task_queue import NexusTask, NexusTaskQueue, TaskSource, TaskPriority
-from cognicore.integrations.elevenlabs import ElevenLabsIntegration
+from cognicore.fabric.plugins.elevenlabs import ElevenLabsIntegration
 
 __all__ = [
     "NexusTask", "NexusTaskQueue", "TaskSource", "TaskPriority",

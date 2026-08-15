@@ -19,7 +19,7 @@ Run:
 import sys, os, json, time, tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(r"c:\Users\kaush\OneDrive\Documents\safetymind\cognicore-my-openenv").absolute()))
+sys.path.insert(0, str(Path(__file__).parent.absolute()))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from cognicore.memory.sqlite_backend import SQLiteMemoryBackend
@@ -27,7 +27,7 @@ from cognicore.fabric.registry import get_fabric
 from cognicore.fabric.plugins.figma_experience import FigmaExperienceAdapter
 
 # Persistent DB — survives across sessions (the whole point)
-DB = r"c:\Users\kaush\OneDrive\Documents\safetymind\cognicore-my-openenv\cognicore_figma_exp.db"
+DB = str(Path(__file__).parent / "cognicore_figma_exp.db")
 backend = SQLiteMemoryBackend(DB)
 backend._init_db()
 fabric = get_fabric(backend)

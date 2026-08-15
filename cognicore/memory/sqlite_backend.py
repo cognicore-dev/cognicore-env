@@ -62,7 +62,9 @@ class SQLiteMemoryBackend(MemoryBackend):
                     confidence REAL DEFAULT 1.0,
                     session_id TEXT DEFAULT 'default',
                     sequence_id INTEGER DEFAULT 0,
-                    supersedes TEXT
+                    supersedes TEXT,
+                    invalidated_by TEXT,
+                    invalidated_reason TEXT
                 )
             """)
             # Auto-migrate: add new columns to existing databases
@@ -115,6 +117,8 @@ class SQLiteMemoryBackend(MemoryBackend):
             ("session_id", "TEXT DEFAULT 'default'"),
             ("sequence_id", "INTEGER DEFAULT 0"),
             ("supersedes", "TEXT"),
+            ("invalidated_by", "TEXT"),
+            ("invalidated_reason", "TEXT"),
         ]
         for col_name, col_def in migrations:
             if col_name not in existing_cols:
@@ -185,6 +189,8 @@ class SQLiteMemoryBackend(MemoryBackend):
             session_id=row["session_id"] if "session_id" in row.keys() else "default",
             sequence_id=row["sequence_id"] if "sequence_id" in row.keys() else 0,
             supersedes=row["supersedes"] if "supersedes" in row.keys() else None,
+            invalidated_by=row["invalidated_by"] if "invalidated_by" in row.keys() else None,
+            invalidated_reason=row["invalidated_reason"] if "invalidated_reason" in row.keys() else "",
         )
 
     def store(self, entry: MemoryEntry) -> str:
@@ -211,8 +217,9 @@ class SQLiteMemoryBackend(MemoryBackend):
                     retrieval_count, used_count, ignored_count,
                     positive_outcomes, negative_outcomes, last_accessed,
                     creation_reason, source_component, source_agent, source_task,
-                    confidence, session_id, sequence_id, supersedes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    confidence, session_id, sequence_id, supersedes,
+                    invalidated_by, invalidated_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 entry.text,
                 entry.category,
@@ -242,6 +249,8 @@ class SQLiteMemoryBackend(MemoryBackend):
                 entry.session_id,
                 entry.sequence_id,
                 entry.supersedes,
+                entry.invalidated_by,
+                entry.invalidated_reason,
             ))
             entry_id = str(cursor.lastrowid)
             entry.entry_id = entry_id
@@ -253,7 +262,8 @@ class SQLiteMemoryBackend(MemoryBackend):
                category: Optional[str] = None,
                scope: Optional[MemoryScope] = None,
                scope_id: Optional[str] = None,
-               question_timestamp: Optional[float] = None) -> List[SearchResult]:
+               question_timestamp: Optional[float] = None,
+               metadata_filters: Optional[Dict[str, str]] = None) -> List[SearchResult]:
         
         # If we have an embedding provider, we use it for semantic search + BM25 score
         query_vec = None
@@ -284,11 +294,22 @@ class SQLiteMemoryBackend(MemoryBackend):
                 sql += " ORDER BY timestamp DESC LIMIT 5000"
                 rows = conn.execute(sql, params).fetchall()
 
+                if metadata_filters:
+                    filtered_rows = []
+                    for row in rows:
+                        try:
+                            meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                            if all(meta.get(k) == v for k, v in metadata_filters.items()):
+                                filtered_rows.append(row)
+                        except Exception:
+                            pass
+                    rows = filtered_rows
+
                 if not rows:
                     return []
 
                 # Calculate BM25 scores across candidate set for normalization
-                bm25_res = self._bm25_search(rows, query, len(rows), category, scope, scope_id)
+                bm25_res = self._bm25_search(rows, query, len(rows), category, scope, scope_id, metadata_filters)
                 bm25_map = {r.entry.entry_id: r.score for r in bm25_res}
                 max_bm25 = max(bm25_map.values()) if bm25_map else 1.0
                 max_bm25 = max(max_bm25, 0.001)
@@ -323,7 +344,7 @@ class SQLiteMemoryBackend(MemoryBackend):
                     norm_bm25 = bm25_map.get(entry.entry_id, 0.0) / max_bm25
                     final_score = 0.7 * sim_score + 0.3 * norm_bm25
 
-                    if final_score > 0.05:
+                    if final_score > 0.0:
                         results.append(SearchResult(entry=entry, score=round(final_score, 4), source="hybrid"))
 
                 results.sort(key=lambda x: x.score, reverse=True)
@@ -370,7 +391,7 @@ class SQLiteMemoryBackend(MemoryBackend):
                 if not rows:
                     logger.info("FTS5 returned no results; running BM25 fallback")
                     return self._fallback_search(
-                        conn, query, top_k, category, scope, scope_id
+                        conn, query, top_k, category, scope, scope_id, metadata_filters
                     )
             else:
                 sql = """
@@ -396,6 +417,14 @@ class SQLiteMemoryBackend(MemoryBackend):
             
             results = []
             for row in rows:
+                if metadata_filters:
+                    try:
+                        meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                        if not all(meta.get(k) == v for k, v in metadata_filters.items()):
+                            continue
+                    except Exception:
+                        continue
+                        
                 entry = self._row_to_entry(row)
                 bm25_score = -row["bm25_score"]
                 results.append(SearchResult(entry=entry, score=bm25_score, source="sqlite"))
@@ -420,7 +449,8 @@ class SQLiteMemoryBackend(MemoryBackend):
 
     def _bm25_search(self, rows: list, query: str, top_k: int,
                      category: Optional[str], scope: Optional[MemoryScope],
-                     scope_id: Optional[str]) -> List[SearchResult]:
+                     scope_id: Optional[str],
+                     metadata_filters: Optional[Dict[str, str]] = None) -> List[SearchResult]:
         """BM25 Okapi ranking over a list of sqlite3.Row objects.
         
         This gives proper term-importance scoring so natural-language queries
@@ -459,6 +489,14 @@ class SQLiteMemoryBackend(MemoryBackend):
                 continue
             if scope_id and (row["scope_id"] or "") != scope_id:
                 continue
+                
+            if metadata_filters:
+                try:
+                    meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                    if not all(meta.get(k) == v for k, v in metadata_filters.items()):
+                        continue
+                except Exception:
+                    continue
 
             dl = len(toks) or 1
             tf_map = Counter(toks)
@@ -482,7 +520,8 @@ class SQLiteMemoryBackend(MemoryBackend):
 
     def _fallback_search(self, conn, query: str, top_k: int,
                          category: Optional[str], scope: Optional[MemoryScope],
-                         scope_id: Optional[str]) -> List[SearchResult]:
+                         scope_id: Optional[str],
+                         metadata_filters: Optional[Dict[str, str]] = None) -> List[SearchResult]:
         """Load all rows and run BM25; fall back to LIKE only for empty corpora."""
         all_sql = "SELECT *, 0 as bm25_score FROM memory_entries ORDER BY timestamp DESC"
         all_rows = conn.execute(all_sql).fetchall()
@@ -490,7 +529,7 @@ class SQLiteMemoryBackend(MemoryBackend):
         if not all_rows:
             return []
 
-        results = self._bm25_search(all_rows, query, top_k, category, scope, scope_id)
+        results = self._bm25_search(all_rows, query, top_k, category, scope, scope_id, metadata_filters)
         if results:
             logger.info("BM25 fallback found %d results", len(results))
             return results
@@ -511,6 +550,18 @@ class SQLiteMemoryBackend(MemoryBackend):
             like_params.append(scope_id)
         like_sql += " ORDER BY timestamp DESC LIMIT 1000"
         like_rows = conn.execute(like_sql, like_params).fetchall()  # nosec B608
+        
+        if metadata_filters:
+            filtered_like_rows = []
+            for row in like_rows:
+                try:
+                    meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                    if all(meta.get(k) == v for k, v in metadata_filters.items()):
+                        filtered_like_rows.append(row)
+                except Exception:
+                    pass
+            like_rows = filtered_like_rows
+
         return [
             SearchResult(entry=self._row_to_entry(r), score=1.0, source="like")
             for r in like_rows[:top_k]
@@ -552,6 +603,7 @@ class SQLiteMemoryBackend(MemoryBackend):
             'used_count', 'ignored_count', 'positive_outcomes', 'negative_outcomes',
             'last_accessed', 'relevance', 'confidence', 'memory_type',
             'creation_reason', 'source_component', 'source_agent', 'source_task',
+            'supersedes', 'invalidated_by', 'invalidated_reason'
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:

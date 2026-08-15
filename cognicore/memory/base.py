@@ -9,10 +9,42 @@ Version 2.0 — Agent Memory Operating System
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
+# ======================================================================
+# Experience Schemas (Stored in MemoryEntry.metadata["experience"])
+# ======================================================================
+
+class FailedApproach(TypedDict, total=False):
+    approach: str
+    result: str
+    reason: str
+
+class VerificationEvidence(TypedDict, total=False):
+    command: str
+    result: str
+    result_hash: str
+    exit_code: int
+
+class EnvironmentMetadata(TypedDict, total=False):
+    python_version: str
+    dependencies: str
+    os_info: str
+
+class RepositoryMetadata(TypedDict, total=False):
+    commit: str
+    paths: List[str]
+    repo_id: str
+
+class ExperiencePayload(TypedDict, total=False):
+    problem: str
+    attempts: List[FailedApproach]
+    successful_approach: str
+    verification: VerificationEvidence
+    environment: EnvironmentMetadata
+    repository: RepositoryMetadata
 
 # ======================================================================
 # Enums
@@ -25,6 +57,8 @@ class MemoryScope(Enum):
     SESSION = "session"
     AGENT = "agent"
     PROJECT = "project"
+    REPOSITORY = "repository"
+    ENVIRONMENT = "environment"
 
 
 class MemoryState(str, Enum):
@@ -33,11 +67,17 @@ class MemoryState(str, Enum):
     Memories progress through states based on actual usefulness:
         CANDIDATE → ACTIVE → VERIFIED → ARCHIVED → DELETED
     """
-    CANDIDATE = "candidate"   # Newly stored, unverified
-    ACTIVE = "active"         # Has been retrieved at least once
-    VERIFIED = "verified"     # Proven useful (positive outcomes exceed threshold)
-    ARCHIVED = "archived"     # Decayed or manually archived
-    DELETED = "deleted"       # Soft-deleted, pending cleanup
+    UNVERIFIED = "unverified"     # Unverified experience
+    OBSERVED = "observed"         # Agent asserted success/failure
+    VERIFIED = "verified"         # Independent verification attached
+    PROMOTED = "promoted"         # Approved for broader use
+    TRANSFERABLE = "transferable" # Ready for cross-agent/cross-repo transfer
+    
+    # Legacy / Utility states
+    CANDIDATE = "candidate"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    DELETED = "deleted"
 
 
 class MemoryType(str, Enum):
@@ -54,6 +94,7 @@ class MemoryType(str, Enum):
     FAILURE = "failure"          # Mistakes, anti-patterns
     REFLECTION = "reflection"    # Meta-observations, insights
     KNOWLEDGE = "knowledge"      # Structured domain knowledge
+    EXPERIENCE = "experience"    # Validated transferable experience
 
     @classmethod
     def from_string(cls, value: str) -> MemoryType:
@@ -91,6 +132,8 @@ class MemoryEntry:
     sequence_id: int = 0
     memory_type: str = "semantic"
     supersedes: Optional[str] = None
+    invalidated_by: Optional[str] = None
+    invalidated_reason: str = ""
     confidence: float = 1.0
 
     # --- Auto-populated by backend ---
@@ -128,6 +171,8 @@ class MemoryEntry:
             "sequence_id": self.sequence_id,
             "memory_type": self.memory_type,
             "supersedes": self.supersedes,
+            "invalidated_by": self.invalidated_by,
+            "invalidated_reason": self.invalidated_reason,
             "confidence": self.confidence,
             "entry_id": self.entry_id,
             "timestamp": self.timestamp,
@@ -174,6 +219,8 @@ class MemoryEntry:
             sequence_id=d.get("sequence_id", 0),
             memory_type=raw_type,
             supersedes=d.get("supersedes"),
+            invalidated_by=d.get("invalidated_by"),
+            invalidated_reason=d.get("invalidated_reason", ""),
             confidence=d.get("confidence", 1.0),
             entry_id=d.get("entry_id", ""),
             timestamp=d.get("timestamp", d.get("_timestamp", 0.0)),
@@ -288,7 +335,8 @@ class MemoryBackend(ABC):
                category: Optional[str] = None,
                scope: Optional[MemoryScope] = None,
                scope_id: Optional[str] = None,
-               question_timestamp: Optional[float] = None) -> List[SearchResult]:
+               question_timestamp: Optional[float] = None,
+               metadata_filters: Optional[Dict[str, str]] = None) -> List[SearchResult]:
         """Semantic + category search. Returns ranked results."""
         pass
 
