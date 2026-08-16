@@ -21,7 +21,7 @@ class TFIDFMemoryBackend(MemoryBackend):
     and JSON-based persistence.
     
     For production use with better semantic matching, install
-    `cognicore[embeddings]` and use `EmbeddingMemoryBackend` instead.
+    `cognicore[embeddings]` and use `BasicEmbeddingBackend` instead.
     """
 
 

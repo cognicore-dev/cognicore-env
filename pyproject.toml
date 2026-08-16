@@ -44,7 +44,18 @@ memory-providers = [
     "supermemory>=3.50",
 ]
 extension = ["mcp[cli]>=1.2.0"]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-xdist>=3.0", "httpx>=0.27"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "httpx>=0.27",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "pydantic>=2.0",
+    "PyJWT>=2.8.0",
+    "mcp[cli]>=1.2.0",
+    "fastmcp",
+]
 all = [
     "cognicore-env[rl,rendering,memory,hf,llm,embeddings,server,mcp,langchain,crewai,openai-agents,memory-providers,extension,dev]"
 ]
