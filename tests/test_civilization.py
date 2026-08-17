@@ -28,10 +28,10 @@ class DummyAgent:
 class TestCivilization(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Start a real server on a test port
-        cls.port = 19876
-        cls.server = CivilizationServer(port=cls.port)
+        # Let the OS allocate an available port to avoid collisions in CI.
+        cls.server = CivilizationServer(port=0)
         cls.server.start()
+        cls.port = cls.server.server.server_port
         time.sleep(0.5) # Wait for server to start
 
     @classmethod
