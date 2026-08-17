@@ -33,7 +33,7 @@ hf = ["huggingface-hub>=0.20"]
 llm = ["openai>=1.0", "google-genai>=0.1", "anthropic>=0.30"]
 embeddings = ["sentence-transformers>=2.0", "openai>=1.0"]
 server = ["fastapi>=0.110", "uvicorn>=0.27", "pydantic>=2.0", "PyJWT>=2.8.0"]
-mcp = ["mcp[cli]>=1.2.0"]
+mcp = ["mcp[cli]>=1.2.0,<2"]
 langchain = ["langchain>=0.2"]
 crewai = ["crewai>=0.50"]
 openai-agents = ["openai-agents>=0.1"]
@@ -43,7 +43,7 @@ memory-providers = [
     "zep-cloud>=3.23",
     "supermemory>=3.50",
 ]
-extension = ["mcp[cli]>=1.2.0"]
+extension = ["mcp[cli]>=1.2.0,<2"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -53,8 +53,7 @@ dev = [
     "uvicorn>=0.27",
     "pydantic>=2.0",
     "PyJWT>=2.8.0",
-    "mcp[cli]>=1.2.0",
-    "fastmcp",
+    "mcp[cli]>=1.2.0,<2",
 ]
 all = [
     "cognicore-env[rl,rendering,memory,hf,llm,embeddings,server,mcp,langchain,crewai,openai-agents,memory-providers,extension,dev]"
