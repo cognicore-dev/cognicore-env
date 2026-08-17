@@ -54,7 +54,7 @@ dev = [
     "pydantic>=2.0",
     "PyJWT>=2.8.0",
     "mcp[cli]>=1.2.0",
-    "fastmcp",
+    "fastmcp>=3.4.7",
 ]
 all = [
     "cognicore-env[rl,rendering,memory,hf,llm,embeddings,server,mcp,langchain,crewai,openai-agents,memory-providers,extension,dev]"
