@@ -69,7 +69,7 @@ graph TB
         MB["MemoryBackend ABC"]
         TFIDF["TFIDFMemoryBackend<br/>(default)"]
         SQL["SQLiteMemoryBackend"]
-        EMB["EmbeddingMemoryBackend"]
+        EMB["BasicEmbeddingBackend"]
         GR["GraphMemoryBackend"]
     end
 

@@ -14,11 +14,26 @@ import time
 
 
 def cmd_list(args):
-    import cognicore.gym
-    import gymnasium as gym
-    print("\n  CogniCore Gymnasium Environments:")
+    import cognicore
+
+    print("\n  CogniCore Environments:")
     print("  " + "-" * 45)
+    native = cognicore.list_envs()
+    for spec in native:
+        print(f"    {spec['id']}")
+    print(f"\n  Total: {len(native)} environments")
+
+    try:
+        import cognicore.gym  # registers gymnasium-native envs
+        import gymnasium as gym
+    except ImportError:
+        print("\n  Gymnasium-native envs require the RL extra:")
+        print("    pip install 'cognicore-env[rl]'")
+        return
+
     gym_envs = sorted(e for e in gym.envs.registry.keys() if e.startswith("cognicore/"))
+    print("\n  Gymnasium Environments:")
+    print("  " + "-" * 45)
     for eid in gym_envs:
         print(f"    {eid}")
     print(f"\n  Total: {len(gym_envs)} gymnasium-native envs")
@@ -244,16 +259,16 @@ def cmd_doctor(args):
     backends = [
         ("TFIDFMemoryBackend", "cognicore.memory.tfidf_backend", "TFIDFMemoryBackend"),
         ("SQLiteMemoryBackend", "cognicore.memory.sqlite_backend", "SQLiteMemoryBackend"),
-        ("EmbeddingMemoryBackend", "cognicore.memory.embedding_backend", "EmbeddingMemoryBackend"),
+        ("BasicEmbeddingBackend", "cognicore.memory.embedding_backend", "BasicEmbeddingBackend"),
     ]
     for name, mod, cls_name in backends:
         try:
             m = __import__(mod, fromlist=[cls_name])
             cls = getattr(m, cls_name)
-            if "SQLite" in name:
-                inst = cls(db_path=":memory:")
-            else:
-                inst = cls()
+            if name == "SQLiteMemoryBackend":
+                cls(db_path=":memory:")
+            elif name == "TFIDFMemoryBackend":
+                cls()
             print(f"    {name:30s} ✓")
         except Exception as e:
             print(f"    {name:30s} ✗ ({e})")

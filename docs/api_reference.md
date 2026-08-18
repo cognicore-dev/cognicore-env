@@ -101,7 +101,7 @@ from cognicore.memory.base import MemoryBackend, MemoryEntry, SearchResult
 |---------|--------|-------------|----------|
 | `TFIDFMemoryBackend` | `cognicore.memory.tfidf_backend` | None | Default, lightweight |
 | `SQLiteMemoryBackend` | `cognicore.memory.sqlite_backend` | None (stdlib) | Persistent, concurrent |
-| `EmbeddingMemoryBackend` | `cognicore.memory.embedding_backend` | sentence-transformers | Semantic accuracy |
+| `BasicEmbeddingBackend` | `cognicore.memory.embedding_backend` | sentence-transformers | Semantic accuracy |
 | `GraphMemoryBackend` | `cognicore.memory.graph_backend` | None | Relationship tracking |
 
 ### MemoryEntry

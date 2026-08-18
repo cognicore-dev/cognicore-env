@@ -110,9 +110,9 @@ Store anything. Retrieve it later by meaning, not just exact keywords.
 import cognicore
 
 memory = cognicore.Memory(max_size=10000)
-memory.store({"category": "crash", "fix": "add null check", "correct": True})
+memory.store({"text": "add null check before dereferencing user", "category": "crash", "correct": True})
 
-context = memory.get_context("crash", top_k=3)
+results = memory.semantic_search("null pointer crash", top_k=3)
 ```
 
 ### 🛡️ Immune System (Safety)
