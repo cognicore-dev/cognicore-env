@@ -1,6 +1,6 @@
 [project]
 name = "cognicore-env"
-version = "0.9.5"
+version = "0.10.2"
 description = "Runtime cognition layer for AI agents — memory, reflection, replay, and adaptive execution. The model stays the same. The runtime gets smarter."
 readme = "README.md"
 license = {text = "MIT"}
@@ -72,7 +72,7 @@ cognicore-extension = "cognicore.extension.__main__:main"
 cognicore-code-setup = "cognicore.extension.code_setup:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling<=1.24.2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
