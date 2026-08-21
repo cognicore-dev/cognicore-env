@@ -116,7 +116,10 @@ def get_user_id(request_obj) -> str:
 
     if not token:
         print(f"[DEBUG] get_user_id failed to find token. Logs: {' | '.join(debug_logs)}")
-        raise HTTPException(status_code=401, detail=f"Missing or invalid Bearer token in get_user_id. Debug: {' | '.join(debug_logs)}")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Missing or invalid authentication credentials in get_user_id. Debug: {' | '.join(debug_logs)}",
+        )
         
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -892,13 +895,15 @@ class AuthMiddleware:
                         message["headers"] = [(b"content-type", b"text/plain")]
                     elif message["type"] == "http.response.body":
                         header_keys = ", ".join([k.decode("utf-8") for k in headers.keys()])
-                        message["body"] = f"Missing or invalid Bearer token. Received headers: {header_keys}".encode("utf-8")
+                        message["body"] = (
+                            f"Missing or invalid authentication credentials. Received headers: {header_keys}"
+                        ).encode("utf-8")
                     await send(message)
                 
                 # Mock a 401 response directly
                 await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
                 header_keys = ", ".join([k.decode("utf-8") for k in headers.keys()])
-                error_msg = f"Missing or invalid Bearer token. Received headers: {header_keys}"
+                error_msg = f"Missing or invalid authentication credentials. Received headers: {header_keys}"
                 await send({"type": "http.response.body", "body": error_msg.encode("utf-8")})
                 return
 

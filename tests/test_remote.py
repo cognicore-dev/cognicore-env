@@ -12,7 +12,7 @@ def test_remote_missing_auth():
     # Should get 401 without auth header
     response = client.get("/mcp/sse")
     assert response.status_code == 401
-    assert "Missing or invalid Bearer token" in response.text
+    assert "Missing or invalid authentication credentials" in response.text
 
 def test_remote_invalid_jwt():
     response = client.get("/mcp/sse", headers={"Authorization": "Bearer invalid.token.here"})
