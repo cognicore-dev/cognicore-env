@@ -13,6 +13,7 @@ Auth: Personal Access Token (X-Figma-Token header)
 
 Usage:
 
+    import os
     from cognicore.memory.sqlite_backend import SQLiteMemoryBackend
     from cognicore.fabric.registry import get_fabric
     from cognicore.fabric.plugins.figma import FigmaAdapter
@@ -22,8 +23,8 @@ Usage:
 
     # Pull design tokens from a real Figma file
     result = figma.sync(
-        file_key="abc123xyz",     # from figma.com/file/<KEY>/...
-        access_token="figd_...",  # Personal Access Token
+        file_key="abc123xyz",  # from figma.com/file/<KEY>/...
+        access_token=os.environ["FIGMA_ACCESS_TOKEN"],
     )
 
     # Retrieve stored tokens in any future session (no token needed)
@@ -85,7 +86,7 @@ class FigmaAdapter(CognitiveAdapter):
         figma = FigmaAdapter(fabric)
 
         # One-time sync from the real Figma file
-        figma.sync(file_key="abc123", access_token="figd_...")
+        figma.sync(file_key="abc123", access_token=os.environ["FIGMA_ACCESS_TOKEN"])
 
         # From now on, recall without hitting Figma API
         tokens = figma.recall()
