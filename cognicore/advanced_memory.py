@@ -112,7 +112,7 @@ class SemanticMemory:
     # Store
     # ------------------------------------------------------------------
 
-    def store(self, entry: Dict[str, Any]) -> None:
+    def store(self, entry: Dict[str, Any], **kwargs) -> None:
         """Store an entry with semantic indexing.
 
         The entry should contain a ``text`` or ``prompt`` field for

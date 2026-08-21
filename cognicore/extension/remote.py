@@ -820,6 +820,375 @@ def cognicore_elevenlabs_recommend(
     return apply_auto_compression(ctx, conversation, res)
 
 
+# ═══════════════════════════════════════════════════════════
+# STRUCTURED EXPERIENCE MEMORY — Verified Cross-Agent Learning
+# ═══════════════════════════════════════════════════════════
+
+from cognicore.experience import (
+    ExperienceManager,
+    StructuredExperience,
+    Attempt,
+    AttemptOutcome,
+    EvidenceRecord,
+    EnvironmentContext,
+    RepositoryContext,
+    VerificationStatus,
+)
+
+
+def _get_experience_manager(ctx: Context) -> ExperienceManager:
+    """Get an ExperienceManager for the current user's backend."""
+    backend = get_backend(ctx)
+    return ExperienceManager(backend)
+
+
+@mcp.tool()
+def cognicore_record_experience(
+    task: str,
+    problem: str,
+    solution: str,
+    ctx: Context,
+    why_it_worked: str = "",
+    attempts_json: str = "[]",
+    repository_id: str = "",
+    commit: str = "",
+    branch: str = "",
+    affected_files: str = "",
+    python_version: str = "",
+    framework: str = "",
+    framework_version: str = "",
+    dependencies_json: str = "{}",
+    conversation: Optional[list] = None,
+) -> str:
+    """Record a structured experience from a completed task.
+
+    Call this after solving a non-trivial problem. Records the task,
+    what you tried, what failed, what worked, and why.
+
+    Args:
+        task: What you were trying to do, e.g. "Fix JWT auth failures".
+        problem: The specific problem, e.g. "Intermittent 401s after deploy".
+        solution: What actually fixed it.
+        why_it_worked: Root cause explanation.
+        attempts_json: JSON array of attempts:
+            [{"approach": "...", "outcome": "success"|"failure", "reason": "..."}]
+        repository_id: Repo identifier, e.g. "acme/auth-service".
+        commit: Current commit hash.
+        branch: Current branch.
+        affected_files: Comma-separated file paths that were changed.
+        python_version: e.g. "3.11.4".
+        framework: e.g. "FastAPI".
+        framework_version: e.g. "0.95.0".
+        dependencies_json: JSON dict of key dependencies, e.g. {"pyjwt": "2.8.0"}.
+    """
+    manager = _get_experience_manager(ctx)
+    agent_id = _get_agent_id(ctx)
+
+    # Parse attempts
+    attempts = []
+    try:
+        raw_attempts = json.loads(attempts_json) if attempts_json else []
+        for a in raw_attempts:
+            attempts.append(Attempt(
+                approach=a.get("approach", ""),
+                outcome=a.get("outcome", AttemptOutcome.SUCCESS.value),
+                reason=a.get("reason", ""),
+                evidence=a.get("evidence", ""),
+            ))
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+
+    # Parse dependencies
+    try:
+        deps = json.loads(dependencies_json) if dependencies_json else {}
+        if not isinstance(deps, dict):
+            deps = {}
+    except (json.JSONDecodeError, TypeError):
+        deps = {}
+
+    # Parse affected files
+    files = [f.strip() for f in affected_files.split(",") if f.strip()] if affected_files else []
+
+    experience = StructuredExperience(
+        task=task,
+        problem=problem,
+        solution=solution,
+        why_it_worked=why_it_worked,
+        attempts=attempts,
+        source_agent=agent_id,
+        repository=RepositoryContext(
+            repo_id=repository_id,
+            commit=commit,
+            branch=branch,
+            affected_files=files,
+        ),
+        environment=EnvironmentContext(
+            python_version=python_version,
+            framework=framework,
+            framework_version=framework_version,
+            dependencies=deps,
+        ),
+    )
+
+    exp_id = manager.record(experience)
+    n_failures = len([a for a in attempts if a.outcome == AttemptOutcome.FAILURE.value])
+
+    result = {
+        "status": "recorded",
+        "experience_id": exp_id,
+        "task": task,
+        "failures_stored": n_failures,
+        "content_hash": experience.content_hash[:16],
+        "message": f"Experience recorded as CANDIDATE. Call cognicore_verify_experience with evidence to promote to VERIFIED.",
+    }
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_verify_experience(
+    experience_id: str,
+    ctx: Context,
+    evidence_json: str = "[]",
+    conversation: Optional[list] = None,
+) -> str:
+    """Verify a recorded experience with real evidence.
+
+    Call this after recording an experience to promote it from CANDIDATE
+    to VERIFIED. Provide evidence of the solution working (test results,
+    command outputs, etc.).
+
+    Args:
+        experience_id: The ID returned by cognicore_record_experience.
+        evidence_json: JSON array of evidence records:
+            [{"command": "pytest tests/", "exit_code": 0, "commit": "abc123"}]
+    """
+    manager = _get_experience_manager(ctx)
+
+    evidence = []
+    try:
+        raw = json.loads(evidence_json) if evidence_json else []
+        for e in raw:
+            evidence.append(EvidenceRecord(
+                command=e.get("command", ""),
+                exit_code=e.get("exit_code", 0),
+                stdout_hash=e.get("stdout_hash", ""),
+                timestamp=e.get("timestamp", ""),
+                commit=e.get("commit", ""),
+            ))
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return json.dumps({"status": "error", "message": "Invalid evidence_json format"})
+
+    vresult = manager.verify(experience_id, evidence)
+    new_id = getattr(vresult, '_promoted_id', experience_id)
+
+    result = {
+        "status": "verified" if vresult.passed else "failed",
+        "experience_id": new_id,
+        "passed": vresult.passed,
+        "reason": vresult.reason,
+        "blockers": vresult.blockers,
+    }
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_recall_experience(
+    query: str,
+    ctx: Context,
+    include_failures: bool = True,
+    require_verified: bool = False,
+    top_k: int = 5,
+    python_version: str = "",
+    framework: str = "",
+    framework_version: str = "",
+    dependencies_json: str = "{}",
+    conversation: Optional[list] = None,
+) -> str:
+    """Recall relevant past experiences before starting a task.
+
+    Call this BEFORE working on a non-trivial problem. CogniCore will tell
+    you what was tried before, what failed, and what worked — with evidence.
+
+    Args:
+        query: Describe what you're working on, e.g. "JWT auth bug in FastAPI".
+        include_failures: Include past failed approaches as warnings.
+        require_verified: Only return evidence-verified experiences.
+        top_k: Max number of experiences to return.
+        python_version: Current Python version for compatibility filtering.
+        framework: Current framework for compatibility filtering.
+        framework_version: Current framework version.
+        dependencies_json: Current key dependencies as JSON dict.
+    """
+    manager = _get_experience_manager(ctx)
+
+    current_env = None
+    if python_version or framework:
+        try:
+            deps = json.loads(dependencies_json) if dependencies_json else {}
+            if not isinstance(deps, dict):
+                deps = {}
+        except (json.JSONDecodeError, TypeError):
+            deps = {}
+        current_env = EnvironmentContext(
+            python_version=python_version,
+            framework=framework,
+            framework_version=framework_version,
+            dependencies=deps,
+        )
+
+    results = manager.retrieve(
+        query=query,
+        current_env=current_env,
+        include_failures=include_failures,
+        require_verified=require_verified,
+        top_k=top_k,
+    )
+
+    output = {
+        "query": query,
+        "total_candidates": results.total_candidates,
+        "filtered_out": results.filtered_out,
+        "experiences": [],
+        "failure_warnings": [],
+    }
+
+    for exp in results.experiences:
+        exp_data = {
+            "experience_id": exp.experience_id,
+            "task": exp.task,
+            "solution": exp.solution,
+            "why_it_worked": exp.why_it_worked,
+            "verification_status": exp.verification_status,
+            "source_agent": exp.source_agent,
+            "confidence": exp.confidence,
+        }
+        if exp.attempts:
+            exp_data["attempts"] = [
+                {"approach": a.approach, "outcome": a.outcome, "reason": a.reason}
+                for a in exp.attempts
+            ]
+        output["experiences"].append(exp_data)
+
+    for fail in results.failures:
+        output["failure_warnings"].append({
+            "experience_id": fail.experience_id,
+            "problem": fail.problem,
+            "source_agent": fail.source_agent,
+        })
+
+    if not results.experiences and not results.failures:
+        output["message"] = "No prior experience found for this query."
+    else:
+        output["message"] = f"Found {len(results.experiences)} experiences and {len(results.failures)} failure warnings."
+
+    res = json.dumps(output, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_share_experience(
+    query: str,
+    target_agent_id: str,
+    ctx: Context,
+    top_k: int = 5,
+    conversation: Optional[list] = None,
+) -> str:
+    """Transfer verified experiences to another agent.
+
+    Only VERIFIED experiences with intact provenance are transferred.
+    Failure warnings are also shared so the target agent avoids known mistakes.
+
+    Args:
+        query: What the target agent is working on.
+        target_agent_id: The agent to share experiences with.
+        top_k: Max experiences to transfer.
+    """
+    source_backend = get_backend(ctx)
+    target_db_path = get_db_path_for_user(target_agent_id)
+    from cognicore.memory import SQLiteMemoryBackend
+    target_backend = SQLiteMemoryBackend(target_db_path, provider=_get_shared_provider())
+
+    manager = ExperienceManager(source_backend)
+    transfer = manager.transfer(
+        source_backend=source_backend,
+        target_backend=target_backend,
+        query=query,
+        top_k=top_k,
+    )
+
+    result = {
+        "status": "transferred",
+        "target_agent": target_agent_id,
+        "experiences_transferred": len(transfer.transferred),
+        "failures_surfaced": len(transfer.failures_surfaced),
+        "blocked": transfer.blocked,
+        "total_candidates": transfer.total_candidates,
+    }
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
+@mcp.tool()
+def cognicore_check_experience(
+    experience_id: str,
+    ctx: Context,
+    python_version: str = "",
+    framework: str = "",
+    framework_version: str = "",
+    dependencies_json: str = "{}",
+    conversation: Optional[list] = None,
+) -> str:
+    """Check if a past experience is still valid in the current environment.
+
+    Call this when you're about to rely on a past experience but your
+    environment has changed (new Python version, upgraded dependencies, etc.).
+
+    Args:
+        experience_id: ID of the experience to check.
+        python_version: Current Python version.
+        framework: Current framework.
+        framework_version: Current framework version.
+        dependencies_json: Current dependencies as JSON dict.
+    """
+    manager = _get_experience_manager(ctx)
+
+    try:
+        deps = json.loads(dependencies_json) if dependencies_json else {}
+        if not isinstance(deps, dict):
+            deps = {}
+    except (json.JSONDecodeError, TypeError):
+        deps = {}
+
+    current_env = EnvironmentContext(
+        python_version=python_version,
+        framework=framework,
+        framework_version=framework_version,
+        dependencies=deps,
+    )
+
+    reval = manager.revalidate(experience_id, current_env)
+
+    result = {
+        "experience_id": experience_id,
+        "valid": reval.valid,
+        "status": reval.new_status,
+        "reason": reval.reason,
+    }
+    if reval.staleness:
+        result["stale"] = reval.staleness.stale
+        result["staleness_reasons"] = reval.staleness.reasons
+        result["age_days"] = round(reval.staleness.age_days, 1)
+        if reval.staleness.compatibility:
+            result["compatibility_score"] = reval.staleness.compatibility.score
+            result["blockers"] = reval.staleness.compatibility.blockers
+            result["warnings"] = reval.staleness.compatibility.warnings
+
+    res = json.dumps(result, indent=2)
+    return apply_auto_compression(ctx, conversation, res)
+
+
 # Create the FastAPI app
 app = FastAPI(title="CogniCore Remote MCP Server")
 

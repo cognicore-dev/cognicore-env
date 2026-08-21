@@ -24,8 +24,8 @@ class EvaluationArm:
         self.arm_name = arm_name
         self.model = model
         self.client = openai.OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ.get("OPENROUTER_API_KEY", os.environ.get("OPENAI_API_KEY", "mock_key_for_tests"))
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.environ.get("GROQ_API_KEY", "mock_key_for_tests")
         )
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -68,6 +68,9 @@ class EvaluationArm:
                     self.total_prompt_tokens += response.usage.prompt_tokens
                     self.total_completion_tokens += response.usage.completion_tokens
             except Exception as e:
+                import traceback
+                print(f"LLM API Error: {e}")
+                traceback.print_exc()
                 # Mock fallback if no API key
                 action = "```python\n# fallback\n```" if "software" in task["domain"] else "```yaml\nversion: '3.8'\nservices:\n```"
 
