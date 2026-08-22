@@ -216,6 +216,14 @@ class SemanticMemory:
             for e, _ in successes[:top_k]
         ]
 
+    def retrieve_successes(self, category: str, top_k: int = 3) -> List[Dict[str, Any]]:
+        """Alias for best_actions."""
+        return self.best_actions(category, top_k)
+
+    def retrieve_failures(self, category: str, top_k: int = 3) -> List[Dict[str, Any]]:
+        """Alias for worst_actions."""
+        return self.worst_actions(category, top_k)
+
     def worst_actions(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """Retrieve the worst past actions (what NOT to do)."""
         results = self.semantic_search(query, top_k=20)
