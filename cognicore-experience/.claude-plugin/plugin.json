@@ -1,0 +1,19 @@
+{
+  "name": "cognicore-experience",
+  "version": "1.0.0",
+  "description": "CogniCore Structured Validated Experience integration for Claude Code. Provides evidence-gated experience memory, multi-attempt failure tracking (DO NOT REPEAT), cross-session persistence, environment compatibility/staleness validation, and cross-agent transfer.",
+  "author": {
+    "name": "CogniCore Dev",
+    "email": "cognicore.dev@github.com"
+  },
+  "homepage": "https://github.com/Kaushalt2004/cognicore-my-openenv/tree/main/cognicore-experience",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "experience",
+    "verification",
+    "failure-learning",
+    "mcp",
+    "cognicore"
+  ]
+}
