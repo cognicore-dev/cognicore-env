@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any
 import os
 import hashlib
 from pathlib import Path
@@ -156,15 +158,24 @@ def _get_shared_provider():
                 print(f"[SEMANTIC] Failed to initialize SentenceTransformerProvider: {e}")
     return _shared_provider
 
-def get_backend(ctx: Context):
-    """Dynamically resolve the backend for the current request context."""
-    if not ctx.request_context:
-        raise RuntimeError("No request context available. Make sure to use StreamableHTTP or SSE transport with Starlette.")
-    
-    # ctx.request_context is mcp.shared.context.RequestContext
-    user_id = get_user_id(ctx.request_context)
-    db_path = get_db_path_for_user(user_id)
-    
+def get_backend(ctx: Optional[Context] = None):
+    """Dynamically resolve the backend for the current request context or local stdio."""
+    db_env = os.environ.get("COGNICORE_DB_PATH")
+    if db_env:
+        from cognicore.memory import SQLiteMemoryBackend
+        return SQLiteMemoryBackend(db_env, provider=_get_shared_provider())
+
+    if ctx is None or not getattr(ctx, "request_context", None):
+        db_path = get_db_path_for_user("local_claude_code")
+        from cognicore.memory import SQLiteMemoryBackend
+        return SQLiteMemoryBackend(db_path, provider=_get_shared_provider())
+
+    try:
+        user_id = get_user_id(ctx.request_context)
+        db_path = get_db_path_for_user(user_id)
+    except Exception:
+        db_path = get_db_path_for_user("local_claude_code")
+
     from cognicore.memory import SQLiteMemoryBackend
     return SQLiteMemoryBackend(db_path, provider=_get_shared_provider())
 
@@ -221,11 +232,15 @@ def _get_reputation() -> ReputationEngine:
         _reputation_engine = ReputationEngine(_get_commerce_db_path())
     return _reputation_engine
 
-def _get_agent_id(ctx: Context) -> str:
-    """Extract a stable agent_id from the request context."""
-    user_id = get_user_id(ctx.request_context)
-    return user_id
-
+def _get_agent_id(ctx: Optional[Context] = None) -> str:
+    """Extract a stable agent_id from the request context or local environment."""
+    if ctx is None or not getattr(ctx, "request_context", None):
+        return os.environ.get("COGNICORE_AGENT_ID", "claude_code_agent")
+    try:
+        user_id = get_user_id(ctx.request_context)
+        return user_id
+    except Exception:
+        return os.environ.get("COGNICORE_AGENT_ID", "claude_code_agent")
 
 def apply_auto_compression(ctx: Context, conversation: Optional[list], current_response: str) -> str:
     """Check token count and automatically compress if over 150,000 tokens."""
@@ -847,7 +862,7 @@ def cognicore_record_experience(
     task: str,
     problem: str,
     solution: str,
-    ctx: Context,
+    ctx: Optional[Context] = None,
     why_it_worked: str = "",
     attempts_json: str = "[]",
     repository_id: str = "",
@@ -948,7 +963,7 @@ def cognicore_record_experience(
 @mcp.tool()
 def cognicore_verify_experience(
     experience_id: str,
-    ctx: Context,
+    ctx: Optional[Context] = None,
     evidence_json: str = "[]",
     conversation: Optional[list] = None,
 ) -> str:
@@ -973,7 +988,7 @@ def cognicore_verify_experience(
                 command=e.get("command", ""),
                 exit_code=e.get("exit_code", 0),
                 stdout_hash=e.get("stdout_hash", ""),
-                timestamp=e.get("timestamp", ""),
+                timestamp=e.get("timestamp") or datetime.now(timezone.utc).isoformat(),
                 commit=e.get("commit", ""),
             ))
     except (json.JSONDecodeError, TypeError, AttributeError):
@@ -996,7 +1011,7 @@ def cognicore_verify_experience(
 @mcp.tool()
 def cognicore_recall_experience(
     query: str,
-    ctx: Context,
+    ctx: Optional[Context] = None,
     include_failures: bool = True,
     require_verified: bool = False,
     top_k: int = 5,
@@ -1072,11 +1087,17 @@ def cognicore_recall_experience(
         output["experiences"].append(exp_data)
 
     for fail in results.failures:
-        output["failure_warnings"].append({
+        fw = {
             "experience_id": fail.experience_id,
             "problem": fail.problem,
             "source_agent": fail.source_agent,
-        })
+        }
+        if fail.attempts:
+            fw["approach"] = fail.attempts[0].approach
+            fw["reason"] = fail.attempts[0].reason
+        if fail.environment and (fail.environment.dependencies or fail.environment.python_version):
+            fw["environment"] = fail.environment.to_dict()
+        output["failure_warnings"].append(fw)
 
     if not results.experiences and not results.failures:
         output["message"] = "No prior experience found for this query."
@@ -1091,7 +1112,7 @@ def cognicore_recall_experience(
 def cognicore_share_experience(
     query: str,
     target_agent_id: str,
-    ctx: Context,
+    ctx: Optional[Context] = None,
     top_k: int = 5,
     conversation: Optional[list] = None,
 ) -> str:
@@ -1133,7 +1154,7 @@ def cognicore_share_experience(
 @mcp.tool()
 def cognicore_check_experience(
     experience_id: str,
-    ctx: Context,
+    ctx: Optional[Context] = None,
     python_version: str = "",
     framework: str = "",
     framework_version: str = "",
