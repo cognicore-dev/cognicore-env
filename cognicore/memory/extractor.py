@@ -8,18 +8,7 @@ from cognicore.memory.base import MemoryBackend, MemoryEntry, MemoryScope
 
 logger = logging.getLogger("cognicore.memory.extractor")
 
-SYSTEM_PROMPT = """
-You are a highly intelligent automated memory extractor.
-Your job is to read a conversational transcript between a User and an AI Agent, and extract core facts, rules, and preferences that the AI should remember for the future.
-
-Extract them into a JSON array of objects.
-Each object should have:
-- "text": The core fact, rule, or preference (written in third person, e.g., "The user prefers Python", or "The project uses React").
-- "memory_type": Either "preference", "semantic", or "constraint".
-
-If there are no useful facts to extract, return an empty array [].
-Respond ONLY with valid JSON. Do not include markdown formatting or backticks.
-"""
+SYSTEM_PROMPT = """Extract core facts, rules, preferences, constraints, successful solutions, and failed approaches from this transcript into a JSON array: [{"text": "3rd person detail", "memory_type": "preference|semantic|constraint"}]. Return [] if none. Preserve context and negations. ONLY output valid JSON."""
 
 class TranscriptExtractor:
     """
@@ -37,8 +26,21 @@ class TranscriptExtractor:
         Returns a list of entry_ids that were created.
         """
         logger.info("Extracting memories from transcript...")
+        
+        # Compress transcript safely
+        lines = []
+        for line in transcript.split("\n"):
+            line = line.strip()
+            if not line: continue
+            if line.startswith("User:"):
+                line = "U:" + line[len("User:"):]
+            elif line.startswith("Agent:"):
+                line = "A:" + line[len("Agent:"):]
+            lines.append(line)
+        compressed_transcript = "\n".join(lines)
+        
         try:
-            response = ask_llm(prompt=transcript, system=SYSTEM_PROMPT, max_tokens=500, temperature=0.1)
+            response = ask_llm(prompt=compressed_transcript, system=SYSTEM_PROMPT, max_tokens=500, temperature=0.1)
         except Exception as e:
             logger.error(f"LLM Extraction failed: {e}")
             return []
