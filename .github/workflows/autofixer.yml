@@ -10,7 +10,7 @@ name: 🔧 AutoFixer Bot — Automatic Issue Solver
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
+    - cron: '0 0 * * 0'  # Every hour
   workflow_dispatch:  # Manual trigger
   issues:
     types: [labeled]  # Trigger when issue gets 'autofix' label

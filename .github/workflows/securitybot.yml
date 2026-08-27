@@ -10,7 +10,7 @@ name: 🛡️ SecurityBot — Vulnerability Scanner
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
+    - cron: '0 0 * * 0'  # Every hour
   push:
     branches: [main]
     paths: ['cognicore/**']

@@ -133,7 +133,7 @@ class BenchmarkResult:
             lines.append("  Learning Curves (Easy, Memory):")
             for r in memory_easy:
                 accs = [f"{a:.0%}" for a in r.episode_accuracies[:5]]
-                lines.append(f"    {r.env_id}: {' → '.join(accs)}")
+                lines.append(f"    {r.env_id}: {' -> '.join(accs)}")
             lines.append("")
 
         # Backend latency
