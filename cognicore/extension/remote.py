@@ -57,13 +57,6 @@ security = HTTPBearer()
 
 
 
-# Keep local development zero-config, but never let a deployed instance start
-# with a publicly known signing key. Railway exposes RAILWAY_ENVIRONMENT, while
-# other deployments can opt into the same fail-closed check via COGNICORE_ENV.
-DEFAULT_JWT_SECRET = "dev_secret_key_change_in_prod"
-JWT_SECRET = os.environ.get("COGNICORE_JWT_SECRET", DEFAULT_JWT_SECRET)
-JWT_ALGORITHM = "HS256"
-
 # The legacy OAuth stubs and x-anthropic-client shortcut do not verify identity.
 # They remain available only for explicit local compatibility testing.
 INSECURE_AUTH_ENABLED = os.environ.get("COGNICORE_ALLOW_INSECURE_AUTH", "").lower() in {
@@ -76,8 +69,16 @@ IS_PRODUCTION = (
     or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 )
 
-if IS_PRODUCTION and JWT_SECRET == DEFAULT_JWT_SECRET:
+# Production must use a stable operator-provided key. Local development remains
+# zero-config with a fresh process-scoped key instead of a hardcoded credential.
+JWT_SECRET = os.environ.get("COGNICORE_JWT_SECRET")
+if IS_PRODUCTION and not JWT_SECRET:
     raise RuntimeError("COGNICORE_JWT_SECRET must be set to a strong secret in production")
+if not JWT_SECRET:
+    import secrets
+    JWT_SECRET = secrets.token_urlsafe(32)
+
+JWT_ALGORITHM = "HS256"
 
 def get_user_id(request_obj) -> str:
     """Extract and validate user_id from the Authorization JWT or x-anthropic-client header.
@@ -857,8 +858,7 @@ def cognicore_elevenlabs_recommend(
 # STRUCTURED EXPERIENCE MEMORY — Verified Cross-Agent Learning
 # ═══════════════════════════════════════════════════════════
 
-from cognicore.experience import (
-    ExperienceManager,
+from cognicore.experience.schema import (
     StructuredExperience,
     Attempt,
     AttemptOutcome,
@@ -868,9 +868,21 @@ from cognicore.experience import (
     VerificationStatus,
 )
 
+try:
+    from cognicore.experience.manager import ExperienceManager
+except ImportError:
+    # The structured-experience feature is optional and some releases contain
+    # only its schema. Keep the remote server and unrelated MCP tools available
+    # instead of failing the entire application during module import.
+    ExperienceManager = None
 
-def _get_experience_manager(ctx: Context) -> ExperienceManager:
+
+def _get_experience_manager(ctx: Context) -> Any:
     """Get an ExperienceManager for the current user's backend."""
+    if ExperienceManager is None:
+        raise RuntimeError(
+            "Structured experience tools require cognicore.experience.manager"
+        )
     backend = get_backend(ctx)
     return ExperienceManager(backend)
 
@@ -1149,7 +1161,7 @@ def cognicore_share_experience(
     from cognicore.memory import SQLiteMemoryBackend
     target_backend = SQLiteMemoryBackend(target_db_path, provider=_get_shared_provider())
 
-    manager = ExperienceManager(source_backend)
+    manager = _get_experience_manager(ctx)
     transfer = manager.transfer(
         source_backend=source_backend,
         target_backend=target_backend,
