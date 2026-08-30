@@ -57,9 +57,27 @@ security = HTTPBearer()
 
 
 
-# By default, use a local dev secret if none provided (ONLY FOR DEV!)
-JWT_SECRET = os.environ.get("COGNICORE_JWT_SECRET", "dev_secret_key_change_in_prod")
+# Keep local development zero-config, but never let a deployed instance start
+# with a publicly known signing key. Railway exposes RAILWAY_ENVIRONMENT, while
+# other deployments can opt into the same fail-closed check via COGNICORE_ENV.
+DEFAULT_JWT_SECRET = "dev_secret_key_change_in_prod"
+JWT_SECRET = os.environ.get("COGNICORE_JWT_SECRET", DEFAULT_JWT_SECRET)
 JWT_ALGORITHM = "HS256"
+
+# The legacy OAuth stubs and x-anthropic-client shortcut do not verify identity.
+# They remain available only for explicit local compatibility testing.
+INSECURE_AUTH_ENABLED = os.environ.get("COGNICORE_ALLOW_INSECURE_AUTH", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+IS_PRODUCTION = (
+    os.environ.get("COGNICORE_ENV", "").lower() in {"prod", "production"}
+    or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+)
+
+if IS_PRODUCTION and JWT_SECRET == DEFAULT_JWT_SECRET:
+    raise RuntimeError("COGNICORE_JWT_SECRET must be set to a strong secret in production")
 
 def get_user_id(request_obj) -> str:
     """Extract and validate user_id from the Authorization JWT or x-anthropic-client header.
@@ -110,9 +128,9 @@ def get_user_id(request_obj) -> str:
             if auth and auth.lower().startswith("bearer "):
                 token = auth[7:].strip()
 
-    # If Claude's MCP runtime is identifying itself via x-anthropic-client,
-    # treat it as a valid authenticated Claude session.
-    if not token and anthropic_client:
+    # This unsigned header is only supported for explicitly enabled local
+    # development. It must never be trusted as production authentication.
+    if not token and anthropic_client and INSECURE_AUTH_ENABLED:
         print(f"[AUTH] Accepting x-anthropic-client header: {anthropic_client[:40]}")
         return f"claude_client_{hashlib.sha256(anthropic_client.encode()).hexdigest()[:16]}"
 
@@ -1253,8 +1271,15 @@ class AuthMiddleware:
             return await self.app(scope, receive, send)
             
         path = scope.get("path", "")
-        # Protect only the /mcp endpoints
-        if path.startswith("/mcp"):
+        # FastMCP's SSE transport can expose both the mounted /mcp routes and
+        # root-level transport paths. Protect every form so a mount change
+        # cannot silently create an authentication bypass.
+        protected_prefixes = ("/mcp", "/sse", "/messages")
+        is_protected = any(
+            path == prefix or path.startswith(f"{prefix}/")
+            for prefix in protected_prefixes
+        )
+        if is_protected:
             # Allow OPTIONS for CORS
             if scope.get("method") == "OPTIONS":
                 return await self.app(scope, receive, send)
@@ -1273,8 +1298,7 @@ class AuthMiddleware:
                 if "token" in parsed:
                     token = parsed["token"][0]
             
-            # Claude's MCP runtime uses x-anthropic-client instead of Authorization
-            if not token and anthropic_client:
+            if not token and anthropic_client and INSECURE_AUTH_ENABLED:
                 print(f"[AUTH] Middleware: accepting x-anthropic-client: {anthropic_client[:40]}")
                 return await self.app(scope, receive, send)
                     
@@ -1332,6 +1356,10 @@ from fastapi import status
 
 @app.get("/.well-known/oauth-authorization-server")
 def oauth_metadata(request: Request):
+    # These endpoints implement a mock OAuth flow, not a real identity-provider
+    # exchange. Hide the entire flow unless a developer explicitly enables it.
+    if not INSECURE_AUTH_ENABLED:
+        raise HTTPException(status_code=404)
     base_url = str(request.base_url).rstrip("/")
     return {
         "issuer": base_url,
@@ -1344,6 +1372,8 @@ def oauth_metadata(request: Request):
 
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_client(request: Request):
+    if not INSECURE_AUTH_ENABLED:
+        raise HTTPException(status_code=404)
     try:
         body = await request.json()
     except Exception:
@@ -1361,10 +1391,14 @@ async def register_client(request: Request):
 
 @app.get("/authorize")
 def authorize(redirect_uri: str, state: str):
+    if not INSECURE_AUTH_ENABLED:
+        raise HTTPException(status_code=404)
     return RedirectResponse(url=f"{redirect_uri}?code=mock_auth_code&state={state}")
 
 @app.post("/token")
 async def token(request: Request):
+    if not INSECURE_AUTH_ENABLED:
+        raise HTTPException(status_code=404)
     # Generate a real JWT token instead of a mock string
     import time
     payload = {
@@ -1644,8 +1678,9 @@ async def figma_webhook(request: Request):
     }
 
 
+# Expose one canonical, authenticated MCP surface. Mounting the same app at "/"
+# previously made /sse and /messages reachable outside the /mcp-only auth check.
 app.mount("/mcp", mcp_app)
-app.mount("/", mcp_app)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

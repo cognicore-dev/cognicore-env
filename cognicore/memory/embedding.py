@@ -24,6 +24,14 @@ try:
 except ImportError:
     HAS_SBERT = False
 
+# Gymnasium is an optional dependency. Selecting the base class once at import
+# time keeps the wrapper usable in minimal installs while preserving normal
+# gym.Wrapper behavior whenever the RL extra is installed.
+try:
+    import gymnasium as gym
+except ImportError:
+    gym = None
+
 
 class EmbeddingMemory:
     """Semantic memory using vector embeddings for retrieval.
@@ -237,7 +245,7 @@ class EmbeddingMemory:
         self._texts.clear()
 
 
-class CognitiveGymWrapper(gym.Wrapper if 'gym' in dir() else object):
+class CognitiveGymWrapper(gym.Wrapper if gym is not None else object):
     """Gymnasium wrapper that adds embedding-based memory to ANY env.
 
     This is the core value proposition:
@@ -248,19 +256,12 @@ class CognitiveGymWrapper(gym.Wrapper if 'gym' in dir() else object):
       #   2. Retrieves similar past experiences
       #   3. Adds memory context to info dict
     """
-
-
-    def _with_lock(func):
-        def wrapper(self, *args, **kwargs):
-            with self._lock:
-                return func(self, *args, **kwargs)
-        return wrapper
-
     def __init__(self, env, memory_size: int = 5000, top_k: int = 3):
-        try:
-            import gymnasium as gym
+        # object.__init__ cannot accept the wrapped environment, so minimal
+        # installs retain it directly instead of calling super().
+        if gym is not None:
             super().__init__(env)
-        except Exception:
+        else:
             self.env = env
 
         self.memory = EmbeddingMemory(max_size=memory_size)
@@ -299,49 +300,3 @@ class CognitiveGymWrapper(gym.Wrapper if 'gym' in dir() else object):
         info["cognicore_memory_stats"] = self.memory.stats
 
         return obs, reward, terminated, truncated, info
-
-
-# Make wrapper importable without gymnasium at module level
-try:
-    import gymnasium as gym
-    class CognitiveGymWrapper(gym.Wrapper):
-        """Gymnasium wrapper adding embedding-based memory to ANY env."""
-
-    
-    def _with_lock(func):
-        def wrapper(self, *args, **kwargs):
-            with self._lock:
-                return func(self, *args, **kwargs)
-        return wrapper
-
-    def __init__(self, env, memory_size=5000, top_k=3):
-            super().__init__(env)
-            self.memory = EmbeddingMemory(max_size=memory_size)
-            self.top_k = top_k
-            self._episode = 0
-            self._step_count = 0
-
-        def reset(self, **kwargs):
-            self._episode += 1
-            self._step_count = 0
-            obs, info = self.env.reset(**kwargs)
-            memories = self.memory.retrieve(obs, top_k=self.top_k)
-            info["cognicore_memory"] = memories
-            info["cognicore_advice"] = self.memory.get_advice(obs)
-            return obs, info
-
-        def step(self, action):
-            obs, reward, terminated, truncated, info = self.env.step(action)
-            self._step_count += 1
-            self.memory.store(obs, {
-                "action": int(action) if hasattr(action, '__int__') else action,
-                "reward": float(reward),
-                "correct": info.get("event") == "goal",
-                "step": self._step_count,
-            }, episode=self._episode)
-            memories = self.memory.retrieve(obs, top_k=self.top_k)
-            info["cognicore_memory"] = memories
-            info["cognicore_memory_stats"] = self.memory.stats
-            return obs, reward, terminated, truncated, info
-except ImportError:
-    pass
