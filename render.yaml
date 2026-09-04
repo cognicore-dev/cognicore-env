@@ -2,7 +2,7 @@ services:
   - type: web
     name: cognicore-chatgpt-mcp
     env: docker
-    plan: starter 
+    plan: starter
     disk:
       name: cognicore_data
       mountPath: /data
