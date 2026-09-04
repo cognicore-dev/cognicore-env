@@ -1,6 +1,7 @@
 import pytest
 import jwt
 from fastapi.testclient import TestClient
+from cognicore.extension import remote
 from cognicore.extension.remote import app, JWT_SECRET, JWT_ALGORITHM, get_db_path_for_user
 
 client = TestClient(app)
@@ -13,6 +14,44 @@ def test_remote_missing_auth():
     response = client.get("/mcp/sse")
     assert response.status_code == 401
     assert "Missing or invalid authentication credentials" in response.text
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/sse"),
+        ("POST", "/messages/?sessionId=1"),
+    ],
+)
+def test_root_mcp_paths_cannot_bypass_auth(method, path):
+    response = client.request(method, path)
+    assert response.status_code == 401
+    assert "Missing or invalid authentication credentials" in response.text
+
+def test_root_mcp_mount_is_not_exposed_with_valid_auth():
+    token = create_token("user_123")
+    response = client.post(
+        "/messages/?sessionId=1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+def test_unsigned_anthropic_header_is_not_authentication():
+    response = client.get("/mcp/sse", headers={"x-anthropic-client": "forged-client"})
+    assert response.status_code == 401
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/.well-known/oauth-authorization-server"),
+        ("POST", "/register"),
+        ("GET", "/authorize?redirect_uri=https://example.com&state=test"),
+        ("POST", "/token"),
+    ],
+)
+def test_mock_oauth_endpoints_are_disabled_by_default(monkeypatch, method, path):
+    monkeypatch.setattr(remote, "INSECURE_AUTH_ENABLED", False)
+    response = client.request(method, path)
+    assert response.status_code == 404
 
 def test_remote_invalid_jwt():
     response = client.get("/mcp/sse", headers={"Authorization": "Bearer invalid.token.here"})
