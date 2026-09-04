@@ -2,6 +2,11 @@ services:
   - type: web
     name: cognicore-chatgpt-mcp
     env: docker
+    plan: starter
+    disk:
+      name: cognicore_data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: SUPABASE_URL
         value: "https://vtebftsovlncmyfxheko.supabase.co"
