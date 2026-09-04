@@ -111,30 +111,40 @@ jobs:
               body = '## 📊 TestBot\n\n⚠️ Could not generate report.';
             }
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c =>
-              c.body.includes('📊 TestBot Coverage Report')
-            );
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body,
-              });
-            } else {
-              await github.rest.issues.createComment({
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: body,
               });
+
+              const botComment = comments.find(c =>
+                c.body.includes('📊 TestBot Coverage Report')
+              );
+
+              if (botComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: body,
+                });
+              }
+            } catch (error) {
+              // Fork PR tokens are read-only. Coverage reporting is useful but
+              // must not turn a fully passing test matrix into a failed check.
+              if (error.status === 403) {
+                console.log('Skipping coverage comment: workflow token is read-only.');
+              } else {
+                throw error;
+              }
             }
 
       - name: Run benchmark smoke test

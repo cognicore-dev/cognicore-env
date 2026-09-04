@@ -4,7 +4,7 @@ on:
   issues:
     types: [opened]
   pull_request:
-    types: [opened]
+    types: [opened, synchronize, reopened]
 
 permissions:
   issues: write
@@ -69,28 +69,46 @@ jobs:
                   repo: context.repo.repo,
                   name: label,
                 });
-              } catch {
-                await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label,
-                  color: label.includes('bug') ? 'd73a4a' :
-                         label.includes('feature') ? 'a2eeef' :
-                         label.includes('docs') ? '0075ca' :
-                         label.includes('testing') ? 'e4e669' :
-                         label.includes('cognitive') ? 'b60205' :
-                         label.includes('safety') ? 'fbca04' :
-                         label.includes('performance') ? '5319e7' :
-                         label.includes('question') ? 'd876e3' : 'ededed',
-                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: label,
+                    color: label.includes('bug') ? 'd73a4a' :
+                           label.includes('feature') ? 'a2eeef' :
+                           label.includes('docs') ? '0075ca' :
+                           label.includes('testing') ? 'e4e669' :
+                           label.includes('cognitive') ? 'b60205' :
+                           label.includes('safety') ? 'fbca04' :
+                           label.includes('performance') ? '5319e7' :
+                           label.includes('question') ? 'd876e3' : 'ededed',
+                  });
+                } catch (createError) {
+                  if (createError.status !== 403) throw createError;
+                  console.log(`Cannot create label "${label}" with a read-only fork token.`);
+                }
               }
             }
 
             const number = (issue || pull_request).number;
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: number,
-              labels: labels,
-            });
-            console.log(`Applied labels: ${labels.join(', ')}`);
+            const uniqueLabels = [...new Set(labels)];
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: number,
+                labels: uniqueLabels,
+              });
+              console.log(`Applied labels: ${uniqueLabels.join(', ')}`);
+            } catch (error) {
+              // GitHub intentionally gives fork pull requests a read-only token.
+              // Labeling is optional metadata, so a permission denial must not
+              // block an otherwise valid contribution.
+              if (error.status === 403) {
+                console.log('Skipping labels: workflow token is read-only for this pull request.');
+              } else {
+                throw error;
+              }
+            }
