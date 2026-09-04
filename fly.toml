@@ -1,0 +1,28 @@
+app = "cognicore-chatgpt-mcp"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  COGNICORE_DATA_DIR = "/data/cognicore"
+  SUPABASE_URL = "https://vtebftsovlncmyfxheko.supabase.co"
+
+[mounts]
+  source = "cognicore_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "15s"
+  timeout = "2s"
+  method = "GET"
+  path = "/health"
