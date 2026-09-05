@@ -5,15 +5,13 @@ WORKDIR /app
 # Install build dependencies for sqlite/native extensions if any
 RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev && rm -rf /var/lib/apt/lists/*
 
-# Copy core files
-COPY pyproject.toml requirements.txt ./
+# Copy all files needed for install
+COPY pyproject.toml requirements.txt README.md ./
+COPY cognicore/ cognicore/
 
 # Install python dependencies
 RUN pip install --no-cache-dir uv && uv pip install --system -e . 
-RUN uv pip install --system uvicorn fastapi mcp pyjwt cryptography
-
-# Copy application code
-COPY cognicore/ cognicore/
+RUN uv pip install --system uvicorn fastapi mcp pyjwt cryptography httpx
 
 # Environment configuration
 ENV PYTHONUNBUFFERED=1
