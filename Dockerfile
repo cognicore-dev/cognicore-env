@@ -11,7 +11,7 @@ COPY cognicore/ cognicore/
 
 # Install python dependencies
 RUN pip install --no-cache-dir uv && uv pip install --system -e . 
-RUN uv pip install --system uvicorn fastapi mcp pyjwt cryptography httpx
+RUN uv pip install --system uvicorn fastapi mcp fastmcp pyjwt cryptography httpx
 
 # Environment configuration
 ENV PYTHONUNBUFFERED=1
