@@ -60,9 +60,32 @@ app.mount("/mcp", mcp.sse_app())
 def health_check():
     return {"status": "ok", "service": "cognicore-chatgpt-mcp"}
 
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://vtebftsovlncmyfxheko.supabase.co")
+
+@app.get("/.well-known/oauth-authorization-server")
+def oauth_metadata():
+    """OAuth 2.0 Authorization Server Metadata (RFC 8414) for MCP client discovery."""
+    return {
+        "issuer": f"{SUPABASE_URL}/auth/v1",
+        "authorization_endpoint": f"{SUPABASE_URL}/auth/v1/authorize",
+        "token_endpoint": f"{SUPABASE_URL}/auth/v1/token",
+        "jwks_uri": f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "code_challenge_methods_supported": ["S256"],
+        "scopes_supported": ["openid", "email", "profile"],
+    }
+
+@app.get("/mcp/.well-known/oauth-authorization-server")
+def oauth_metadata_mcp():
+    """Same metadata served under /mcp prefix for MCP clients that scope discovery to the MCP mount."""
+    return oauth_metadata()
+
 def get_backend_for_user(user_uuid: str):
     from cognicore.memory import SQLiteMemoryBackend
-    db_path = str(Path.home() / ".cognicore" / "chatgpt" / f"memory_{user_uuid}.db")
+    data_dir = os.environ.get("COGNICORE_DATA_DIR", str(Path.home() / ".cognicore" / "chatgpt"))
+    db_path = os.path.join(data_dir, f"memory_{user_uuid}.db")
     os.makedirs(os.path.dirname(db_path), mode=0o700, exist_ok=True)
     return SQLiteMemoryBackend(db_path)
 
