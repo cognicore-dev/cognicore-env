@@ -63,16 +63,19 @@ def health_check():
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://vtebftsovlncmyfxheko.supabase.co")
 
 @app.get("/.well-known/oauth-authorization-server")
-def oauth_metadata():
+def oauth_metadata(request: Request = None):
     """OAuth 2.0 Authorization Server Metadata (RFC 8414) for MCP client discovery."""
+    # Use our own proxy endpoints so MCP clients route through us to Supabase
+    base = str(request.base_url).rstrip("/") if request else ""
     return {
-        "issuer": f"{SUPABASE_URL}/auth/v1",
-        "authorization_endpoint": f"{SUPABASE_URL}/auth/v1/authorize",
-        "token_endpoint": f"{SUPABASE_URL}/auth/v1/token",
+        "issuer": base or f"{SUPABASE_URL}/auth/v1",
+        "authorization_endpoint": f"{base}/authorize",
+        "token_endpoint": f"{base}/token",
+        "registration_endpoint": f"{base}/register",
         "jwks_uri": f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
-        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "token_endpoint_auth_methods_supported": ["none"],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": ["openid", "email", "profile"],
     }
@@ -81,6 +84,43 @@ def oauth_metadata():
 def oauth_metadata_mcp():
     """Same metadata served under /mcp prefix for MCP clients that scope discovery to the MCP mount."""
     return oauth_metadata()
+
+@app.get("/authorize")
+async def authorize_redirect(request: Request):
+    """Redirect OAuth authorize requests to Supabase, passing through all query params."""
+    from fastapi.responses import RedirectResponse
+    query_string = str(request.query_params)
+    return RedirectResponse(
+        url=f"{SUPABASE_URL}/auth/v1/authorize?{query_string}",
+        status_code=302,
+    )
+
+@app.post("/token")
+async def token_proxy(request: Request):
+    """Proxy token exchange requests to Supabase."""
+    import httpx
+    body = await request.body()
+    headers = {"Content-Type": request.headers.get("content-type", "application/x-www-form-urlencoded")}
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/token?grant_type=authorization_code",
+            content=body,
+            headers=headers,
+        )
+    return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+@app.post("/register")
+async def dynamic_client_registration(request: Request):
+    """Minimal Dynamic Client Registration (RFC 7591) — returns our pre-configured Supabase OAuth client."""
+    body = await request.json()
+    return JSONResponse(content={
+        "client_id": "cead2d66-4aa0-49b8-a600-e27b104d6866",
+        "client_name": body.get("client_name", "MCP Client"),
+        "redirect_uris": body.get("redirect_uris", []),
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }, status_code=201)
 
 def get_backend_for_user(user_uuid: str):
     from cognicore.memory import SQLiteMemoryBackend
