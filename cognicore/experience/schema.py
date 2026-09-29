@@ -285,6 +285,37 @@ class StructuredExperience:
         return self.content_hash == self.compute_content_hash()
 
     # ------------------------------------------------------------------
+    # Public dict serialization (alias to internal payload format)
+    # ------------------------------------------------------------------
+    #
+    # These are the canonical public methods for serializing a
+    # StructuredExperience to/from a plain dict. The private
+    # ``_to_payload_dict`` / ``_from_payload_dict`` methods were already
+    # implementing the format; we expose them under the conventional
+    # ``to_dict`` / ``from_dict`` names so that downstream callers
+    # (ExperienceManager, exporters, importers) can use the standard
+    # Python dataclass convention.
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a plain dict suitable for JSON / storage.
+
+        This is the canonical public serialization method. It includes
+        all fields (identity, attempts, solution, verification, context,
+        scoring, integrity, supersession).
+        """
+        return self._to_payload_dict()
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "StructuredExperience":
+        """Deserialize from a plain dict (inverse of :meth:`to_dict`).
+
+        Tolerant of missing fields: defaults to the dataclass defaults
+        when a field is absent. This makes the format forward-compatible
+        - older payloads lacking newly-added fields still deserialize.
+        """
+        return cls._from_payload_dict(d)
+
+    # ------------------------------------------------------------------
     # MemoryEntry serialization
     # ------------------------------------------------------------------
 
