@@ -196,7 +196,7 @@ class TestConnectorsMock:
         script, scenes = conn.generate_script({"concept": "Minimalist"}, "pptx")
         assert len(scenes) == 3
         assert "[MOCK]" in script
-        assert scenes[0].title == "Introduction"
+        assert scenes[0].title == "Platform Overview & Architecture"
 
     def test_sarvam_mock(self, config):
         from content_studio.connectors.sarvam_connector import SarvamConnector

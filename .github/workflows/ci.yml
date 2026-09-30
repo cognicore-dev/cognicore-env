@@ -42,6 +42,7 @@ jobs:
       - name: Run tests with Coverage (3.12)
         if: matrix.python-version == '3.12'
         run: |
+          set -o pipefail
           pytest tests/ -n auto -v --tb=short --cov=cognicore --cov-report=json --cov-report=term-missing 2>&1 | tee test_output.txt
 
       - name: Generate Coverage Report
