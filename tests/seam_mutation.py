@@ -30,9 +30,26 @@ and it is deliberately *semantic* rather than textual:
     vector reports "target moved" instead of passing vacuously.
 
 A moved check and a deleted check are both findings.
+
+The injector carries its own positive control
+---------------------------------------------
+Installing a fault is not the same as the fault being *present*.  If the
+live recall seam moves to a new name and the old one survives as a
+back-compat shim, the rebinding below succeeds, the target guards pass,
+and nothing observable changes: a no-op injection, indistinguishable from
+a healthy detector.  That is the same failure class as a tripwire that
+watches one spelling of the check -- it has only moved from the mutation's
+*site* to the mutation's *effect*.
+
+So the mutation verifies its own effect before the run proceeds: a query
+that should match nothing must, under the patch, return everything, on
+both recall paths.  Absence of an error while installing a fault is not
+evidence that the fault exists.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from cognicore.memory.base import SearchResult
 
@@ -78,3 +95,60 @@ def apply_bright_recall_mutation() -> None:
 
     quarantine_module.QuarantinePartition.search_trusted = _bright_search_trusted
     TFIDFMemoryBackend.search = _bright_quarantine_search
+
+    # Positive control: the patch must be observably present on the live
+    # paths, not merely installed. See module docstring.
+    _assert_fault_is_observable()
+
+
+def _assert_fault_is_observable() -> None:
+    """Prove the bright-recall lie is actually told on both recall paths.
+
+    A query that should return a restricted subset -- here, a nonsense
+    token that matches nothing -- must, under the mutation, return every
+    stored entry.  If it still returns nothing, the mutation bound to a
+    seam that the live path no longer uses (typically a rename that left a
+    back-compat shim behind), and the run must report *that*, rather than
+    letting an unmutated system be read as a healthy detector.
+    """
+    import os
+    import tempfile
+
+    from cognicore.integrations.mem0.quarantine import QuarantinePartition
+    from cognicore.memory.base import MemoryEntry
+    from cognicore.memory.tfidf_backend import TFIDFMemoryBackend
+
+    probe_query = "zzzqx-nonsense-token-that-matches-nothing"
+    probe_text = "Use cmake to configure the build"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Live path 1: trusted partition (importer.py calls
+        # partition.search_trusted(...)).
+        partition = QuarantinePartition(storage_dir=tmpdir)
+        try:
+            partition.store_trusted(MemoryEntry(text=probe_text))
+            trusted_results = partition.search_trusted(probe_query, top_k=5)
+        finally:
+            partition.close()
+
+        # Live path 2: quarantine partition (importer.py calls
+        # partition.quarantine.search(...)).
+        backend = TFIDFMemoryBackend(
+            persistence_path=os.path.join(tmpdir, "probe_quarantine.json")
+        )
+        backend.store(MemoryEntry(text=probe_text))
+        quarantine_results = backend.search(probe_query, top_k=5)
+
+    if not (trusted_results and quarantine_results):
+        raise pytest.UsageError(
+            "FAULT NOT PRESENT: the bright-recall mutation was installed but "
+            "did not take effect -- a query that matches nothing still "
+            f"returns nothing (trusted={len(trusted_results)}, "
+            f"quarantine={len(quarantine_results)}). The live recall path is "
+            "not the seam this mutation patched; the usual cause is a rename "
+            "that left QuarantinePartition.search_trusted or "
+            "TFIDFMemoryBackend.search behind as a shim while real recall "
+            "moved elsewhere. Absence of an error while installing a fault "
+            "is not evidence that the fault exists -- update the mutation to "
+            "the new recall seam."
+        )
