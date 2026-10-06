@@ -69,31 +69,50 @@ class MultiHopMemoryBackend(MemoryBackend):
         """Override base class dict iteration bug to return values instead of keys."""
         return list(self.entries.values())
 
-    def save(self) -> None:
+    def save(self, path: Optional[str] = None) -> None:
         import json
         from pathlib import Path
-        if not hasattr(self, "persistence_path") or not self.persistence_path:
+        target = path or getattr(self, "persistence_path", None)
+        if not target:
             return
         try:
-            path = Path(self.persistence_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
+            target_path = Path(target)
+            if target_path.is_dir() or (not target_path.suffix and not target_path.exists()):
+                target_path.mkdir(parents=True, exist_ok=True)
+                file_path = target_path / "memory.json"
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path = target_path
+            self.persistence_path = str(file_path)
+
             data = {"entries": [e.to_dict() for e in self.entries.values()]}
-            with open(path, "w", encoding="utf-8") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception(f"Failed to save MultiHopMemory: {e}")
 
-    def load(self) -> None:
+    def load(self, path: Optional[str] = None) -> None:
         import json
         from pathlib import Path
-        if not hasattr(self, "persistence_path") or not self.persistence_path:
+        target = path or getattr(self, "persistence_path", None)
+        if not target:
             return
-        path = Path(self.persistence_path)
-        if not path.exists():
+        target_path = Path(target)
+        if target_path.is_dir():
+            file_path = target_path / "memory.json"
+            if not file_path.exists():
+                candidates = list(target_path.glob("*memory.json"))
+                if candidates:
+                    file_path = candidates[0]
+        else:
+            file_path = target_path
+
+        if not file_path.exists():
             return
+        self.persistence_path = str(file_path)
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             self.entries = {e.get("entry_id"): MemoryEntry.from_dict(e) for e in data.get("entries", [])}
             self.is_index_dirty = True

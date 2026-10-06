@@ -166,6 +166,16 @@ class CogniCoreRuntime:
         self.config = config or RuntimeConfig()
         self.name = name
 
+        # Derive the memory file path up-front so the backend and the
+        # runtime agree on what ``persistence_path`` means.
+        # Convention: config.persistence_path is always a *directory*.
+        # The backend gets a concrete *file* path inside that directory.
+        self._persistence_dir: Optional[Path] = None
+        self._memory_file: Optional[Path] = None
+        if self.config.persistence_path:
+            self._persistence_dir = Path(self.config.persistence_path)
+            self._memory_file = self._persistence_dir / f"{self.name}_memory.json"
+
         # Initialize middleware
         if memory is not None:
             self.backend = memory
@@ -176,7 +186,7 @@ class CogniCoreRuntime:
         else:
             self.backend = TFIDFMemoryBackend(
                 max_size=self.config.memory_max_size,
-                persistence_path=self.config.persistence_path
+                persistence_path=str(self._memory_file) if self._memory_file else None,
             )
             
         self.memory = MemoryLifecycleManager(backend=self.backend)
@@ -191,7 +201,7 @@ class CogniCoreRuntime:
         self._execution_log: List[Dict] = []
 
         # Load persisted state if available
-        if self.config.persistence_path:
+        if self._persistence_dir:
             self._load_state()
 
         logger.info(f"CogniCoreRuntime '{name}' initialized. "
@@ -315,6 +325,7 @@ class CogniCoreRuntime:
                 category=category,
                 action=str(result.output)[:500],
                 correct=result.success,
+                memory_type="failure" if not result.success else "semantic",
                 scope=scope_val,
                 scope_id=self.config.memory_scope_id,
                 metadata={
@@ -339,37 +350,99 @@ class CogniCoreRuntime:
         """Build cognition context from memory + reflection."""
         context: Dict[str, Any] = {
             "memory": [],
+            "experience": [],  # Alias for README / user code compatibility
+            "relevant_memories": [],  # Alias for README / user code compatibility
             "reflection_hint": None,
             "failures_to_avoid": [],
+            "past_failures": [],  # Alias for README / user code compatibility
             "successful_patterns": [],
             "category": category,
         }
 
         if self.config.enable_memory:
             if task:
-                results = self.memory.retrieve(
-                    query=str(task),
-                    task=category,
-                    top_k=self.config.memory_top_k
-                )
+                # 1. Direct search by task similarity
+                results = []
+                cat_filter = category if (category and category != "default") else None
+                if cat_filter:
+                    results = self.backend.search(
+                        query=str(task),
+                        top_k=self.config.memory_top_k,
+                        category=cat_filter,
+                    )
+                # If category filter returned nothing or category was default, search broadly
+                if not results:
+                    results = self.backend.search(
+                        query=str(task),
+                        top_k=self.config.memory_top_k,
+                    )
+
                 context["memory"] = [r.entry.to_dict() for r in results]
                 self.stats.memory_retrievals += len(results)
-            else:
-                context["memory"] = [
-                    e.to_dict() for e in self.backend.get_by_category(
-                        category, top_k=self.config.memory_top_k
-                    )
-                ]
-                self.stats.memory_retrievals += 1
 
-            context["failures_to_avoid"] = [
-                e.action
-                for e in self.backend.get_by_category(category, top_k=5, success_filter=False)
-            ]
-            context["successful_patterns"] = [
-                e.action
-                for e in self.backend.get_by_category(category, top_k=5, success_filter=True)
-            ]
+                # 2. failures_to_avoid ranked by similarity to the current task
+                search_candidates = self.backend.search(
+                    query=str(task),
+                    top_k=20,
+                    category=cat_filter,
+                )
+                if not search_candidates and cat_filter:
+                    search_candidates = self.backend.search(query=str(task), top_k=20)
+
+                similar_failures = [
+                    (r.entry.action or r.entry.text)
+                    for r in search_candidates
+                    if r.entry.correct is False or r.entry.memory_type == "failure"
+                ]
+                cat_failures = [
+                    (e.action or e.text)
+                    for e in self.backend.get_by_category(category, top_k=5, success_filter=False)
+                ]
+                seen_f = set()
+                ranked_failures = []
+                for f in similar_failures + cat_failures:
+                    if f and f not in seen_f:
+                        seen_f.add(f)
+                        ranked_failures.append(f)
+                context["failures_to_avoid"] = ranked_failures[:5]
+
+                # 3. successful_patterns ranked by similarity
+                similar_successes = [
+                    (r.entry.action or r.entry.text)
+                    for r in search_candidates
+                    if r.entry.correct is True
+                ]
+                cat_successes = [
+                    (e.action or e.text)
+                    for e in self.backend.get_by_category(category, top_k=5, success_filter=True)
+                ]
+                seen_s = set()
+                ranked_successes = []
+                for s in similar_successes + cat_successes:
+                    if s and s not in seen_s:
+                        seen_s.add(s)
+                        ranked_successes.append(s)
+                context["successful_patterns"] = ranked_successes[:5]
+
+            else:
+                entries = self.backend.get_by_category(
+                    category, top_k=self.config.memory_top_k
+                )
+                context["memory"] = [e.to_dict() for e in entries]
+                self.stats.memory_retrievals += len(context["memory"])
+                context["failures_to_avoid"] = [
+                    (e.action or e.text)
+                    for e in self.backend.get_by_category(category, top_k=5, success_filter=False)
+                ]
+                context["successful_patterns"] = [
+                    (e.action or e.text)
+                    for e in self.backend.get_by_category(category, top_k=5, success_filter=True)
+                ]
+
+            # Populate compatibility aliases
+            context["experience"] = context["memory"]
+            context["relevant_memories"] = context["memory"]
+            context["past_failures"] = context["failures_to_avoid"]
 
             # Check if we're about to repeat a known failure
             if context["failures_to_avoid"]:
@@ -446,27 +519,31 @@ class CogniCoreRuntime:
     # ------------------------------------------------------------------
 
     def _save_state(self):
-        path = Path(self.config.persistence_path)
-        path.mkdir(parents=True, exist_ok=True)
-        if hasattr(self.backend, "persistence_path"):
-            self.backend.persistence_path = str(path / f"{self.name}_memory.json")
-        self.backend.save()
-        # Save stats
-        stats_path = path / f"{self.name}_stats.json"
+        if not self._persistence_dir:
+            return
+        self._persistence_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure the backend knows the concrete file path
+        if hasattr(self.backend, "save"):
+            self.backend.save(str(self._memory_file))
+        # Save stats next to the memory file
+        stats_path = self._persistence_dir / f"{self.name}_stats.json"
         stats_path.write_text(json.dumps(self.stats.to_dict(), indent=2))
 
     def _load_state(self):
-        path = Path(self.config.persistence_path)
-        mem_path = path / f"{self.name}_memory.json"
-        if mem_path.exists():
-            self.backend.load(mem_path)
-            logger.info(f"Loaded {len(self.backend.entries)} memory entries")
+        if not self._memory_file or not self._memory_file.exists():
+            return
+        if hasattr(self.backend, "load"):
+            self.backend.load(str(self._memory_file))
+        entry_count = len(getattr(self.backend, "entries", []))
+        logger.info(f"Loaded {entry_count} memory entries")
 
     def save(self, path: Optional[str] = None):
         """Manually save runtime state."""
         if path:
             self.config.persistence_path = path
-        if self.config.persistence_path:
+            self._persistence_dir = Path(path)
+            self._memory_file = self._persistence_dir / f"{self.name}_memory.json"
+        if self._persistence_dir:
             self._save_state()
 
     def reset(self):

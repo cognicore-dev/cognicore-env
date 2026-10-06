@@ -40,6 +40,21 @@ class PipelineOrchestrator:
             self.memory = None
             self.compressor = None
 
+        # --- Replay & Immune Layer ---
+        try:
+            from cognicore.replay.store import EventStore
+            from cognicore.replay.recorder import EventRecorder
+            from cognicore.immune import NexusShield
+            db_dir = Path(config.DB_PATH).parent
+            self.event_store = EventStore(str(db_dir / "studio_events.db"))
+            self.recorder = EventRecorder(store=self.event_store)
+            self.shield = NexusShield()
+        except Exception as e:
+            logger.warning(f"Replay/Shield init failed: {e}")
+            self.event_store = None
+            self.recorder = None
+            self.shield = None
+
         # --- Connectors ---
         from content_studio.connectors.figma_connector import FigmaConnector
         from content_studio.connectors.llm_connector import LLMConnector
@@ -121,6 +136,8 @@ class PipelineOrchestrator:
 
         except Exception as e:
             logger.error(f"Pipeline failed: {e}\n{traceback.format_exc()}")
+            if self.recorder:
+                self.recorder.record_simple(project.project_id, "task_failed", step=7, output_text=str(e))
             try:
                 transition(project, WorkflowState.FAILED, str(e))
             except Exception:
@@ -144,6 +161,8 @@ class PipelineOrchestrator:
             project.prior_experiences = exps
             if exps:
                 logger.info(f"Retrieved {len(exps)} prior experiences")
+            if self.recorder:
+                self.recorder.record_simple(project.project_id, "memory_retrieved", step=2, output_text=f"Retrieved {len(exps)} prior experiences from CogniCore")
         except Exception as e:
             logger.warning(f"Experience retrieval failed: {e}")
 
@@ -151,6 +170,17 @@ class PipelineOrchestrator:
         """Extract design context from Figma input."""
         t0 = time.time()
         try:
+            # Shield inspection
+            if self.shield:
+                dec = self.shield(project.figma_input)
+                if dec.blocked:
+                    if self.recorder:
+                        self.recorder.record_simple(project.project_id, "immune_blocked", step=1, output_text=f"NexusShield Blocked Threat: {dec.reason} (score {dec.threat_score})")
+                    raise ValueError(f"NexusShield Blocked Threat: {dec.reason} (score {dec.threat_score})")
+
+            if self.recorder:
+                self.recorder.record_simple(project.project_id, "task_start", step=1, input_text=project.figma_input)
+
             design_context = self.figma.extract_design(project.figma_input, self.config)
             project.design_context = design_context
             is_mock = design_context.get("is_mock", self.figma.is_mock)
@@ -178,6 +208,8 @@ class PipelineOrchestrator:
                         is_mock=is_mock, duration_ms=(time.time() - t0) * 1000)
             self._log_conversation(project, "assistant",
                                    f"Generated script with {len(scenes)} scenes")
+            if self.recorder:
+                self.recorder.record_simple(project.project_id, "plan_generated", step=3, output_text=f"Generated script with {len(scenes)} scenes")
         except Exception as e:
             record_step(project, "script_gen", "failed", error=str(e),
                         duration_ms=(time.time() - t0) * 1000)
@@ -308,6 +340,8 @@ class PipelineOrchestrator:
             project.artifacts["final_output"] = path
             record_step(project, "export", "success",
                         duration_ms=(time.time() - t0) * 1000)
+            if self.recorder:
+                self.recorder.record_simple(project.project_id, "task_solved", step=6, output_text=f"Exported {project.output_type.upper()}: {Path(path).name}")
         except Exception as e:
             record_step(project, "export", "failed", error=str(e),
                         duration_ms=(time.time() - t0) * 1000)

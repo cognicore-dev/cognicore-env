@@ -48,6 +48,7 @@ class TFIDFMemoryBackend(MemoryBackend):
         self._doc_freq: Dict[str, int] = defaultdict(int)
         self._total_docs = 0
         self._lock = threading.RLock()
+        self._dirty = False
         
         # Load existing state if available
         if self.persistence_path:
@@ -145,7 +146,7 @@ class TFIDFMemoryBackend(MemoryBackend):
                     del self._doc_freq[t]
             self._total_docs -= 1
             
-        self.save()
+        self._dirty = True
         event_bus.publish("on_store", entry=entry, entry_id=entry.entry_id)
         return entry.entry_id
 
@@ -237,7 +238,7 @@ class TFIDFMemoryBackend(MemoryBackend):
                 for key, value in fields.items():
                     if hasattr(entry, key):
                         setattr(entry, key, value)
-                self.save()
+                self._dirty = True
                 return True
         return False
 
@@ -262,7 +263,7 @@ class TFIDFMemoryBackend(MemoryBackend):
                     if self._doc_freq[t] <= 0:
                         del self._doc_freq[t]
                 self._total_docs -= 1
-                self.save()
+                self._dirty = True
                 return True
         return False
 
@@ -271,22 +272,41 @@ class TFIDFMemoryBackend(MemoryBackend):
         self.entries.clear()
         self._doc_freq.clear()
         self._total_docs = 0
-        self._lock = threading.RLock()
         self._step_count = 0
-        self.save()
+        self._dirty = True
 
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
-    def save(self) -> None:
-        if not self.persistence_path:
+    def save(self, path: Optional[str] = None, *, force: bool = False) -> None:
+        """Persist entries to disk.
+
+        Skips the write when nothing has changed since the last save
+        (unless *force* is ``True``).  Uses atomic write (temp + rename)
+        so a crash can never corrupt the memory file.
+        Accepts either a directory path or a file path.
+        """
+        target = path or self.persistence_path
+        if not target:
             return
-            
+        # If an explicit path is provided or force=True, always save; otherwise check _dirty
+        if not (self._dirty or force or (path is not None and str(path) != self.persistence_path)):
+            return
+
         try:
-            path = Path(self.persistence_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            
+            import tempfile
+            target_path = Path(target)
+            # If target is a directory or path without file suffix, write memory.json inside it
+            if target_path.is_dir() or (not target_path.suffix and not target_path.exists()):
+                target_path.mkdir(parents=True, exist_ok=True)
+                file_path = target_path / "memory.json"
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path = target_path
+
+            self.persistence_path = str(file_path)
+
             data = {
                 "max_size": self.max_size,
                 "decay_rate": self.decay_rate,
@@ -295,30 +315,67 @@ class TFIDFMemoryBackend(MemoryBackend):
                 "_doc_freq": self._doc_freq,
                 "entries": [e.to_dict() for e in self.entries]
             }
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f)
-        except Exception as e:
+
+            # Write to a temporary file in the same directory, then
+            # atomically replace the target so readers always see a
+            # complete file.
+            fd, tmp = tempfile.mkstemp(
+                dir=str(file_path.parent), suffix=".tmp", prefix=file_path.stem
+            )
+            try:
+                import os as _os
+                with _os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                # os.replace is atomic on both POSIX and Windows (NTFS).
+                _os.replace(tmp, str(file_path))
+            except BaseException:
+                # Clean up the temp file on any failure.
+                try:
+                    _os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+
+            self._dirty = False
+        except Exception:
             logging.getLogger(__name__).exception("TFIDF save failed")
 
-    def load(self) -> None:
-        if not self.persistence_path:
+    def load(self, path: Optional[str] = None) -> None:
+        """Load entries from disk.
+
+        Accepts either a directory path or a file path (or uses self.persistence_path).
+        """
+        target = path or self.persistence_path
+        if not target:
             return
-            
-        path = Path(self.persistence_path)
-        if not path.exists():
+
+        target_path = Path(target)
+        if target_path.is_dir():
+            file_path = target_path / "memory.json"
+            if not file_path.exists():
+                candidates = list(target_path.glob("*memory.json"))
+                if candidates:
+                    file_path = candidates[0]
+        else:
+            file_path = target_path
+
+        if not file_path.exists():
             return
-            
+
+        self.persistence_path = str(file_path)
+
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                
+
             self.max_size = data.get("max_size", self.max_size)
             self.decay_rate = data.get("decay_rate", self.decay_rate)
             self._step_count = data.get("_step_count", 0)
             self._total_docs = data.get("_total_docs", 0)
             self._doc_freq = defaultdict(int, data.get("_doc_freq", {}))
-            
+
             raw_entries = data.get("entries", [])
             self.entries = [MemoryEntry.from_dict(d) for d in raw_entries]
+            self._dirty = False
         except Exception as e:
             logging.getLogger(__name__).exception("TFIDF load failed")

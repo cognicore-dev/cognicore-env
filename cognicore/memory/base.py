@@ -356,11 +356,11 @@ class MemoryBackend(ABC):
         """Delete all entries."""
         pass
 
-    def save(self) -> None:
+    def save(self, path: Optional[str] = None) -> None:
         """Persist to disk (no-op for always-persistent backends like SQLite)."""
         pass
 
-    def load(self) -> None:
+    def load(self, path: Optional[str] = None) -> None:
         """Load from disk (no-op for always-persistent backends)."""
         pass
 

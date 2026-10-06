@@ -50,8 +50,8 @@ class ScopedMemoryBackend(MemoryBackend):
         # But since our backends don't have scoped clear, this is a no-op or raises.
         raise NotImplementedError("Cannot clear a scoped backend wrapper directly.")
 
-    def save(self) -> None:
-        self.backend.save()
+    def save(self, path: Optional[str] = None) -> None:
+        self.backend.save(path)
 
-    def load(self) -> None:
-        self.backend.load()
+    def load(self, path: Optional[str] = None) -> None:
+        self.backend.load(path)
