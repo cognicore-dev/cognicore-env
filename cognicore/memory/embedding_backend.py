@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import math
 
 from cognicore.memory.base import MemoryBackend, MemoryEntry, MemoryState, SearchResult, MemoryScope, EmbeddingProvider
@@ -172,29 +172,51 @@ class BasicEmbeddingBackend(MemoryBackend):
                 return True
         return False
 
-    def save(self) -> None:
-        if not self.persistence_path:
+    def save(self, path: Optional[Union[str, Path]] = None) -> None:
+        target = path or self.persistence_path
+        if not target:
             return
-            
+        target_path = Path(target)
+        if target_path.is_dir() or (not target_path.suffix and not target_path.exists()):
+            target_path.mkdir(parents=True, exist_ok=True)
+            file_path = target_path / "memory.json"
+        else:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path = target_path
+        self.persistence_path = file_path
+
         data = {
             "entries": [e.to_dict() for e in self.entries],
             "vectors": self.vectors,
             "next_id": self._next_id
         }
         try:
-            self.persistence_path.parent.mkdir(parents=True, exist_ok=True)
-            self.persistence_path.write_text(json.dumps(data), encoding="utf-8")
+            file_path.write_text(json.dumps(data), encoding="utf-8")
         except Exception as e:
-            logger.warning(f"Failed to save basic embedding memory to {self.persistence_path}: {e}")
+            logger.warning(f"Failed to save basic embedding memory to {file_path}: {e}")
 
-    def load(self) -> None:
-        if not self.persistence_path or not self.persistence_path.exists():
+    def load(self, path: Optional[Union[str, Path]] = None) -> None:
+        target = path or self.persistence_path
+        if not target:
             return
-            
+        target_path = Path(target)
+        if target_path.is_dir():
+            file_path = target_path / "memory.json"
+            if not file_path.exists():
+                candidates = list(target_path.glob("*memory.json"))
+                if candidates:
+                    file_path = candidates[0]
+        else:
+            file_path = target_path
+
+        if not file_path.exists():
+            return
+        self.persistence_path = file_path
+
         try:
-            data = json.loads(self.persistence_path.read_text(encoding="utf-8"))
+            data = json.loads(file_path.read_text(encoding="utf-8"))
             self.entries = [MemoryEntry.from_dict(d) for d in data.get("entries", [])]
             self.vectors = data.get("vectors", [])
             self._next_id = data.get("next_id", 1)
         except Exception as e:
-            logger.warning(f"Failed to load basic embedding memory from {self.persistence_path}: {e}")
+            logger.warning(f"Failed to load basic embedding memory from {file_path}: {e}")

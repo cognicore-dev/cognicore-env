@@ -156,17 +156,17 @@ class HybridMemoryBackend(MemoryBackend):
             ok = ok or ok_dense
         return ok
 
-    def save(self) -> None:
+    def save(self, path: Optional[str] = None) -> None:
         """Save state to disk."""
-        self.sparse_backend.save()
+        self.sparse_backend.save(path)
         if self.dense_backend:
-            self.dense_backend.save()
+            self.dense_backend.save(path)
 
-    def load(self) -> None:
+    def load(self, path: Optional[str] = None) -> None:
         """Load state from disk."""
-        self.sparse_backend.load()
+        self.sparse_backend.load(path)
         if self.dense_backend:
-            self.dense_backend.load()
+            self.dense_backend.load(path)
             
     def _get_all_entries(self) -> List[MemoryEntry]:
         """Internal accessor for all entries."""

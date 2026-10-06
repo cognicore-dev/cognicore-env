@@ -59,8 +59,8 @@ class RateLimitedMemoryBackend(MemoryBackend):
     def clear(self) -> None:
         self.backend.clear()
 
-    def save(self) -> None:
-        self.backend.save()
+    def save(self, path: Optional[str] = None) -> None:
+        self.backend.save(path)
 
-    def load(self) -> None:
-        self.backend.load()
+    def load(self, path: Optional[str] = None) -> None:
+        self.backend.load(path)

@@ -39,8 +39,8 @@ class AsyncMemoryBackend:
     async def clear(self) -> None:
         await asyncio.to_thread(self.backend.clear)
 
-    async def save(self) -> None:
-        await asyncio.to_thread(self.backend.save)
+    async def save(self, path: Optional[str] = None) -> None:
+        await asyncio.to_thread(self.backend.save, path)
 
-    async def load(self) -> None:
-        await asyncio.to_thread(self.backend.load)
+    async def load(self, path: Optional[str] = None) -> None:
+        await asyncio.to_thread(self.backend.load, path)
