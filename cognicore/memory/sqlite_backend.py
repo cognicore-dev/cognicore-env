@@ -429,6 +429,9 @@ class SQLiteMemoryBackend(MemoryBackend):
                 bm25_score = -row["bm25_score"]
                 results.append(SearchResult(entry=entry, score=bm25_score, source="sqlite"))
             
+            # Bound lexical scores to (0.0, 1.0]: raw FTS5 BM25 is unbounded,
+            # while the hybrid path normalizes its BM25 component. Same rule here.
+            results = self._normalize_scores(results)
             results.sort(key=lambda x: x.score, reverse=True)
             final_results = results[:top_k]
             event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
@@ -516,7 +519,29 @@ class SQLiteMemoryBackend(MemoryBackend):
                 break
             entry = self._row_to_entry(rows[idx])
             results.append(SearchResult(entry=entry, score=score, source="bm25"))
-        return results
+        # Bound to (0.0, 1.0] so lexical callers see the same range the hybrid
+        # path guarantees (it divides this method's output by its own max, which
+        # is idempotent after normalization).
+        return self._normalize_scores(results)
+
+    @staticmethod
+    def _normalize_scores(results: List[SearchResult]) -> List[SearchResult]:
+        """Normalize result scores so the best match in the set scores 1.0.
+
+        Raw BM25 (both FTS5 ``rank`` and the Okapi implementation above) is
+        unbounded above; callers that mix or threshold these scores against the
+        documented 0..1 range silently break. Dividing by the max of the result
+        set preserves the ranking and relative gaps while restoring the bound.
+        """
+        if not results:
+            return results
+        max_score = max(r.score for r in results)
+        if max_score <= 0:
+            return results
+        return [
+            SearchResult(entry=r.entry, score=r.score / max_score, source=r.source)
+            for r in results
+        ]
 
     def _fallback_search(self, conn, query: str, top_k: int,
                          category: Optional[str], scope: Optional[MemoryScope],
