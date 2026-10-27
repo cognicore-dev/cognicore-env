@@ -125,6 +125,24 @@ def _entry_from_parts(
     }
 
 
+def _with_local_os(environment_json: str) -> Dict[str, Any]:
+    """Parse an environment fingerprint and fill in the OS.
+
+    The stdio server runs on the user's machine, so its OS is the agent's OS.
+    (The hosted server cannot know this and leaves it to the client.)
+    """
+    import platform
+
+    try:
+        env = json.loads(environment_json) if environment_json else {}
+    except json.JSONDecodeError:
+        env = {}
+    if not isinstance(env, dict):
+        env = {}
+    env.setdefault("os", platform.system())
+    return env
+
+
 def _state_path() -> Path:
     """Path to the JSON file that holds serialised memory."""
     return _get_data_dir() / "cognicore_memory.json"
@@ -561,18 +579,32 @@ def create_mcp_server() -> "FastMCP":
     def cognicore_save_session(
         conversation: List[Dict[str, Any]],
         session_name: str = "",
+        agent: str = "",
+        goal: str = "",
+        current_state: str = "",
+        environment_json: str = "",
     ) -> str:
-        """Called at END of conversation automatically or manually. Saves atomic facts, decisions, code snippets, and action items before context is lost.
+        """Called at END of conversation automatically or manually. Saves a versioned handoff (goal, current state, decisions and why, open tasks, key facts, files, provenance) so any agent can resume the work. Secrets are redacted; re-saving the same conversation is a no-op.
 
         Args:
             conversation: List of conversation messages [{role, content}] from the session.
             session_name: Optional human-readable name for this session.
+            agent: Which agent is saving, e.g. "claude-code", "cursor-agent".
+            goal: Your one-line statement of the goal (better than the extracted one).
+            current_state: Your one-line summary of where the work stands.
+            environment_json: JSON fingerprint, e.g. {"python_version": "3.11.4", "framework": "FastAPI",
+                "framework_version": "0.110.0", "dependencies": {"pyjwt": "2.8.0"}}. The OS is
+                filled in automatically when missing.
 
         Returns:
             JSON string confirming stored facts, decisions, snippets, and summary.
         """
         _ensure_initialized()
-        return save_session(_runtime.backend, conversation, session_name=session_name if session_name else None)
+        return save_session(
+            _runtime.backend, conversation, session_name=session_name if session_name else None,
+            agent=agent, goal=goal, current_state=current_state,
+            environment=_with_local_os(environment_json),
+        )
 
     # ------------------------------------------------------------------
     # Tool 10: cognicore_resume_session
@@ -582,13 +614,25 @@ def create_mcp_server() -> "FastMCP":
         query: str = "",
         last_n_sessions: int = 3,
         include_action_items: bool = True,
+        max_tokens: int = 0,
+        format: str = "text",
+        session_id: str = "",
+        section: str = "",
+        environment_json: str = "",
     ) -> str:
-        """Called at START of every new conversation. Reconstructs context brief from past sessions instantly.
+        """Called at START of every new conversation. Returns the handoff of the best-matching past session, most important first: goal, current state, environment warnings, open tasks, decisions, key facts, files, exact values, experiences, code, other sessions.
 
         Args:
             query: Optional search query describing what the user is currently working on.
             last_n_sessions: Number of recent sessions to include in the brief (default 3).
             include_action_items: Whether to retrieve pending action items (default true).
+            max_tokens: Token budget (default 1500, minimum 120 for text, 200 for json). Items that
+                do not fit are listed so they can be fetched with session_id + section.
+            format: "text" (default) or "json" (cognicore.handoff/v1 fields).
+            session_id: Resume this exact session.
+            section: Return one section in full, e.g. "key_facts", "code", "exact_values", "all".
+            environment_json: Current environment (same shape as in save); differences from the
+                saved one are reported as warnings. The OS is filled in automatically when missing.
 
         Returns:
             Formatted context resume brief with token count.
@@ -599,6 +643,11 @@ def create_mcp_server() -> "FastMCP":
             query=query if query else None,
             last_n_sessions=last_n_sessions,
             include_action_items=include_action_items,
+            max_tokens=max_tokens or None,
+            format=format,
+            session_id=session_id or None,
+            section=section or None,
+            environment=_with_local_os(environment_json) if environment_json else None,
         )
 
     return mcp

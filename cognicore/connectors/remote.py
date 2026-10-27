@@ -289,6 +289,15 @@ def _get_reputation() -> ReputationEngine:
         _reputation_engine = ReputationEngine(_get_commerce_db_path())
     return _reputation_engine
 
+def _client_name(ctx: Optional[Context] = None) -> str:
+    """MCP client name from the initialize handshake (e.g. "claude-ai", "cursor"), or ""."""
+    try:
+        params = ctx.session.client_params
+        return params.clientInfo.name if params and params.clientInfo else ""
+    except Exception:
+        return ""
+
+
 def _get_agent_id(ctx: Optional[Context] = None) -> str:
     """Extract a stable agent_id from the request context or local environment."""
     if ctx is None or not getattr(ctx, "request_context", None):
@@ -500,18 +509,69 @@ def cognicore_compress_context(ctx: Context, conversation: list, keep_last_n: in
 
 
 @_tool("Save session summary", _WRITE)
-def cognicore_save_session(ctx: Context, conversation: list, session_name: str = "") -> str:
-    """Called at END of conversation automatically. Saves atomic facts, decisions, code snippets, and action items before context is lost."""
+def cognicore_save_session(
+    ctx: Context,
+    conversation: list,
+    session_name: str = "",
+    agent: str = "",
+    goal: str = "",
+    current_state: str = "",
+    environment_json: str = "",
+) -> str:
+    """Called at END of conversation automatically. Saves a versioned handoff (goal, current state, decisions and why, open tasks, key facts, files, provenance) so any agent can resume the work. Secrets are redacted; re-saving the same conversation is a no-op.
+
+    Args:
+        conversation: The messages [{role, content}] to save.
+        session_name: Optional human-readable name.
+        agent: Which agent is saving, e.g. "claude-code", "cursor-agent".
+        goal: Your one-line statement of the goal (better than the extracted one).
+        current_state: Your one-line summary of where the work stands.
+        environment_json: JSON fingerprint, e.g. {"os": "macOS", "python_version": "3.11.4",
+            "framework": "FastAPI", "framework_version": "0.110.0", "dependencies": {"pyjwt": "2.8.0"}}.
+            Other runtimes go in dependencies, e.g. {"node": "20.11.1"}.
+    """
     backend = get_backend(ctx)
-    res = save_session(backend, conversation, session_name=session_name if session_name else None)
+    res = save_session(
+        backend, conversation, session_name=session_name if session_name else None,
+        agent=agent, client=_client_name(ctx), goal=goal, current_state=current_state,
+        environment=environment_json or None,
+    )
     return apply_auto_compression(ctx, conversation, res)
 
 
 @_tool("Resume from past sessions", _READ)
-def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int = 3, include_action_items: bool = True, conversation: Optional[list] = None) -> str:
-    """Called at START of every new conversation. Reconstructs context brief from past sessions instantly."""
+def cognicore_resume_session(
+    ctx: Context,
+    query: str = "",
+    last_n_sessions: int = 3,
+    include_action_items: bool = True,
+    conversation: Optional[list] = None,
+    max_tokens: int = 0,
+    format: str = "text",
+    session_id: str = "",
+    section: str = "",
+    environment_json: str = "",
+) -> str:
+    """Called at START of every new conversation. Returns the handoff of the best-matching past session (by query, else the latest), most important first: goal, current state, environment warnings, open tasks, decisions, key facts, files, exact values, experiences, code, other sessions.
+
+    Args:
+        query: What you are working on now; picks the matching session.
+        last_n_sessions: How many sessions to include (the best match plus older summaries).
+        include_action_items: Include open tasks.
+        max_tokens: Token budget for the reply (default 1500, minimum 120 for text, 200 for json).
+            Items that do not fit are listed so you can fetch them with session_id + section.
+        format: "text" (default) or "json" (cognicore.handoff/v1 fields).
+        session_id: Resume this exact session.
+        section: Return only one section in full, e.g. "key_facts", "code", "exact_values", "all".
+        environment_json: Your current environment (same shape as in save); differences from the
+            saved environment are reported as warnings.
+    """
     backend = get_backend(ctx)
-    res = resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
+    res = resume_session(
+        backend, query=query if query else None, last_n_sessions=last_n_sessions,
+        include_action_items=include_action_items, max_tokens=max_tokens or None, format=format,
+        session_id=session_id or None, section=section or None, environment=environment_json or None,
+    )
     return apply_auto_compression(ctx, conversation, res)
 
 
@@ -962,6 +1022,7 @@ def cognicore_record_experience(
     framework_version: str = "",
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
+    os_name: str = "",
 ) -> str:
     """Record a structured experience from a completed task.
 
@@ -983,6 +1044,7 @@ def cognicore_record_experience(
         framework: e.g. "FastAPI".
         framework_version: e.g. "0.95.0".
         dependencies_json: JSON dict of key dependencies, e.g. {"pyjwt": "2.8.0"}.
+        os_name: Operating system, e.g. "macOS", "Windows", "Ubuntu 22.04".
     """
     manager = _get_experience_manager(ctx)
     agent_id = _get_agent_id(ctx)
@@ -1027,6 +1089,7 @@ def cognicore_record_experience(
         ),
         environment=EnvironmentContext(
             python_version=python_version,
+            os=os_name,
             framework=framework,
             framework_version=framework_version,
             dependencies=deps,
@@ -1108,6 +1171,7 @@ def cognicore_recall_experience(
     framework_version: str = "",
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
+    os_name: str = "",
 ) -> str:
     """Recall relevant past experiences before starting a task.
 
@@ -1123,11 +1187,12 @@ def cognicore_recall_experience(
         framework: Current framework for compatibility filtering.
         framework_version: Current framework version.
         dependencies_json: Current key dependencies as JSON dict.
+        os_name: Current operating system, e.g. "Windows".
     """
     manager = _get_experience_manager(ctx)
 
     current_env = None
-    if python_version or framework:
+    if python_version or framework or os_name:
         try:
             deps = json.loads(dependencies_json) if dependencies_json else {}
             if not isinstance(deps, dict):
@@ -1136,6 +1201,7 @@ def cognicore_recall_experience(
             deps = {}
         current_env = EnvironmentContext(
             python_version=python_version,
+            os=os_name,
             framework=framework,
             framework_version=framework_version,
             dependencies=deps,
@@ -1257,6 +1323,7 @@ def cognicore_check_experience(
     framework_version: str = "",
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
+    os_name: str = "",
 ) -> str:
     """Check if a past experience is still valid in the current environment.
 
@@ -1269,6 +1336,7 @@ def cognicore_check_experience(
         framework: Current framework.
         framework_version: Current framework version.
         dependencies_json: Current dependencies as JSON dict.
+        os_name: Current operating system, e.g. "Windows".
     """
     manager = _get_experience_manager(ctx)
 
@@ -1281,6 +1349,7 @@ def cognicore_check_experience(
 
     current_env = EnvironmentContext(
         python_version=python_version,
+        os=os_name,
         framework=framework,
         framework_version=framework_version,
         dependencies=deps,

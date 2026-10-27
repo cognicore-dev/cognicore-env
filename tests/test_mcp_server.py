@@ -286,3 +286,32 @@ def test_mcp_stdio_protocol_calls_tool_for_desktop_clients(tmp_path):
 
     assert "Threat scan result: HIGH" in result
     assert "Category : prompt_injection" in result
+
+
+def test_mcp_stdio_session_handoff_survives_a_new_server_process(tmp_path):
+    """One agent saves, a fresh server process (a new client session) resumes."""
+    conversation = [
+        {"role": "user", "content": "Our goal is to fix intermittent 401s on /api/v2/orders. Ticket is AUTH-1423."},
+        {"role": "assistant", "content": "We decided to switch to PyJWT 2.8.0 because python-jose is unmaintained."},
+        {"role": "user", "content": "TODO: add a regression test in tests/test_auth.py. Key: sk-test-FAKE0000000000000000000000"},
+    ]
+    saved = anyio.run(
+        _call_tool_over_stdio,
+        tmp_path,
+        "cognicore_save_session",
+        {"conversation": conversation, "session_name": "jwt", "agent": "claude-code",
+         "environment_json": '{"os": "macOS", "dependencies": {"pyjwt": "2.8.0"}}'},
+    )
+    assert '"redactions": 1' in saved
+
+    brief = anyio.run(
+        _call_tool_over_stdio,
+        tmp_path,
+        "cognicore_resume_session",
+        {"query": "JWT auth", "max_tokens": 400,
+         "environment_json": '{"os": "Windows", "dependencies": {"pyjwt": "1.7.1"}}'},
+    )
+
+    for value in ("AUTH-1423", "PyJWT 2.8.0", "tests/test_auth.py", "by claude-code"):
+        assert value in brief
+    assert "OS mismatch" in brief and "sk-test-FAKE" not in brief
