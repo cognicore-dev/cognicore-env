@@ -193,23 +193,49 @@ class SQLiteMemoryBackend(MemoryBackend):
             invalidated_reason=row["invalidated_reason"] if "invalidated_reason" in row.keys() else "",
         )
 
+    @staticmethod
+    def _embedding_json(vec: List[float]) -> str:
+        # normalize for cosine sim
+        norm = sum(x*x for x in vec) ** 0.5
+        if norm > 0:
+            vec = [x/norm for x in vec]
+        return json.dumps(vec)
+
     def store(self, entry: MemoryEntry) -> str:
         embedding_json = None
         if self.provider:
-            text_to_embed = entry.text or entry.action
-            vec = self.provider.embed(text_to_embed)
-            # normalize for cosine sim
-            norm = sum(x*x for x in vec) ** 0.5
-            if norm > 0:
-                vec = [x/norm for x in vec]
-            embedding_json = json.dumps(vec)
+            embedding_json = self._embedding_json(self.provider.embed(entry.text or entry.action))
 
+        with self._get_conn() as conn:
+            entry_id = self._insert(conn, entry, embedding_json)
+        event_bus.publish("on_store", entry=entry, entry_id=entry_id)
+        return entry_id
+
+    def store_many(self, entries: List[MemoryEntry]) -> List[str]:
+        """Store several entries in one transaction, with one batched embedding call.
+
+        Same result as calling ``store`` for each entry, but a session save no
+        longer pays a connection, a commit and an embed call per row.
+        """
+        if not entries:
+            return []
+        embeddings: List[Optional[str]] = [None] * len(entries)
+        if self.provider:
+            vecs = self.provider.embed_batch([e.text or e.action for e in entries])
+            embeddings = [self._embedding_json(v) for v in vecs]
+
+        with self._get_conn() as conn:
+            ids = [self._insert(conn, e, emb) for e, emb in zip(entries, embeddings)]
+        for entry, entry_id in zip(entries, ids):
+            event_bus.publish("on_store", entry=entry, entry_id=entry_id)
+        return ids
+
+    def _insert(self, conn: sqlite3.Connection, entry: MemoryEntry, embedding_json: Optional[str]) -> str:
         metadata_json = json.dumps(entry.metadata) if entry.metadata else None
         timestamp = entry.timestamp or time.time()
         last_accessed = entry.last_accessed or timestamp
 
-        with self._get_conn() as conn:
-            cursor = conn.execute("""
+        cursor = conn.execute("""
                 INSERT INTO memory_entries (
                     text, category, correct, action, scope, scope_id,
                     metadata_json, embedding_json, timestamp, relevance,
@@ -252,11 +278,9 @@ class SQLiteMemoryBackend(MemoryBackend):
                 entry.invalidated_by,
                 entry.invalidated_reason,
             ))
-            entry_id = str(cursor.lastrowid)
-            entry.entry_id = entry_id
-            
-            event_bus.publish("on_store", entry=entry, entry_id=entry_id)
-            return entry_id
+        entry_id = str(cursor.lastrowid)
+        entry.entry_id = entry_id
+        return entry_id
 
     def search(self, query: str, top_k: int = 5,
                category: Optional[str] = None,

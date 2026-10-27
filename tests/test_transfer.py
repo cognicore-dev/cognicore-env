@@ -39,6 +39,40 @@ def test_compress_has_no_hardcoded_project_goal(backend):
     assert "CogniCore MCP server" not in data["summary"]
 
 
+class _CountingProvider:
+    """Minimal embedding provider that records how it was called."""
+
+    def __init__(self):
+        self.single, self.batches = 0, []
+
+    def embed(self, text):
+        self.single += 1
+        return [float(len(text)), 1.0]
+
+    def embed_batch(self, texts):
+        self.batches.append(len(texts))
+        return [[float(len(t)), 1.0] for t in texts]
+
+    @property
+    def dimension(self):
+        return 2
+
+
+def test_store_many_matches_store_and_batches_embeddings(tmp_path):
+    from cognicore.memory.base import MemoryEntry
+
+    provider = _CountingProvider()
+    b = SQLiteMemoryBackend(str(tmp_path / "m.db"), provider=provider)
+    ids = b.store_many([MemoryEntry(text=f"fact number {i}", category="general") for i in range(5)])
+    assert len(ids) == 5 and len(set(ids)) == 5
+    assert provider.batches == [5] and provider.single == 0
+    with b._get_conn() as conn:
+        rows = conn.execute("SELECT text, embedding_json FROM memory_entries ORDER BY entry_id").fetchall()
+    assert [r["text"] for r in rows] == [f"fact number {i}" for i in range(5)]
+    assert all(r["embedding_json"] for r in rows)
+    assert b.store_many([]) == []
+
+
 def test_compress_reports_expansion_honestly(backend):
     conv = [{"role": "user", "content": "Launch is on November 15."}]
     data = json.loads(compress_context(backend, conv, keep_last_n=0))
