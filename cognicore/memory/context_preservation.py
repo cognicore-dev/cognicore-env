@@ -8,6 +8,7 @@ to solve token exhaustion in long LLM conversations without requiring additional
 import re
 import json
 import time
+import uuid
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
@@ -175,8 +176,9 @@ def compress_context(
 
     tokens_before = TokenBudget.estimate_tokens(conversation)
     
-    # Separate older messages vs verbatim recent messages
-    if len(conversation) > keep_last_n:
+    # Separate older messages vs verbatim recent messages.
+    # keep_last_n <= 0 means "compress everything" (conversation[:-0] would be empty).
+    if 0 < keep_last_n < len(conversation):
         older_messages = conversation[:-keep_last_n]
         recent_messages = conversation[-keep_last_n:]
     else:
@@ -272,12 +274,10 @@ def compress_context(
                 if sents:
                     project_status = _clean_statement(sents[0])
                     break
-    if not project_status:
-        project_status = "Active development on CogniCore MCP server and memory systems."
-
     def _build_summary(t_after_estimate: int, max_items: int = 10, include_all_sections: bool = True) -> str:
         lines = [f"COMPRESSED CONTEXT ({messages_compressed} messages → {t_after_estimate} tokens):\n"]
-        lines.append(f"Project status: {project_status}")
+        if project_status:
+            lines.append(f"Project status: {project_status}")
 
         if include_all_sections:
             if key_numbers:
@@ -353,14 +353,17 @@ def compress_context(
     )
     stored_id = backend.store(entry)
 
-    ratio_val = max(1, round(tokens_before / max(1, tokens_after)))
+    # Report the real ratio. Very short inputs can come out larger than they went
+    # in (the section headers cost more than they save); say so instead of "1x".
+    ratio_val = round(tokens_before / max(1, tokens_after), 1)
 
     result = {
         "summary": summary_text,
         "messages_compressed": messages_compressed,
         "tokens_before": tokens_before,
         "tokens_after": tokens_after,
-        "compression_ratio": f"{ratio_val}x",
+        "compression_ratio": f"{ratio_val:g}x",
+        "expanded": tokens_after > tokens_before,
         "stored_memory_id": stored_id
     }
     return json.dumps(result, indent=2)
@@ -378,7 +381,9 @@ def save_session(
     """
     timestamp = time.time()
     dt_str = datetime.fromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
-    session_id = f"sess_{dt_str}"
+    # The random suffix keeps two agents saving in the same second from
+    # overwriting each other's session row.
+    session_id = f"sess_{dt_str}_{uuid.uuid4().hex[:8]}"
     
     if not session_name:
         date_pretty = datetime.fromtimestamp(timestamp).strftime("%b %d, %Y")
