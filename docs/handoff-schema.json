@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cognicore-dev/cognicore-env/docs/handoff-schema.json",
+  "title": "CogniCore session handoff",
+  "description": "cognicore.handoff/v1: what one agent saves (cognicore_save_session) so another agent, in any client, can resume the work (cognicore_resume_session). Built without LLM calls; exact values are copied verbatim and detected secrets are redacted.",
+  "type": "object",
+  "required": ["schema", "provenance", "goal", "current_state", "decisions", "open_tasks", "key_facts", "exact_values", "files", "code", "environment", "redactions"],
+  "properties": {
+    "schema": {"const": "cognicore.handoff/v1"},
+    "provenance": {
+      "type": "object",
+      "required": ["session_id", "session_name", "agent", "client", "created_at", "message_count", "migrated"],
+      "properties": {
+        "session_id": {"type": "string", "description": "sess_<local YYYYmmdd_HHMMSS>_<8 hex>"},
+        "session_name": {"type": "string"},
+        "agent": {"type": "string", "description": "Which agent saved it, e.g. claude-code, cursor. Empty if not given."},
+        "client": {"type": "string", "description": "Which client/app, e.g. claude-desktop, vscode. Empty if not given."},
+        "created_at": {"type": "string", "description": "UTC, ISO-8601, e.g. 2026-10-27T13:22:02Z"},
+        "message_count": {"type": ["integer", "null"], "description": "null for sessions migrated from pre-v1 storage"},
+        "migrated": {"type": "boolean", "description": "true when rebuilt from a pre-v1 session's memory rows"}
+      }
+    },
+    "goal": {"type": "string", "description": "What the work is for. Explicit goal from the agent, else extracted."},
+    "current_state": {"type": "string", "description": "Where the work stands: latest status statements, or the agent's own summary."},
+    "decisions": {
+      "type": "array",
+      "description": "In conversation order. Resume shows the most recent first.",
+      "items": {
+        "type": "object",
+        "required": ["what", "why", "status"],
+        "properties": {
+          "what": {"type": "string"},
+          "why": {"type": "string", "description": "Reason, when stated (text after because / since / so)."},
+          "status": {"enum": ["made", "rejected"], "description": "rejected = an approach that was tried or considered and dropped"}
+        }
+      }
+    },
+    "open_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task", "status"],
+        "properties": {
+          "task": {"type": "string"},
+          "status": {"enum": ["open", "done"]}
+        }
+      }
+    },
+    "key_facts": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Other statements worth keeping, verbatim. Statements with exact values come first."
+    },
+    "exact_values": {
+      "type": "array",
+      "description": "Every id, version, hash, path, number, error code, env var name, date, URL... seen, verbatim and de-duplicated.",
+      "items": {
+        "type": "object",
+        "required": ["value", "kind"],
+        "properties": {
+          "value": {"type": "string"},
+          "kind": {"type": "string", "examples": ["path", "file", "url", "domain", "version", "hash", "ticket", "env_var", "code", "money", "date", "quantity", "number", "percent", "color", "assignment", "identifier", "inline_code", "http_status"]}
+        }
+      }
+    },
+    "files": {"type": "array", "items": {"type": "string"}, "description": "Files, paths, URLs and domains touched or mentioned."},
+    "code": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["lang", "code", "context"],
+        "properties": {
+          "lang": {"type": "string"},
+          "code": {"type": "string"},
+          "context": {"type": "string", "description": "The sentence just before the code block."}
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "Fingerprint supplied by the saving agent. Compared with the resuming agent's environment to produce warnings. Non-Python runtimes go in dependencies, e.g. {\"node\": \"20.11.1\"}.",
+      "properties": {
+        "os": {"type": "string"},
+        "python_version": {"type": "string"},
+        "framework": {"type": "string"},
+        "framework_version": {"type": "string"},
+        "dependencies": {"type": "object", "additionalProperties": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "redactions": {"type": "integer", "minimum": 0, "description": "How many secret-like values were replaced with [REDACTED:<kind>]."}
+  }
+}

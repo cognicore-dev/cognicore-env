@@ -145,6 +145,23 @@ class SQLiteMemoryBackend(MemoryBackend):
             )
         """)
 
+        # v1 handoff columns. Sessions saved before this have NULL handoff_json
+        # and are converted from their memory rows when resumed.
+        session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        for col_name, col_def in [
+            ("handoff_json", "TEXT"),
+            ("conversation_hash", "TEXT"),
+            ("agent", "TEXT DEFAULT ''"),
+            ("client", "TEXT DEFAULT ''"),
+        ]:
+            if col_name not in session_cols:
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {col_name} {col_def}")  # nosec B608 - names from the fixed list above
+                except Exception as e:
+                    logger.warning(f"Migration error for sessions.{col_name}: {e}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_conversation_hash ON sessions(conversation_hash)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)")
+
     def _row_to_entry(self, row: sqlite3.Row) -> MemoryEntry:
         scope_str = row["scope"]
         try:
