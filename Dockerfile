@@ -1,25 +1,31 @@
-FROM python:3.11-slim
+# Base image pinned by digest so a rebuild cannot silently pick up a changed
+# image. Dependabot (docker ecosystem) proposes digest updates as PRs.
+FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 WORKDIR /app
 
-# Install build dependencies for sqlite/native extensions if any
-RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev && rm -rf /var/lib/apt/lists/*
+# Exact versions with hashes: pip refuses any file whose hash differs, so a
+# poisoned or re-published release cannot slip into a build. To change them,
+# edit deploy/requirements.in and recompile deploy/requirements.txt.
+COPY deploy/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
-# Copy all files needed for install
-COPY pyproject.toml requirements.txt README.md ./
 COPY cognicore/ cognicore/
 
-# Install python dependencies
-RUN pip install --no-cache-dir uv && uv pip install --system -e . 
-RUN uv pip install --system uvicorn fastapi "mcp==1.30.0" pyjwt cryptography httpx
-
 # Environment configuration
-ENV PYTHONUNBUFFERED=1
-ENV COGNICORE_DATA_DIR=/data/cognicore
-ENV SUPABASE_URL=""
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    COGNICORE_DATA_DIR=/data/cognicore \
+    SUPABASE_URL=""
 
-# Ensure data directory exists and is accessible
-RUN mkdir -p /data/cognicore
+# Run as an unprivileged user. The data volume must be owned by uid 10001
+# (deploy/setup-host.sh does this for the VM deployment).
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin cognicore \
+    && mkdir -p /data/cognicore \
+    && chown -R cognicore /data
+USER 10001
 
 EXPOSE 8000
 

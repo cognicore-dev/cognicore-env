@@ -25,6 +25,18 @@ services:
       - --proxy-headers
       - --forwarded-allow-ips
       - "*"
+      - --no-server-header
+    # Contain a compromise: the image runs as uid 10001, the root filesystem is
+    # read-only (only /data and /tmp are writable), no Linux capabilities, and
+    # no privilege escalation through setuid binaries.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
     environment:
       COGNICORE_JWT_SECRET: ${COGNICORE_JWT_SECRET:?set it in deploy/.env}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set it in deploy/.env}
@@ -49,8 +61,18 @@ services:
       retries: 3
 
   caddy:
-    image: caddy:2-alpine
+    # Pinned by digest (caddy 2.11.7); Dependabot proposes updates.
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - mcp
     ports:

@@ -13,3 +13,30 @@ updates:
     commit-message:
       prefix: ci
     labels: [dependencies]
+
+  # Base images are pinned by digest; this keeps them patched.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deploy)
+    labels: [dependencies]
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deploy)
+    labels: [dependencies]
+  # Hashed pins for the hosted server image (deploy/requirements.txt).
+  - package-ecosystem: pip
+    directory: /deploy
+    schedule:
+      interval: weekly
+    groups:
+      server-deps:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore(deploy)
+    labels: [dependencies]

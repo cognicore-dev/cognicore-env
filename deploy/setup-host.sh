@@ -69,6 +69,37 @@ if [[ -n "$DEVICE" ]]; then
 	mountpoint -q "$DATA_DIR" || mount "$DATA_DIR"
 fi
 mkdir -p "$DATA_DIR/cognicore/remote"
+# The container runs as uid 10001 (see Dockerfile); only it may read user data.
+chown -R 10001:10001 "$DATA_DIR/cognicore"
+chmod 700 "$DATA_DIR/cognicore" "$DATA_DIR/cognicore/remote"
+
+echo "==> SSH hardening and fail2ban"
+# Keys only, no root, no forwarding. Bots try passwords on every public IP;
+# fail2ban bans an address after 5 failures, for longer each time it returns.
+cat >/etc/ssh/sshd_config.d/60-cognicore.conf <<'SSHD'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+X11Forwarding no
+AllowAgentForwarding no
+MaxAuthTries 3
+LoginGraceTime 30
+SSHD
+sshd -t
+systemctl reload ssh
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban >/dev/null
+cat >/etc/fail2ban/jail.d/cognicore.conf <<'JAIL'
+[sshd]
+enabled = true
+backend = systemd
+maxretry = 5
+findtime = 10m
+bantime = 1h
+bantime.increment = true
+bantime.maxtime = 1w
+JAIL
+systemctl enable --now fail2ban >/dev/null
+systemctl restart fail2ban
 
 echo "==> Firewall"
 ufw allow 22/tcp >/dev/null
