@@ -13,10 +13,13 @@ RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r /tmp/requ
 
 COPY cognicore/ cognicore/
 
-# Environment configuration
+# Environment configuration. Several modules create scratch files under
+# ~/.cognicore on import; the root filesystem is read-only in production, so
+# HOME points at the writable /tmp. User data lives in COGNICORE_DATA_DIR.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
+    HOME=/tmp \
     COGNICORE_DATA_DIR=/data/cognicore \
     SUPABASE_URL=""
 
