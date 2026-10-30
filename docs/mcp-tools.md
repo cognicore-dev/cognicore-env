@@ -14,15 +14,16 @@ you for confirmation:
 | **delete** | Removes data (`destructiveHint`) |
 | **external** | Sends a request to a service outside CogniCore (`openWorldHint`) |
 
-All tools operate on the signed-in user's own database. No tool can read or write another account's
-data; the tools that take another user's id check it and refuse. See
+Tools work on the signed-in user's own database. The one exception is the marketplace: memories you
+choose to list can be discovered and copied by other signed-in users. See
 [Remote MCP server](remote-mcp-server.md) for sign-in and deployment.
 
 ---
 
 ## Memory
 
-The core of CogniCore. Search is BM25 over your own entries — no embedding service involved.
+The core of CogniCore. On the hosted server, search is BM25 over your own entries; no embedding
+service is involved.
 
 | Tool | Kind | What it does |
 |---|---|---|
@@ -30,7 +31,7 @@ The core of CogniCore. Search is BM25 over your own entries — no embedding ser
 | `cognicore_recall` | read | Search your memories and return the `top_k` most relevant (default 5). |
 | `cognicore_list` | read | List recent memories, filtered by category or scope. |
 | `cognicore_forget` | delete | Delete one memory by its id. |
-| `cognicore_stats` | read | Counts, categories and storage size for your memory store. |
+| `cognicore_stats` | read | Total memories, a count per category, and server uptime. |
 | `cognicore_compress_context` | write | Summarize a long conversation, keeping the last `keep_last_n` turns verbatim. |
 | `cognicore_save_session` | write | Store a summary of the current session under an optional name. |
 | `cognicore_resume_session` | read | Return the last `last_n_sessions` summaries, with action items. |
@@ -46,7 +47,7 @@ becomes verified only when you supply evidence that the solution worked.
 | `cognicore_verify_experience` | write | Promote a candidate experience to verified by attaching evidence, such as test results or command output. |
 | `cognicore_recall_experience` | read | Find relevant past experiences before starting a task. Includes known failures, and can require verified ones only. |
 | `cognicore_check_experience` | read | Check whether an experience still applies after your environment changed. |
-| `cognicore_share_experience` | write | Transfer verified experiences to another agent id, failure warnings included. Only verified experiences with intact provenance are sent. |
+| `cognicore_share_experience` | write | Transfer verified experiences to another agent id, failure warnings included. On the hosted server the target must be your own account; any other id is refused. |
 
 ## Figma
 
@@ -54,7 +55,7 @@ The one integration that calls a third-party API. `cognicore_figma_sync` request
 `api.figma.com` and stores the design data in your memory; every other tool here then works from
 that stored copy, with no token needed.
 
-Pass your Figma personal access token as the `access_token` argument. It is used for that request
+Pass your Figma personal access token as the `access_token` argument (`token` on `cognicore_fabric_sync_figma`). It is used for that request
 only and is never stored. On the hosted server you must pass it explicitly — the
 `FIGMA_ACCESS_TOKEN` environment variable is a deployment setting, not your token. Prefer a
 read-only token, and revoke it when you are done.
@@ -63,9 +64,9 @@ read-only token, and revoke it when you are done.
 |---|---|---|
 | `cognicore_figma_sync` | external | Pull styles, components, variables and file metadata from a Figma file into memory. Takes the `file_key` from the file URL. |
 | `cognicore_figma_recall` | read | Return the stored design tokens, typography, colors and variables as JSON. |
-| `cognicore_figma_design_system` | read | Return the stored design system as a whole. |
-| `cognicore_figma_check_component` | read | Check an implementation against a stored component's definition. |
-| `cognicore_figma_record_implementation` | write | Record that a component was implemented, and where. |
+| `cognicore_figma_design_system` | read | Return recorded component mappings, project conventions and recorded mistakes. |
+| `cognicore_figma_check_component` | read | Check whether a Figma component is already implemented, answering reuse, update or implement. |
+| `cognicore_figma_record_implementation` | write | Record which code file implements a Figma component, so later work can reuse it. |
 | `cognicore_figma_recommend` | read | Translate stored tokens into instructions for a target tool (`cursor`, `claude`, `elevenlabs`). |
 
 ## ElevenLabs preferences
@@ -107,4 +108,4 @@ you list it. Treat this group as a demonstration.
 | `cognicore_discover_sellers` | read | Find accounts offering memories, filtered by reputation and notional price. |
 | `cognicore_purchase_memory` | write | Copy listed memories from another account into yours. The seller must have listed them. |
 | `cognicore_value_my_memory` | write | Estimate a notional value for your memories. |
-| `cognicore_reputation` | write | Return an account's marketplace reputation. |
+| `cognicore_reputation` | write | Return an account's marketplace reputation, your own by default. |

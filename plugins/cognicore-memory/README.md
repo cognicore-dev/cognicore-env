@@ -86,9 +86,9 @@ This plugin connects to the hosted CogniCore server at `https://mcp.cognicoree.t
 with GitHub, and your memories are stored there, in a database of your own, separate from every
 other user's.
 
-- Only you can read or write your memories. Tools that take another account's id refuse the call.
+- Other users cannot read your memories unless you list them with the marketplace tool `cognicore_list_for_sale`.
 - You can delete any memory at any time with `/forget <id>`.
-- To delete or export everything, email the address in the [privacy policy](https://github.com/cognicore-dev/cognicore-my-openenv/blob/main/PRIVACY.md),
+- To delete or export everything, email the address in the [privacy policy](https://github.com/cognicore-dev/cognicore-env/blob/main/PRIVACY.md),
   which also covers what is collected and how long it is kept.
 
 ---
@@ -96,14 +96,14 @@ other user's.
 ## Self-Hosting
 
 If you would rather run the server yourself, the hosted server is the same code as this repository,
-and [docs/remote-mcp-server.md](https://github.com/cognicore-dev/cognicore-my-openenv/blob/main/docs/remote-mcp-server.md)
+and [docs/remote-mcp-server.md](https://github.com/cognicore-dev/cognicore-env/blob/main/docs/remote-mcp-server.md)
 covers deploying it with Docker Compose behind a reverse proxy, including the GitHub OAuth app and
 the environment variables it needs.
 
 Once it is running, point `url` in this plugin's `.mcp.json` at your own server.
 
 For memory with no server at all, `pip install cognicore-env` and run the local stdio MCP server —
-see the [README](https://github.com/cognicore-dev/cognicore-my-openenv#mcp-server).
+see the [README](https://github.com/cognicore-dev/cognicore-env#mcp-server).
 
 ---
 

@@ -9,34 +9,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- **Deployment for the hosted server** (`deploy/`): Docker Compose, a Caddy reverse proxy that
-  terminates TLS and sets security headers, and `setup-host.sh` to prepare a fresh host. Replaces
-  the single-platform deployment the hosted server previously used; `docs/remote-mcp-server.md`
-  covers the setup. (#175)
-- **Nightly off-host backup** (`deploy/backup-to-blob.sh`): archives each user's database to object
-  storage on a schedule, using a write-only credential so a compromised host cannot read or delete
-  existing backups. (#176)
-- **Reference for all 31 hosted MCP tools** (`docs/mcp-tools.md`), stating for each tool whether it
-  reads data, changes data, or calls a third-party service.
-
-### Changed
-- **The hosted server image is hardened** (#176): base images pinned by digest, dependencies
-  installed from a hash-pinned `deploy/requirements.txt`, and the container runs as a non-root user
-  on a read-only root filesystem with capabilities dropped, writing only to `/data` and `/tmp`.
-  Dependabot now keeps the pinned deployment dependencies updated.
-- **Host hardening** (#176): key-only SSH with root login refused, and fail2ban rate-limiting
-  connection attempts.
-- `HOME` is set to `/tmp` in the container image, so module initialization works on the read-only
-  filesystem. CogniCore stores persistent state under `/data`; this only affects the unused home
-  directory. (#176)
-
-### Fixed
-- **Security:** the hosted server rate-limits requests, including unauthenticated ones by client IP
-  from `X-Real-IP`, and no longer accepts access tokens outside request headers. Failed
-  authentication returns a terse 401 that does not describe why it failed. (#173)
-
-## [0.11.0] — 2026-10-20
+## [0.11.0] — 2026-10-30
 
 ### Added
 - **Hosted MCP server** (`cognicore.connectors.remote`), running at `https://mcp.cognicoree.tech/mcp/stream` (Streamable HTTP) and `/mcp/sse`. Each signed-in user gets their own SQLite memory store.
@@ -46,12 +19,29 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **mem0 Integration (`cognicore.integrations.mem0`)**: Verified memory transfer bridge to mem0 (`mem0ai/mem0`). Sealed bundle export/import with Ed25519 signing, deterministic canonical JSON, fail-closed signature verification, consequence-class split (authority vs information), structural quarantine (`quarantine.json` with dedicated TF-IDF index and query path), custody chain revocation checking, environment compatibility, promotion requiring fresh verification evidence, and index recall reachability assertions. Includes `sync_to_mem0()` for pushing verified memories into a live mem0 client. See `cognicore/integrations/mem0/` and `tests/test_mem0_bridge.py`.
 - **Experience transfer** (`cognicore.experience`): verification, revalidation, compatibility checks and conflict handling for reusing past experiences across projects.
 - **Probabilistic Cognitive Control** (`cognicore.decision`): safety gate and decision logging.
+- **Deployment for the hosted server** (`deploy/`): Docker Compose, a Caddy reverse proxy that
+  terminates TLS and sets security headers, and `setup-host.sh` to prepare a fresh host.
+  `docs/remote-mcp-server.md` covers the setup. (#175)
+- **Nightly off-host backup** (`deploy/backup-to-blob.sh`): archives each user's database to object
+  storage on a schedule, using a write-only credential so a compromised host cannot read or delete
+  existing backups. (#176)
+- **Reference for all 31 hosted MCP tools** (`docs/mcp-tools.md`), stating for each tool whether it
+  reads data, changes data, or calls a third-party service.
 
 ### Changed
 - **Repository restructured into subpackages** (`memory`, `agents`, `safety`, `evaluation`, `training`, `observability`, `connectors`, `experimental`, …). Every old import path still works and resolves to the same module; see `cognicore/_compat.py`. New code should use the new paths.
 - `SQLiteMemoryBackend` lexical search scores are now bounded to (0, 1], with the best match scoring 1.0, matching the range the hybrid backend already used. Ranking is unchanged. (#148)
 - Optional tool arguments accept an explicit `null`. (#152)
 - Memory extraction uses fewer tokens.
+- **The hosted server image is hardened** (#176): base images pinned by digest, dependencies
+  installed from a hash-pinned `deploy/requirements.txt`, and the container runs as a non-root user
+  on a read-only root filesystem with capabilities dropped, writing only to `/data` and `/tmp`.
+  Dependabot now keeps the pinned deployment dependencies updated.
+- **Host hardening** (#176): key-only SSH with root login refused, and fail2ban rate-limiting
+  connection attempts.
+- `HOME` is set to `/tmp` in the container image so the package can import on the read-only
+  filesystem. User data is stored under `COGNICORE_DATA_DIR`; anything written to the home directory
+  does not survive a restart. (#176)
 
 ### Fixed
 - **Security:** on the hosted server, one user could buy or receive another user's memories through the marketplace and sharing tools. `cognicore_purchase_memory` now requires the seller to have listed their memories, and `cognicore_share_experience` refuses to write into another account. (#161)
@@ -62,6 +52,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Undefined names in type hints in `decision/logging.py`, `fabric/engine.py` and `realbench/coding_bench.py`.
 - A test keeps the version in `pyproject.toml`, `cognicore.__version__` and `server.json` in sync.
 - PyPI project links point at `cognicore-dev/cognicore-env`.
+- **Security:** the hosted server rate-limits requests, including unauthenticated ones by client IP
+  from `X-Real-IP`, and no longer accepts access tokens outside request headers. Failed
+  authentication returns a terse 401 that does not describe why it failed. (#173)
 
 ## [1.0.0] - 2026-07-06
 
