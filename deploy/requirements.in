@@ -1,0 +1,13 @@
+# Direct dependencies of the hosted MCP server image. Compile the pinned,
+# hashed lock file after changing this list:
+#   uv pip compile deploy/requirements.in -o deploy/requirements.txt \
+#     --generate-hashes --python-version 3.11 --python-platform x86_64-manylinux_2_28
+numpy
+jsonschema
+requests
+fastapi
+uvicorn
+mcp==1.30.0
+PyJWT
+cryptography
+httpx

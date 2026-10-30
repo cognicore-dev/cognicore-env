@@ -8,6 +8,17 @@
 {$COGNICORE_DOMAIN} {
 	encode zstd gzip
 
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# The OAuth consent page must never load inside another site's frame,
+		# or a page could trick users into approving access (clickjacking).
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
 	# The rate limiter in cognicore/connectors/remote.py buckets unauthenticated
 	# requests by X-Real-IP, so it has to be the real client. Caddy sets it from
 	# the direct connection, and X-Forwarded-For from the client is dropped.
