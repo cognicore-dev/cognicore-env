@@ -9,6 +9,33 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Deployment for the hosted server** (`deploy/`): Docker Compose, a Caddy reverse proxy that
+  terminates TLS and sets security headers, and `setup-host.sh` to prepare a fresh host. Replaces
+  the single-platform deployment the hosted server previously used; `docs/remote-mcp-server.md`
+  covers the setup. (#175)
+- **Nightly off-host backup** (`deploy/backup-to-blob.sh`): archives each user's database to object
+  storage on a schedule, using a write-only credential so a compromised host cannot read or delete
+  existing backups. (#176)
+- **Reference for all 31 hosted MCP tools** (`docs/mcp-tools.md`), stating for each tool whether it
+  reads data, changes data, or calls a third-party service.
+
+### Changed
+- **The hosted server image is hardened** (#176): base images pinned by digest, dependencies
+  installed from a hash-pinned `deploy/requirements.txt`, and the container runs as a non-root user
+  on a read-only root filesystem with capabilities dropped, writing only to `/data` and `/tmp`.
+  Dependabot now keeps the pinned deployment dependencies updated.
+- **Host hardening** (#176): key-only SSH with root login refused, and fail2ban rate-limiting
+  connection attempts.
+- `HOME` is set to `/tmp` in the container image, so module initialization works on the read-only
+  filesystem. CogniCore stores persistent state under `/data`; this only affects the unused home
+  directory. (#176)
+
+### Fixed
+- **Security:** the hosted server rate-limits requests, including unauthenticated ones by client IP
+  from `X-Real-IP`, and no longer accepts access tokens outside request headers. Failed
+  authentication returns a terse 401 that does not describe why it failed. (#173)
+
 ## [0.11.0] — 2026-10-20
 
 ### Added
