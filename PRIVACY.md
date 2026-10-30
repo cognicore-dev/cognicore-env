@@ -59,7 +59,7 @@ We share data only in these cases:
 ## How long we keep it
 
 - **Your memories:** until you delete them or ask us to delete your data.
-- **Backups:** we copy the stored databases to our hosting provider's storage nightly, so the service can be restored after a failure, and each backup is deleted 30 days after it is made. A memory you delete is gone from the live service immediately, and leaves the backups within 30 days.
+- **Backups:** we copy the stored databases to our hosting provider's storage nightly, so the service can be restored after a failure, and each backup is deleted automatically after 30 days. Our storage provider can keep a deleted backup for up to 7 more days, so a memory you delete is gone from the live service immediately and from all backups within about 40 days.
 - **Sign-in tokens:** expire automatically; access tokens after 1 hour, refresh tokens after 30 days.
 - **Server logs:** kept by our hosting provider for a limited period, then deleted.
 
