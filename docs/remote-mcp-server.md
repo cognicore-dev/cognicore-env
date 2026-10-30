@@ -2,6 +2,8 @@
 
 `cognicore/connectors/remote.py` is the hosted MCP server behind the CogniCore Claude connector and the `cognicore-memory` plugin. Users sign in with GitHub, and each GitHub account gets its own memory database.
 
+This page covers sign-in, configuration and deployment. For what the server's 31 tools do, see [the tool reference](mcp-tools.md).
+
 ## How sign-in works
 
 The server is its own OAuth 2.1 authorization server (`cognicore/connectors/oauth.py`) and hands the actual sign-in to GitHub:

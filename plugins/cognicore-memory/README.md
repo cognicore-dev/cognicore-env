@@ -80,25 +80,30 @@ When saving a memory, you can optionally tag it with a scope:
 
 ---
 
-## Privacy
+## Where Your Memories Live
 
-- Your memories are stored in **your own Railway deployment** — not on CogniCore's servers.
-- Each user's memories are isolated by a unique hash of their Claude identity.
+This plugin connects to the hosted CogniCore server at `https://mcp.cognicoree.tech`. You sign in
+with GitHub, and your memories are stored there, in a database of your own, separate from every
+other user's.
+
+- Other users cannot read your memories unless you list them with the marketplace tool `cognicore_list_for_sale`.
 - You can delete any memory at any time with `/forget <id>`.
+- To delete or export everything, email the address in the [privacy policy](https://github.com/cognicore-dev/cognicore-env/blob/main/PRIVACY.md),
+  which also covers what is collected and how long it is kept.
 
 ---
 
 ## Self-Hosting
 
-Deploy your own CogniCore memory backend to Railway in under 5 minutes:
+If you would rather run the server yourself, the hosted server is the same code as this repository,
+and [docs/remote-mcp-server.md](https://github.com/cognicore-dev/cognicore-env/blob/main/docs/remote-mcp-server.md)
+covers deploying it with Docker Compose behind a reverse proxy, including the GitHub OAuth app and
+the environment variables it needs.
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template)
+Once it is running, point `url` in this plugin's `.mcp.json` at your own server.
 
-After deploying:
-1. Set `JWT_SECRET` in your Railway environment variables
-2. Update the server URL in `.mcp.json` to point to your deployment
-
-See the [deployment guide](https://github.com/cognicore-dev/cognicore-my-openenv#deployment) for full instructions.
+For memory with no server at all, `pip install cognicore-env` and run the local stdio MCP server —
+see the [README](https://github.com/cognicore-dev/cognicore-env#mcp-server).
 
 ---
 
