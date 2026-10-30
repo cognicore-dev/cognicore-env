@@ -1,0 +1,29 @@
+# TLS certificates are obtained and renewed automatically from Let's Encrypt.
+# Requires ports 80 and 443 open to the internet and $COGNICORE_DOMAIN already
+# resolving to this host.
+{
+	email {$COGNICORE_ACME_EMAIL}
+}
+
+{$COGNICORE_DOMAIN} {
+	encode zstd gzip
+
+	# The rate limiter in cognicore/connectors/remote.py buckets unauthenticated
+	# requests by X-Real-IP, so it has to be the real client. Caddy sets it from
+	# the direct connection, and X-Forwarded-For from the client is dropped.
+	#
+	# If Cloudflare's proxy (orange cloud) is ever turned on for this hostname,
+	# every request will arrive from a Cloudflare IP and the limiter will bucket
+	# all of them together. Switch it to CF-Connecting-IP before doing that.
+	reverse_proxy mcp:8000 {
+		header_up X-Real-IP {remote_host}
+		header_up -X-Forwarded-For
+		# Streamable HTTP and SSE are long-lived; don't cut them short.
+		flush_interval -1
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,69 @@
+# Hosted CogniCore MCP server.
+#
+# Provider-agnostic: any Linux host with Docker works (Azure, Hetzner, Oracle,
+# Fly, a laptop). Everything host-specific lives in deploy/.env and DNS.
+#
+#   cp deploy/.env.example deploy/.env   # then fill it in, never commit it
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+
+services:
+  mcp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # The Dockerfile's default CMD starts the ChatGPT connector; the hosted
+    # Claude connector is cognicore.connectors.remote. Caddy terminates TLS and
+    # sets X-Real-IP, which the rate limiter reads.
+    command:
+      - uvicorn
+      - cognicore.connectors.remote:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    environment:
+      COGNICORE_JWT_SECRET: ${COGNICORE_JWT_SECRET:?set it in deploy/.env}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set it in deploy/.env}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set it in deploy/.env}
+      COGNICORE_PUBLIC_URL: ${COGNICORE_PUBLIC_URL:?set it in deploy/.env}
+      COGNICORE_DATA_DIR: /data/cognicore
+      COGNICORE_EXTRA_REDIRECT_URIS: ${COGNICORE_EXTRA_REDIRECT_URIS:-}
+      COGNICORE_RATE_LIMIT_USER: ${COGNICORE_RATE_LIMIT_USER:-120}
+      COGNICORE_RATE_LIMIT_IP: ${COGNICORE_RATE_LIMIT_IP:-120}
+      COGNICORE_USE_SEMANTIC: ${COGNICORE_USE_SEMANTIC:-0}
+    volumes:
+      # Per-user SQLite databases. A real filesystem, never network storage:
+      # SQLite over SMB or NFS corrupts under concurrent writes.
+      - ${COGNICORE_HOST_DATA_DIR:-/mnt/cognicore-data}:/data
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - mcp
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      COGNICORE_DOMAIN: ${COGNICORE_DOMAIN:?set it in deploy/.env}
+      COGNICORE_ACME_EMAIL: ${COGNICORE_ACME_EMAIL:?set it in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
