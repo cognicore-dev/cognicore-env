@@ -41,7 +41,7 @@ We do not sell your data, use it for advertising, or use it to train AI models.
 
 ## Where it is stored, and who can see it
 
-Your memories are kept in a separate database for your account, named with a one-way hash of your account ID. Other users cannot read it. The service runs on servers operated by our hosting provider (currently Railway), so your data may be stored and processed outside your country, including in the United States.
+Your memories are kept in a separate database for your account, named with a one-way hash of your account ID. Other users cannot read it. The service runs on servers operated by our hosting provider (currently Microsoft Azure, in South Korea), so your data may be stored and processed outside your country.
 
 ## Sharing
 
@@ -51,7 +51,7 @@ We share data only in these cases:
 - **The AI app you use.** Results of the tools you call are returned to the app you connected (such as Claude or ChatGPT), and that app's own privacy policy applies to them.
 - **Services that run CogniCore:**
   - GitHub, for sign-in
-  - our hosting provider (currently Railway), which stores the data and runs the server
+  - our hosting provider (currently Microsoft Azure), which stores the data and runs the server
   - Cloudflare, which provides the domain name service for `cognicoree.tech`
 - **Figma, when you ask.** If you sync a Figma file, the Figma access token you provide is sent to Figma for that request only. We do not store it.
 - **When required by law**, or to protect the service and its users from abuse.

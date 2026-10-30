@@ -45,20 +45,34 @@ GitHub → Settings → Developer settings → OAuth Apps → New OAuth App:
 
 The callback URL must use the same origin as `COGNICORE_PUBLIC_URL`.
 
-## Deploying on Railway
+## Deploying on a VM (Docker Compose)
 
-`railway.toml` builds the Dockerfile and starts `cognicore.connectors.remote:app`.
+Production runs on a single Linux VM with `deploy/docker-compose.yml`: the server plus Caddy, which terminates TLS with an automatic Let's Encrypt certificate and passes the client address in `X-Real-IP`.
 
-1. Set the environment variables above on the service.
-2. Add a volume mounted at `/data`, or memories are lost on every deploy.
-3. Add the custom domain under Settings → Networking, and point a CNAME for `mcp` at the target Railway shows.
-4. Verify:
+1. Attach a data disk and prepare the host (Docker, swap, firewall, disk mounted at `/mnt/cognicore-data`):
+
+   ```bash
+   sudo bash deploy/setup-host.sh /dev/sdb
+   ```
+
+   SQLite needs a local filesystem; do not put the data directory on SMB or NFS, and turn off host disk caching.
+2. Copy `deploy/.env.example` to `deploy/.env`, fill in the variables above, and `chmod 600` it.
+3. Point an `A` record for `mcp` at the VM's public IP. Keep the Cloudflare proxy off (DNS only); if you turn it on, Caddy must forward `CF-Connecting-IP` instead, or the rate limiter sees Cloudflare's address.
+4. Start it:
+
+   ```bash
+   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+   ```
+
+5. Verify:
 
    ```bash
    python scripts/checks/verify_remote_mcp.py https://mcp.cognicoree.tech
    ```
 
-5. In Claude, add a custom connector with URL `https://mcp.cognicoree.tech/mcp/stream` and sign in with GitHub.
+6. In Claude, add a custom connector with URL `https://mcp.cognicoree.tech/mcp/stream` and sign in with GitHub.
+
+`railway.toml` is kept for platforms that build from the Dockerfile; set the variables and mount a volume at `/data` there instead.
 
 ## Testing locally
 

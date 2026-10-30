@@ -64,3 +64,6 @@ scratch_repo/
 /orig_remote.py
 /test_fastmcp.py
 /test_sarvam_tokens.py
+
+# Deployment secrets (deploy/.env.example is the template)
+deploy/.env
