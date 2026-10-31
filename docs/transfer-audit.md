@@ -311,3 +311,62 @@ will include every fact. The conversation path makes no such assumption.
   only their goal and open tasks would save about 200 tokens, but recovery of the oldest session would
   fall from 82% to about 18%. It stays as it is; `last_n_sessions=1` or a `query` gives a
   one-session brief.
+
+## Real-world comparison with claude-mem (Claude Code, 2026-10-31)
+
+**Method.** Three small coding tasks (`billing`, `retry`, `export`), each run as two real
+Claude Code sessions (`claude -p`, Sonnet, Windows 11).
+- **Session 1:** does part of the work and is told facts in conversation (ticket ids, reasons,
+  reviewer, deadlines), plus a follow-up deferred to "next time".
+- **Session 2:** starts cold with "continue where the previous session left off". It must finish
+  the follow-up, then answer 8 questions. A script scores the answers and checks the follow-up.
+- **Measurement:** tokens and cost are Claude Code's own usage reports. claude-mem's background
+  compression is added from its own per-response token counter (`discovery_tokens`). That counter
+  excludes its cache reads, so it is a lower bound.
+- **Isolation:**
+  - Every run loads no user settings, plugins or other MCP servers.
+  - Each arm loads only its own memory system.
+  - Session 1's transcript is moved out of `~/.claude/projects` before session 2, so only the
+    memory system can carry anything over. Without this, a no-memory session 2 found and read the
+    raw transcript.
+
+| | No memory | CogniCore (agent told to save) | **CogniCore automatic (hooks)** | claude-mem 15.7.0 |
+|---|---|---|---|---|
+| Questions right | 8 / 24 | 23 / 24 | **24 / 24** | **24 / 24** |
+| Facts only in the conversation | 2 / 17 | 16 / 17 | **17 / 17** | **17 / 17** |
+| Deferred follow-up done | 0 / 3 | 3 / 3 | **3 / 3** | **3 / 3** |
+| New input tokens (not from cache) | 79,392 | 66,337 | **55,579** | 99,334 |
+| Background model tokens | 0 | 0 | **0** | ≥113,741 |
+| **New tokens incl. background** | 79,392 | 66,337 | **55,579** | 213,075 |
+| Total input incl. cache reads | 1.34M | 1.44M | **0.97M** | 1.42M |
+| Output tokens | 10,370 | 11,990 | **7,590** | 11,890 |
+| Cost, sessions only (API-price equivalent) | $0.548 | $0.524 | **$0.391** | $0.649 + background |
+| Agent turns | 48 | 49 | **31** | 51 |
+| Memory ready after a session ends | – | immediately | **immediately (~1 s hook)** | 80–160 s (worker) |
+
+Automatic CogniCore against claude-mem on these tasks:
+- **Accuracy:** the same.
+- **Tokens:** 74% fewer new tokens counting background work, 32% less total input, 36% less output, 40% lower session cost.
+- **Turns:** 39% fewer.
+
+claude-mem spends model tokens summarizing every tool call. CogniCore captures rule based from
+the transcript, at no model cost, and its project-scoped brief let session 2 start working
+without re-exploring.
+
+**Limits.**
+- Three small tasks, one run each, so no measure of variance; larger, messier sessions are where
+  LLM summarization might do better.
+- Sonnet only; one machine.
+- Costs are API-price equivalents; on a subscription they count against usage limits.
+- On this machine claude-mem put every task in one project ("kaush"), because the home folder is a
+  git repository.
+
+**What closed the gap** (commits on `feat/memory-transfer`):
+1. Automatic capture and resume via the plugin's Claude Code hooks (`cognicore/hooks.py`,
+   `cognicore/memory/transcript.py`).
+2. Project-scoped sessions and one session per Claude conversation.
+3. Merging of assistant restatements.
+4. The FTS5 query fix for `-`, `/` and `.`.
+5. `COGNICORE_TOOLSETS`. The hosted server's per-turn tools cost 4,856 tokens with all groups,
+   2,033 with `memory,session,experience`, and 1,041 with `memory,session`.
+6. A read-only session viewer (`python -m cognicore.memory.viewer`).
