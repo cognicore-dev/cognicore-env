@@ -396,8 +396,11 @@ class SQLiteMemoryBackend(MemoryBackend):
             # Lexical / BM25 mode: FTS5 prefix search with full-corpus BM25 fallback
             rows = []
             if query.strip():
-                clean_query = query.replace('"', '').replace("'", '').strip()
-                fts_tokens = ' '.join(f'{w}*' for w in clean_query.split() if w)
+                # Quote each word token (the same split FTS5's unicode61 tokenizer makes), so
+                # "payments-api", paths and FTS keywords (AND/OR/NOT) are not parsed as syntax.
+                fts_tokens = ' '.join(f'"{w}"*' for w in re.findall(r"\w+", query))
+                if not fts_tokens:  # punctuation only: nothing for FTS5 to match
+                    return self._fallback_search(conn, query, top_k, category, scope, scope_id, metadata_filters)
                 
                 fts_sql = """
                     SELECT rowid, rank as bm25_score

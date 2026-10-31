@@ -150,3 +150,36 @@ def test_normalize_scores_empty_and_zero(backend):
 
     zeros = [SearchResult(entry=e, score=0.0, source="bm25") for e in _entries()[:2]]
     assert backend._normalize_scores(zeros) == zeros
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("payments-api", "payments-api pods"),
+    ("auth/tokens.py", "auth/tokens.py"),
+    ("AUTH-1423", "AUTH-1423"),
+    ("NOT NULL", "NOT NULL"),
+    ("v2.14.0", "v2.14.0"),
+])
+def test_fts_handles_punctuation_and_keywords(tmp_path, caplog, query, expected):
+    """Hyphens, slashes, dots and FTS5 keywords used to raise a syntax error in MATCH."""
+    from cognicore.memory import SQLiteMemoryBackend
+    from cognicore.memory.base import MemoryEntry
+
+    b = SQLiteMemoryBackend(str(tmp_path / "m.db"))
+    for text in ("payments-api pods OOMKilled at v2.14.0", "edit auth/tokens.py for AUTH-1423",
+                 "use NOT NULL columns", "brand color is navy"):
+        b.store(MemoryEntry(text=text, category="general"))
+    with caplog.at_level("WARNING"):
+        results = b.search(query, top_k=3)
+    assert results and expected in results[0].entry.text
+    assert "FTS5 search failed" not in caplog.text
+
+
+def test_fts_punctuation_only_query_does_not_error(tmp_path, caplog):
+    from cognicore.memory import SQLiteMemoryBackend
+    from cognicore.memory.base import MemoryEntry
+
+    b = SQLiteMemoryBackend(str(tmp_path / "m.db"))
+    b.store(MemoryEntry(text="anything at all", category="general"))
+    with caplog.at_level("WARNING"):
+        b.search("-", top_k=3)
+    assert "FTS5 search failed" not in caplog.text
