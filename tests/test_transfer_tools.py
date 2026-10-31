@@ -7,7 +7,7 @@ OLD_PARAMS = {
     "cognicore_compress_context": {"conversation", "keep_last_n"},
 }
 NEW_OPTIONAL = {
-    "cognicore_save_session": {"agent", "goal", "current_state", "environment_json"},
+    "cognicore_save_session": {"agent", "goal", "current_state", "environment_json", "handoff_json", "conversation"},
     "cognicore_resume_session": {"max_tokens", "format", "session_id", "section", "environment_json"},
 }
 
@@ -49,3 +49,52 @@ def test_local_server_fills_in_os():
     assert _with_local_os("") == {"os": platform.system()}
     assert _with_local_os('{"os": "Linux", "python_version": "3.12"}') == {"os": "Linux", "python_version": "3.12"}
     assert _with_local_os("not json") == {"os": platform.system()}
+
+
+def _has_title(node):
+    if isinstance(node, dict):
+        return isinstance(node.get("title"), str) or any(_has_title(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_has_title(v) for v in node)
+    return False
+
+
+@pytest.mark.parametrize("server", ["local", "remote"])
+def test_tool_schemas_have_no_auto_titles(server, monkeypatch, tmp_path):
+    import asyncio
+
+    if server == "remote":
+        remote = pytest.importorskip("cognicore.connectors.remote")
+        tools = asyncio.run(remote.mcp.list_tools())
+    else:
+        pytest.importorskip("mcp")
+        from cognicore.mcp import server as mcp_server
+
+        monkeypatch.setenv("COGNICORE_DATA_DIR", str(tmp_path))
+        tools = asyncio.run(mcp_server.create_mcp_server().list_tools())
+    assert tools and not any(_has_title(t.inputSchema) for t in tools)
+    if server == "remote":  # user-facing tool titles are separate and stay
+        assert all(t.title for t in tools)
+
+
+def test_strip_schema_titles_keeps_a_parameter_named_title():
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cognicore.mcp.server import strip_schema_titles
+
+    server = FastMCP("t")
+
+    @server.tool()
+    def make_doc(title: str, body: str = "") -> str:
+        """Make a doc."""
+        return f"{title}:{body}"
+
+    strip_schema_titles(server)
+    schema = asyncio.run(server.list_tools())[0].inputSchema
+    assert set(schema["properties"]) == {"title", "body"} and schema["required"] == ["title"]
+    assert not _has_title(schema)
+    result = asyncio.run(server.call_tool("make_doc", {"title": "a", "body": "b"}))
+    assert "a:b" in str(result)

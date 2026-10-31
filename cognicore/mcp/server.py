@@ -125,6 +125,29 @@ def _entry_from_parts(
     }
 
 
+def strip_schema_titles(server: Any) -> None:
+    """Drop the auto-generated "title" annotations from every tool's input schema.
+
+    pydantic adds one per parameter ("Session Name", "Environment Json") and one
+    per schema. They only restate the property name, yet clients load every tool
+    schema into the model's context on every turn: about 20% of all tool tokens.
+    Arguments are still validated by FastMCP's own model, which is untouched.
+    The tool-level ``title`` annotation (shown to users) is not affected.
+    """
+    def strip(node: Any) -> None:
+        if isinstance(node, dict):
+            if isinstance(node.get("title"), str):  # a property *named* "title" maps to a dict, and is kept
+                del node["title"]
+            for value in node.values():
+                strip(value)
+        elif isinstance(node, list):
+            for value in node:
+                strip(value)
+
+    for tool in getattr(getattr(server, "_tool_manager", None), "_tools", {}).values():
+        strip(getattr(tool, "parameters", None))
+
+
 def _with_local_os(environment_json: str) -> Dict[str, Any]:
     """Parse an environment fingerprint and fill in the OS.
 
@@ -560,15 +583,7 @@ def create_mcp_server() -> "FastMCP":
         conversation: List[Dict[str, Any]],
         keep_last_n: int = 5,
     ) -> str:
-        """Called when conversation is getting long. Takes messages older than last N and compresses them into a dense summary without LLM API calls.
-
-        Args:
-            conversation: List of conversation messages [{role, content}] to compress.
-            keep_last_n: Number of recent messages to preserve verbatim (default 5).
-
-        Returns:
-            JSON string with compressed summary, token metrics, and stored memory ID.
-        """
+        """Compress messages older than the last keep_last_n into a dense stored summary (no LLM calls). Returns JSON with the summary and token counts."""
         _ensure_initialized()
         return compress_context(_runtime.backend, conversation, keep_last_n=keep_last_n)
 
@@ -577,33 +592,24 @@ def create_mcp_server() -> "FastMCP":
     # ------------------------------------------------------------------
     @mcp.tool()
     def cognicore_save_session(
-        conversation: List[Dict[str, Any]],
+        conversation: Optional[List[Dict[str, Any]]] = None,
         session_name: str = "",
         agent: str = "",
         goal: str = "",
         current_state: str = "",
         environment_json: str = "",
+        handoff_json: str = "",
     ) -> str:
-        """Called at END of conversation automatically or manually. Saves a versioned handoff (goal, current state, decisions and why, open tasks, key facts, files, provenance) so any agent can resume the work. Secrets are redacted; re-saving the same conversation is a no-op.
+        """Save work so any agent can resume it later. Cheapest: send handoff_json (written by you) instead of the full conversation.
 
-        Args:
-            conversation: List of conversation messages [{role, content}] from the session.
-            session_name: Optional human-readable name for this session.
-            agent: Which agent is saving, e.g. "claude-code", "cursor-agent".
-            goal: Your one-line statement of the goal (better than the extracted one).
-            current_state: Your one-line summary of where the work stands.
-            environment_json: JSON fingerprint, e.g. {"python_version": "3.11.4", "framework": "FastAPI",
-                "framework_version": "0.110.0", "dependencies": {"pyjwt": "2.8.0"}}. The OS is
-                filled in automatically when missing.
-
-        Returns:
-            JSON string confirming stored facts, decisions, snippets, and summary.
-        """
+        handoff_json: {"goal","current_state","decisions":[str|{"what","why"}],"open_tasks":[str],"key_facts":[str],"files":[str]}. Keep ids, versions, paths and numbers verbatim; prefix rejected approaches with "Rejected:".
+        environment_json: {"os","python_version","framework","framework_version","dependencies":{"name":"ver"}}.
+        agent: e.g. "claude-code". Secrets are redacted; saving the same content twice is a no-op."""
         _ensure_initialized()
         return save_session(
             _runtime.backend, conversation, session_name=session_name if session_name else None,
             agent=agent, goal=goal, current_state=current_state,
-            environment=_with_local_os(environment_json),
+            environment=_with_local_os(environment_json), supplied_handoff=handoff_json or None,
         )
 
     # ------------------------------------------------------------------
@@ -620,23 +626,9 @@ def create_mcp_server() -> "FastMCP":
         section: str = "",
         environment_json: str = "",
     ) -> str:
-        """Called at START of every new conversation. Returns the handoff of the best-matching past session, most important first: goal, current state, environment warnings, open tasks, decisions, key facts, files, exact values, experiences, code, other sessions.
+        """Start of a conversation: resume past work, most important first (goal, state, open tasks, decisions, facts).
 
-        Args:
-            query: Optional search query describing what the user is currently working on.
-            last_n_sessions: Number of recent sessions to include in the brief (default 3).
-            include_action_items: Whether to retrieve pending action items (default true).
-            max_tokens: Token budget (default 1500, minimum 120 for text, 200 for json). Items that
-                do not fit are listed so they can be fetched with session_id + section.
-            format: "text" (default) or "json" (cognicore.handoff/v1 fields).
-            session_id: Resume this exact session.
-            section: Return one section in full, e.g. "key_facts", "code", "exact_values", "all".
-            environment_json: Current environment (same shape as in save); differences from the
-                saved one are reported as warnings. The OS is filled in automatically when missing.
-
-        Returns:
-            Formatted context resume brief with token count.
-        """
+        query: picks the matching session, else the latest. max_tokens: budget (default 1500); omitted items are listed, fetch them with session_id + section. format: "text" or "json". environment_json: your environment, to get mismatch warnings."""
         _ensure_initialized()
         return resume_session(
             _runtime.backend,
@@ -650,6 +642,7 @@ def create_mcp_server() -> "FastMCP":
             environment=_with_local_os(environment_json) if environment_json else None,
         )
 
+    strip_schema_titles(mcp)
     return mcp
 
 
