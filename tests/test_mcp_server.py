@@ -302,7 +302,7 @@ def test_mcp_stdio_session_handoff_survives_a_new_server_process(tmp_path):
         {"conversation": conversation, "session_name": "jwt", "agent": "claude-code",
          "environment_json": '{"os": "macOS", "dependencies": {"pyjwt": "2.8.0"}}'},
     )
-    assert '"redactions": 1' in saved
+    assert '"redactions":1' in saved
 
     brief = anyio.run(
         _call_tool_over_stdio,

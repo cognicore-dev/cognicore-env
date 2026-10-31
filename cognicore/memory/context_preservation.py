@@ -17,6 +17,7 @@ from cognicore.memory.base import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
 from cognicore.memory.categorize import auto_categorize
 from cognicore.memory.handoff import (
+    HandoffInputError,
     SCHEMA_VERSION,
     SECTION_PRIORITY,
     SECTIONS,
@@ -444,28 +445,43 @@ def _existing_ids_by_text(conn, texts: List[str]) -> Dict[str, str]:
 
 def save_session(
     backend: Any,
-    conversation: List[Dict[str, Any]],
+    conversation: Optional[List[Dict[str, Any]]] = None,
     session_name: Optional[str] = None,
     agent: str = "",
     client: str = "",
     goal: str = "",
     current_state: str = "",
     environment: Any = None,
+    supplied_handoff: Any = None,
 ) -> str:
     """
     TOOL 2: cognicore_save_session
     Save a conversation as a versioned handoff (``cognicore.handoff/v1``) plus
     searchable memory rows, so another agent can resume the work.
 
+    ``supplied_handoff`` lets the agent write the handoff itself (goal,
+    decisions, open_tasks, key_facts, files) instead of, or on top of,
+    sending the conversation. That is the token-efficient path: its cost
+    does not grow with the conversation.
+
     Secrets are redacted, chatter is dropped, each statement is stored once
     (statements already in memory are linked, not copied), and saving the
-    same conversation again returns the existing session.
+    same content again returns the existing session.
     """
     if not conversation or not isinstance(conversation, list):
         conversation = []
-    conv_hash = conversation_hash(conversation)
+    hashed = list(conversation)
+    if supplied_handoff:
+        canonical = supplied_handoff
+        if isinstance(canonical, str):
+            try:
+                canonical = json.loads(canonical)  # same content as a dict or a JSON string hashes the same
+            except json.JSONDecodeError:
+                pass
+        hashed.append({"role": "handoff", "content": json.dumps(canonical, sort_keys=True, default=str)})
+    conv_hash = conversation_hash(hashed)
 
-    if conversation:
+    if hashed:
         with backend._get_conn() as conn:
             existing = conn.execute(
                 "SELECT s.session_id, m.text FROM sessions s LEFT JOIN memory_entries m "
@@ -473,16 +489,15 @@ def save_session(
                 (conv_hash,),
             ).fetchone()
         if existing:
-            return json.dumps({
+            return _compact_json({
                 "session_id": existing["session_id"],
                 "memories_stored": 0,
                 "decisions_saved": 0,
                 "action_items_saved": 0,
                 "code_snippets_saved": 0,
-                "summary": existing["text"] or "",
+                "summary": "Already saved; returning the existing session.",
                 "deduplicated": True,
-                "message": "This conversation was already saved; returning the existing session.",
-            }, indent=2)
+            })
 
     timestamp = time.time()
     dt_str = datetime.fromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
@@ -494,10 +509,14 @@ def save_session(
         date_pretty = datetime.fromtimestamp(timestamp).strftime("%b %d, %Y")
         session_name = f"Session {date_pretty}"
 
-    handoff = build_handoff(
-        conversation, session_id, session_name, timestamp,
-        agent=agent, client=client, goal=goal, current_state=current_state, environment=environment,
-    )
+    try:
+        handoff = build_handoff(
+            conversation, session_id, session_name, timestamp,
+            agent=agent, client=client, goal=goal, current_state=current_state, environment=environment,
+            supplied=supplied_handoff,
+        )
+    except HandoffInputError as e:
+        return _compact_json({"error": str(e)})
     rows = _memory_rows(handoff)
 
     with backend._get_conn() as conn:
@@ -538,7 +557,7 @@ def save_session(
                 handoff_json, conversation_hash, agent, client
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (session_id, session_name, timestamp, len(conversation), TokenBudget.estimate_tokens(conversation),
-              summary_id, handoff_json, conv_hash if conversation else None, agent or "", client or ""))
+              summary_id, handoff_json, conv_hash if hashed else None, agent or "", client or ""))
         conn.executemany(
             "INSERT OR IGNORE INTO session_memories (session_id, memory_id) VALUES (?, ?)",
             [(session_id, int(mid)) for mid in linked_ids if str(mid).isdigit()],
@@ -547,22 +566,26 @@ def save_session(
     def _count(category: str) -> int:
         return sum(1 for _, cat, _ in new_rows if cat == category)
 
+    # The agent already knows what it saved, so the reply is ids and counts only.
+    n_tasks = sum(1 for t in handoff["open_tasks"] if t["status"] == "open")
     res = {
         "session_id": session_id,
         "memories_stored": len(new_rows),
         "decisions_saved": _count("decisions"),
         "action_items_saved": _count("action_items"),
         "code_snippets_saved": _count("code_snippets"),
-        "summary": summary_text,
+        "summary": f"Saved '{session_name}': {len(handoff['decisions'])} decisions, {n_tasks} open tasks, "
+                   f"{len(handoff['key_facts'])} facts.",
         "schema": SCHEMA_VERSION,
-        "handoff_tokens": TokenBudget.estimate_tokens(handoff_json),
         "already_in_memory": len(existing_ids),
         "redactions": handoff["redactions"],
         "deduplicated": False,
     }
-    if handoff["redactions"]:
-        res["message"] = f"Redacted {handoff['redactions']} secret-like value(s) before saving."
-    return json.dumps(res, indent=2)
+    return _compact_json(res)
+
+
+def _compact_json(obj: Dict[str, Any]) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
 _STOPWORDS = {
@@ -751,9 +774,16 @@ def resume_session(
 
     included, omitted = select_for_budget(sections, budget, cost, fixed)
     if not section:
-        # Exact values not already visible in the selected text, as cheap insurance.
-        visible = json.dumps(included, ensure_ascii=False).lower()
-        sections["exact_values"] = [v for v in primary.get("exact_values", []) if v["value"].lower() not in visible]
+        # List files (text brief) and exact values only when the selected text does not
+        # already mention them: cheap insurance without repeating what is on screen.
+        visible = json.dumps({k: v for k, v in included.items() if k not in ("files", "exact_values")},
+                             ensure_ascii=False).lower()
+        if fmt == "text":
+            sections["files"] = [f for f in primary.get("files", []) if f.lower() not in visible]
+            sections["code"] = [{**c, "context": ""} if c.get("context") and c["context"].lower() in visible else c
+                                for c in primary.get("code", [])]
+        shown = visible + " " + " ".join(sections["files"] or []).lower()
+        sections["exact_values"] = [v for v in primary.get("exact_values", []) if v["value"].lower() not in shown]
         included, omitted = select_for_budget(sections, budget, cost, fixed)
 
     out = render(included, omitted)

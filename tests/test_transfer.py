@@ -257,7 +257,7 @@ def test_resume_returns_handoff_sections_in_priority_order(backend):
     save_session(backend, RICH, session_name="jwt", agent="claude-code")
     out = resume_session(backend)
     assert out.startswith("=== COGNICORE CONTEXT RESUME ===") and out.rstrip().endswith("tokens ===")
-    order = [out.index(h) for h in ("Goal:", "Current state:", "Open tasks:", "Decisions:", "Files/resources:")]
+    order = [out.index(h) for h in ("Goal:", "State:", "Open tasks:", "Decisions:", "Facts:")]
     assert order == sorted(order)
     for value in ("AUTH-1423", "3.11.4", "PyJWT 2.8.0", "9f3c2ab", "24h", "tests/test_auth.py", "leeway = 30"):
         assert value in out
@@ -310,12 +310,12 @@ def test_resume_picks_session_by_query_and_lists_others(backend):
     save_session(backend, [{"role": "user", "content": "Our product launch is on November 15. Brand color is #111111."}],
                  session_name="launch")
     latest = resume_session(backend)
-    assert "November 15" in latest.split("Other recent sessions:")[0]
+    assert "November 15" in latest.split("Other sessions:")[0]
     by_query = resume_session(backend, query="JWT 401 auth")
-    assert "AUTH-1423" in by_query.split("Other recent sessions:")[0]
-    assert "launch" in by_query.split("Other recent sessions:")[1]
+    assert "AUTH-1423" in by_query.split("Other sessions:")[0]
+    assert "launch" in by_query.split("Other sessions:")[1]
     only_one = resume_session(backend, last_n_sessions=1)
-    assert "Other recent sessions:" not in only_one
+    assert "Other sessions:" not in only_one
 
 
 def test_resume_can_skip_action_items(backend):
@@ -388,6 +388,66 @@ def test_resume_without_any_sessions_falls_back_to_memories(backend):
     backend.store(MemoryEntry(text="Deploy target is Railway", category="general"))
     out = resume_session(backend)
     assert "Deploy target is Railway" in out and out.rstrip().endswith("tokens ===")
+
+
+# ---------------------------------------------------------------------------
+# Token efficiency
+# ---------------------------------------------------------------------------
+
+AGENT_HANDOFF = {
+    "goal": "Fix intermittent 401s on /api/v2/orders (AUTH-1423)",
+    "current_state": "Root cause is clock skew; fix committed as 9f3c2ab",
+    "decisions": [{"what": "Switch python-jose -> PyJWT 2.8.0", "why": "python-jose is unmaintained"},
+                  "Rejected: raising token TTL to 24h (no effect on nbf)"],
+    "open_tasks": ["Add regression test in tests/test_auth.py"],
+    "key_facts": ["Python 3.11.4, FastAPI 0.110.0", "leeway=30 in decode()"],
+    "files": ["auth/tokens.py"],
+}
+
+
+def test_save_from_agent_written_handoff_without_conversation(backend):
+    res = json.loads(save_session(backend, supplied_handoff=json.dumps(AGENT_HANDOFF), agent="claude-code"))
+    assert res["decisions_saved"] == 2 and res["action_items_saved"] == 1 and not res["deduplicated"]
+    out = resume_session(backend)
+    for value in ("/api/v2/orders", "AUTH-1423", "9f3c2ab", "PyJWT 2.8.0", "24h", "tests/test_auth.py",
+                  "3.11.4", "leeway=30", "auth/tokens.py"):
+        assert value in out
+    assert "- Rejected: Raising token TTL to 24h" in out
+    again = json.loads(save_session(backend, supplied_handoff=AGENT_HANDOFF))
+    assert again["deduplicated"] is True
+
+
+def test_agent_handoff_merges_with_conversation_without_repeats(backend):
+    conv = [{"role": "user", "content": "We decided to switch python-jose -> PyJWT 2.8.0 today."},
+            {"role": "user", "content": "Brand color is #111111."}]
+    h = build_handoff(conv, "s", "n", 0.0, supplied={"decisions": ["Switch python-jose -> PyJWT 2.8.0"]})
+    assert [d["what"] for d in h["decisions"]] == ["Switch python-jose -> PyJWT 2.8.0"]
+    assert "#111111" in h["goal"] + " ".join(h["key_facts"])
+
+
+@pytest.mark.parametrize("bad", ["not json", "[1, 2]"])
+def test_agent_handoff_rejects_invalid_input(backend, bad):
+    res = json.loads(save_session(backend, supplied_handoff=bad))
+    assert "handoff must be a JSON object" in res["error"]
+
+
+def test_agent_handoff_is_redacted(backend):
+    save_session(backend, supplied_handoff={"key_facts": ["staging key sk-test-FAKE0000000000000000000000"]})
+    assert "sk-test-FAKE" not in resume_session(backend)
+    assert not any("sk-test-FAKE" in r["text"] for r in _rows(backend))
+
+
+def test_brief_drops_lead_ins_and_repeated_files(backend):
+    save_session(backend, RICH)
+    out = resume_session(backend)
+    assert "Goal: Fix intermittent 401s" in out and "Our goal is to" not in out
+    assert "TODO:" not in out and "We decided to" not in out
+    assert "Files:" not in out  # every file already appears in the brief's sentences
+
+
+def test_save_response_is_compact(backend):
+    res = save_session(backend, RICH)
+    assert "\n" not in res and TokenBudget.estimate_tokens(res) < 80
 
 
 def test_compress_redacts_secrets(backend):

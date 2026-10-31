@@ -234,14 +234,18 @@ def build_handoff(
     current_state: str = "",
     environment: Any = None,
     migrated: bool = False,
+    supplied: Any = None,
 ) -> Dict[str, Any]:
-    """Build a ``cognicore.handoff/v1`` document from a conversation.
+    """Build a ``cognicore.handoff/v1`` document from a conversation and/or an
+    agent-written partial handoff (``supplied``, see :func:`parse_supplied_handoff`).
 
     Text is redacted before extraction, so the handoff never contains
-    detected secrets. Explicit ``goal`` / ``current_state`` from the calling
-    agent win over the extracted ones.
+    detected secrets. Explicit ``goal`` / ``current_state`` win over
+    ``supplied`` ones, which win over the extracted ones; supplied decisions,
+    tasks, facts and files come first, followed by extracted ones that do not
+    repeat them. Raises :class:`HandoffInputError` for an unusable ``supplied``.
     """
-    redactions = 0
+    supplied, redactions = parse_supplied_handoff(supplied)
     sentences: List[Tuple[str, str]] = []  # (role, sentence)
     code: List[Dict[str, str]] = []
     seen_code = set()
@@ -295,14 +299,27 @@ def build_handoff(
                 facts.remove(s)
                 break
 
+    if supplied:
+        decisions = _merge_unique(supplied["decisions"], decisions, lambda d: d["what"])
+        tasks = _merge_unique(supplied["open_tasks"], tasks, lambda t: t["task"])
+        facts = _merge_unique(supplied["key_facts"], facts, lambda f: f)
+        found_goal = supplied.get("goal") or found_goal
+        if supplied.get("current_state") and not current_state:
+            current_state = supplied["current_state"]
+
+    statements = [s for _, s in kept] + [found_goal, current_state or ""]
+    statements += [d["what"] + " " + d["why"] for d in decisions] + [t["task"] for t in tasks] + facts
+    statements += (supplied or {}).get("files", [])
     exact: List[Dict[str, str]] = []
     seen_values = set()
-    for _, s in kept:
-        for v in extract_exact_values(s):
+    for s in statements:
+        for v in extract_exact_values(s or ""):
             if v["value"] not in seen_values:
                 seen_values.add(v["value"])
                 exact.append(v)
-    files = [v["value"] for v in exact if v["kind"] in ("path", "file", "url", "domain")]
+    files = _merge_unique((supplied or {}).get("files", []),
+                          [v["value"] for v in exact if v["kind"] in ("path", "file", "url", "domain")],
+                          lambda f: f)
 
     goal_text = redact_secrets(goal)[0].strip() if goal else found_goal
     if current_state:
@@ -336,6 +353,81 @@ def build_handoff(
         "environment": normalize_environment(environment),
         "redactions": redactions,
     }
+
+
+class HandoffInputError(ValueError):
+    """The agent-supplied handoff is not usable."""
+
+
+def parse_supplied_handoff(raw: Any) -> Tuple[Dict[str, Any], int]:
+    """Normalize an agent-written partial handoff (dict or JSON string).
+
+    Lets the agent send what it already knows (goal, decisions, tasks, facts)
+    instead of re-sending the whole conversation, which costs output tokens
+    proportional to its length. Strings are redacted like conversation text.
+    Returns ``(normalized, redaction_count)``.
+    """
+    if not raw:
+        return {}, 0
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise HandoffInputError(f"handoff must be a JSON object: {e.msg}") from e
+    if not isinstance(raw, dict):
+        raise HandoffInputError("handoff must be a JSON object")
+
+    count = 0
+
+    def clean(value: Any) -> str:
+        nonlocal count
+        text, n = redact_secrets(str(value).strip())
+        count += n
+        return text
+
+    def as_list(key: str) -> List[Any]:
+        value = raw.get(key) or []
+        return value if isinstance(value, list) else [value]
+
+    out: Dict[str, Any] = {}
+    for key in ("goal", "current_state"):
+        if raw.get(key):
+            out[key] = clean(raw[key])
+    decisions = []
+    for d in as_list("decisions"):
+        if isinstance(d, dict):
+            what = clean(d.get("what", ""))
+            status = d.get("status") if d.get("status") in ("made", "rejected") else "made"
+            decisions.append({"what": what, "why": clean(d.get("why", "")) if d.get("why") else "", "status": status})
+        elif str(d).strip():
+            text = clean(d)
+            rejected = text.lower().startswith("rejected:")
+            what, why = _split_why(text[len("rejected:"):].strip() if rejected else text)
+            decisions.append({"what": what, "why": why, "status": "rejected" if rejected else "made"})
+    out["decisions"] = [d for d in decisions if d["what"]]
+    tasks = []
+    for t in as_list("open_tasks"):
+        if isinstance(t, dict):
+            status = t.get("status") if t.get("status") in ("open", "done") else "open"
+            tasks.append({"task": clean(t.get("task", "")), "status": status})
+        elif str(t).strip():
+            tasks.append({"task": clean(t), "status": "open"})
+    out["open_tasks"] = [t for t in tasks if t["task"]]
+    out["key_facts"] = [clean(f) for f in as_list("key_facts") if str(f).strip()]
+    out["files"] = [clean(f) for f in as_list("files") if str(f).strip()]
+    return out, count
+
+
+def _merge_unique(first: List[Any], second: List[Any], text_of: Callable[[Any], str]) -> List[Any]:
+    """Agent-supplied items first, then extracted ones that do not repeat them."""
+    merged, norms = [], []
+    for item in first + second:
+        n = normalize_sentence(text_of(item))
+        if not n or any(n in m or m in n for m in norms):
+            continue
+        norms.append(n)
+        merged.append(item)
+    return merged
 
 
 def _dedupe(items: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -421,48 +513,66 @@ def _estimate(text: str) -> int:
     return len(text) // 4
 
 
+# Lead-ins that only restate the section heading. Stripped when rendering the
+# brief (the stored handoff keeps the verbatim sentence); exact values never
+# sit inside them.
+_LEAD_INS = {
+    "goal": re.compile(r"^(?:(?:our|the|my|main)\s+)?(?:goal|objective|aim|task)\s+is\s+(?:to\s+)?", re.I),
+    "made": re.compile(
+        r"^(?:so\s+)?(?:we|i)\s+(?:have\s+|'ve\s+)?(?:decided|agreed|chose|opted|settled|went)\s+"
+        r"(?:to\s+|on\s+|for\s+|with\s+)?", re.I),
+    "rejected": re.compile(r"^(?:we|i)\s+(?:tried|attempted)\s+", re.I),
+    "task": re.compile(r"^(?:todo|to-do|next step|action item|pending|follow[- ]up)\s*[:\-]\s*", re.I),
+}
+
+
+def _trim(kind: str, text: str) -> str:
+    out = _LEAD_INS[kind].sub("", text, count=1).strip()
+    return out[:1].upper() + out[1:] if out else text
+
+
 def _line_for(section: str, item: Any) -> str:
     if section == "goal":
-        return f"Goal: {item}"
+        return f"Goal: {_trim('goal', item)}"
     if section == "current_state":
-        return f"Current state: {item}"
+        return f"State: {item}"
     if section == "environment_warnings":
-        return f"  ! {item}"
+        return f"! {item}"
     if section == "open_tasks":
-        box = "x" if item.get("status") == "done" else " "
-        return f"  - [{box}] {item['task']}"
+        return f"- {_trim('task', item['task'])}"
     if section == "decisions":
         if item.get("status") == "rejected":
-            return f"  - Rejected: {item['what']}"
-        return f"  - {item['what']}" + (f" (why: {item['why']})" if item.get("why") else "")
+            return f"- Rejected: {_trim('rejected', item['what'])}"
+        return f"- {_trim('made', item['what'])}" + (f" (why: {item['why']})" if item.get("why") else "")
     if section == "code":
-        head = f"  {item['context']}\n" if item.get("context") else ""
+        head = f"{item['context']}\n" if item.get("context") else ""
         return f"{head}```{item.get('lang', '')}\n{item['code']}\n```"
     if section == "exact_values":
         return item["value"]
     if section == "experiences":
-        return f"  - {item['task']} -> {item['solution']} [{item['status']}]"
+        return f"- {item['task']} -> {item['solution']} [{item['status']}]"
     if section == "other_sessions":
-        parts = [f"  - {item['session_name']} ({item['session_id']}, {item['created_at']}): {item['goal']}"]
+        parts = [f"- {item['session_name']} ({item['session_id']}, {item['created_at'][:10]}): "
+                 f"{_trim('goal', item['goal'])}"]
         for label, key in (("state", "current_state"), ("open", "open_tasks"),
                            ("decided", "decisions"), ("facts", "key_facts")):
             val = item.get(key)
             if val:
-                parts.append(f"    {label}: " + ("; ".join(val) if isinstance(val, list) else val))
+                parts.append(f"  {label}: " + ("; ".join(val) if isinstance(val, list) else val))
         return "\n".join(parts)
-    return f"  - {item}"
+    return f"- {item}"
 
 
 _HEADINGS = {
-    "environment_warnings": "Environment warnings (saved vs current):",
+    "environment_warnings": "Environment warnings:",
     "open_tasks": "Open tasks:",
     "decisions": "Decisions:",
-    "key_facts": "Key facts:",
-    "files": "Files/resources:",
-    "exact_values": "Exact values:",
-    "experiences": "Relevant verified experiences:",
+    "key_facts": "Facts:",
+    "files": "Files:",
+    "exact_values": "Values:",
+    "experiences": "Verified experiences:",
     "code": "Code:",
-    "other_sessions": "Other recent sessions:",
+    "other_sessions": "Other sessions:",
 }
 
 
@@ -516,14 +626,15 @@ def json_cost(section: str, item: Any) -> int:
 
 
 def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str = "") -> str:
-    lines = ["=== COGNICORE CONTEXT RESUME ===", ""]
-    who = " ".join(x for x in [
-        f"by {provenance['agent']}" if provenance.get("agent") else "",
-        f"via {provenance['client']}" if provenance.get("client") else "",
-    ] if x)
-    migrated = " [migrated from pre-v1 session]" if provenance.get("migrated") else ""
-    lines.append(f"Session: {provenance.get('session_name') or ''} ({provenance.get('session_id')}) "
-                 f"saved {provenance.get('created_at')} {who}{migrated}".rstrip())
+    """Compact text brief. The session id is only printed in the "more" pointer, where it is needed."""
+    head = [f"Session: {provenance.get('session_name') or ''}", (provenance.get("created_at") or "")[:10]]
+    if provenance.get("agent"):
+        head.append(f"by {provenance['agent']}" + (f" via {provenance['client']}" if provenance.get("client") else ""))
+    elif provenance.get("client"):
+        head.append(f"via {provenance['client']}")
+    if provenance.get("migrated"):
+        head.append("migrated from pre-v1 session")
+    lines = ["=== COGNICORE CONTEXT RESUME ===", " | ".join(h for h in head if h)]
     for section in SECTION_PRIORITY:
         value = included.get(section)
         if not value:
@@ -531,15 +642,14 @@ def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str 
         if section in ("goal", "current_state"):
             lines.append(_line_for(section, value))
             continue
-        lines.append("")
-        lines.append(_HEADINGS[section])
         if section in ("files", "exact_values"):
             vals = [v["value"] if isinstance(v, dict) else v for v in value]
-            lines.append("  " + ", ".join(vals))
-        else:
-            lines.extend(_line_for(section, item) for item in value)
+            lines.append(f"{_HEADINGS[section]} " + ", ".join(vals))
+            continue
+        lines.append(_HEADINGS[section])
+        lines.extend(_line_for(section, item) for item in value)
     if more:
-        lines += ["", more]
+        lines.append(more)
     return "\n".join(lines).strip()
 
 
