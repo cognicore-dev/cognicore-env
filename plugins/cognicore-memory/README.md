@@ -50,6 +50,7 @@ The plugin's hooks make memory automatic, so Claude doesn't have to remember to 
 - **What is stored:** your prompts and Claude's replies, with detected secrets redacted, plus edited file paths. Tool output, file contents, Claude's thinking and Claude Code's injected system context are never read.
 - **Requirements:** the `cognicore-env` package in the Python that runs the hooks (`pip install cognicore-env`). Set `COGNICORE_PYTHON` if that isn't `python` on your PATH.
 - **Where:** `~/.cognicore/mcp/mcp_memories.db`, shared with the local MCP server (`cognicore mcp serve`). Change it with `COGNICORE_DATA_DIR`.
+- **See what's stored:** `python -m cognicore.memory.viewer` opens a read-only page at http://127.0.0.1:37780 listing sessions by project, with each one's brief and stored handoff.
 - **Options:** `COGNICORE_AUTO_CAPTURE=0` stops saving, `COGNICORE_AUTO_RESUME=0` stops the start-of-session context, and `COGNICORE_RESUME_TOKENS` sets the budget.
 
 The hooks write to local memory. The hosted connector in `.mcp.json` keeps its own separate memory.
