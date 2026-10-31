@@ -370,3 +370,36 @@ without re-exploring.
 5. `COGNICORE_TOOLSETS`. The hosted server's per-turn tools cost 4,856 tokens with all groups,
    2,033 with `memory,session,experience`, and 1,041 with `memory,session`.
 6. A read-only session viewer (`python -m cognicore.memory.viewer`).
+
+## Cross-agent transfer: Claude Code → Codex (2026-10-31)
+
+Same three tasks and scoring. Session 1 ran in Claude Code with CogniCore's hooks; session 2
+ran in Codex CLI 0.164 (`codex exec`, its default model). For isolation:
+- Codex used a throwaway `CODEX_HOME` holding only the local CogniCore MCP server, with ChatGPT
+  account connectors off (`--disable apps`).
+- The repos were outside the home folder. Under it, Codex loads `~/.codex/config.toml` as project
+  config, which brings in the user's own plugins and MCP servers.
+- Claude Code transcripts were moved out of reach.
+
+| CogniCore in Codex | Questions | Facts only in conversation | Follow-ups | Codex resumed from memory |
+|---|---|---|---|---|
+| Tools only | 7 / 24 | 1 / 17 | 0 / 3 | 0 of 3 tasks |
+| + MCP server instructions | 15 / 24 | 8 / 17 | 1 / 3 | 1 of 3 |
+| + `cognicore setup codex` (AGENTS.md rule) | **18 / 24** | **11 / 17** | **2 / 3** | 2 of 3 |
+| For reference: Claude Code → Claude Code with hooks | 24 / 24 | 17 / 17 | 3 / 3 | automatic |
+
+**Gaps found and status:**
+1. *Agents other than Claude Code had no reason to use the memory.* Claude's hooks had saved
+   every session correctly, but Codex never called the tools. Fixed partly: actionable MCP server
+   instructions, plus `cognicore setup codex`. Every task where Codex called
+   `cognicore_resume_session` scored 8/8, and Codex then saved its own handoff.
+2. *It still depends on the agent choosing to call the tool* (1 of 3 tasks skipped it in every
+   run). The reliable fix is the one used for Claude Code: a Codex SessionStart hook that injects
+   the brief, and a Stop hook that saves from Codex's own session log. Codex supports hooks, but
+   it requires each hook to be trusted, which needs a person once (interactive trust) or Codex's
+   `--dangerously-bypass-hook-trust` flag in automation. Not built yet.
+3. *Work done in Codex is saved only if the agent calls save.* That needs the same hooks.
+4. *claude-mem's Codex path was not measured.* Its Codex hooks need the same trust step, which
+   this automated test did not do. Its Codex installer also edited the user's real
+   `~/.codex/config.toml` (it enabled hooks and the claude-mem plugin) even when `CODEX_HOME`
+   pointed elsewhere. The file was restored from a backup.
