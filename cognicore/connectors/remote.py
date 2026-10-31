@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import os
 import hashlib
 from pathlib import Path
@@ -427,7 +427,7 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
 
 
 @_tool("Delete a memory", _DELETE)
-def cognicore_forget(entry_id: Any, ctx: Context, conversation: Optional[list] = None) -> str:
+def cognicore_forget(entry_id: Union[int, str], ctx: Context, conversation: Optional[list] = None) -> str:
     """Delete a memory by ID."""
     backend = get_backend(ctx)
     success = backend.delete(str(entry_id))
