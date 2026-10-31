@@ -37,6 +37,25 @@ These run automatically when you ask Claude to remember or recall something:
 
 ---
 
+## Automatic Memory (Claude Code)
+
+The plugin's hooks make memory automatic, so Claude doesn't have to remember to save:
+
+| When | What happens |
+|---|---|
+| A session starts in a project | That project's last sessions are added as context (goal, state, open tasks, decisions, facts), within a 1,000-token budget. Nothing is added in a project with no history. |
+| After each reply, before compaction, at session end | The session is saved from Claude Code's transcript: what you and Claude said, and which files were edited. |
+
+- **No model calls and no background tokens.** Capture is rule based, and memory is ready when the hook returns, typically in about a second.
+- **What is stored:** your prompts and Claude's replies, with detected secrets redacted, plus edited file paths. Tool output, file contents, Claude's thinking and Claude Code's injected system context are never read.
+- **Requirements:** the `cognicore-env` package in the Python that runs the hooks (`pip install cognicore-env`). Set `COGNICORE_PYTHON` if that isn't `python` on your PATH.
+- **Where:** `~/.cognicore/mcp/mcp_memories.db`, shared with the local MCP server (`cognicore mcp serve`). Change it with `COGNICORE_DATA_DIR`.
+- **Options:** `COGNICORE_AUTO_CAPTURE=0` stops saving, `COGNICORE_AUTO_RESUME=0` stops the start-of-session context, and `COGNICORE_RESUME_TOKENS` sets the budget.
+
+The hooks write to local memory. The hosted connector in `.mcp.json` keeps its own separate memory.
+
+---
+
 ## Slash Commands
 
 You can also trigger memory directly with slash commands:

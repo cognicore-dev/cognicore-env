@@ -62,9 +62,9 @@ def normalize_sentence(s: str) -> str:
 
 
 def clean_statement(s: str) -> str:
-    """Clean bullet markers and whitespace from sentence while keeping full content."""
-    cleaned = re.sub(r'^(?:[-*•]|\d+\.)\s*', '', s.strip())
-    return cleaned.strip()
+    """Clean bullet/heading markers, bold markers and whitespace while keeping full content."""
+    cleaned = re.sub(r'^(?:#{1,6}\s+|[-*•]\s*|\d+\.\s*)', '', s.strip())
+    return cleaned.replace("**", "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +235,7 @@ def build_handoff(
     environment: Any = None,
     migrated: bool = False,
     supplied: Any = None,
+    project: str = "",
 ) -> Dict[str, Any]:
     """Build a ``cognicore.handoff/v1`` document from a conversation and/or an
     agent-written partial handoff (``supplied``, see :func:`parse_supplied_handoff`).
@@ -341,6 +342,7 @@ def build_handoff(
             "created_at": _utc_iso(created_at),
             "message_count": len(conversation or []),
             "migrated": migrated,
+            "project": project or "",
         },
         "goal": goal_text,
         "current_state": state_text,
@@ -430,17 +432,32 @@ def _merge_unique(first: List[Any], second: List[Any], text_of: Callable[[Any], 
     return merged
 
 
+_FILLER_WORDS = {"the", "a", "an", "is", "are", "was", "on", "at", "and", "fyi", "so", "that", "it", "of", "to"}
+
+
+def _words(s: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if w not in _FILLER_WORDS}
+
+
 def _dedupe(items: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
-    """Drop repeated statements, including ones fully contained in a longer statement."""
+    """Drop repeated statements: exact, contained in a longer one, or near-identical.
+
+    Near-identical (80%+ word overlap) catches an assistant restating what the
+    user said; the first statement, usually the user's own words, is kept.
+    """
     norms = [normalize_sentence(s) for _, s in items]
-    out, seen = [], set()
+    out, seen, kept_words = [], set(), []
     for i, (role, s) in enumerate(items):
         n = norms[i]
         if not n or n in seen:
             continue
         if any(n != other and n in other for other in norms):
             continue
+        words = _words(s)
+        if len(words) >= 4 and any(len(words & k) / len(words | k) >= 0.8 for k in kept_words):
+            continue
         seen.add(n)
+        kept_words.append(words)
         out.append((role, s))
     return out
 

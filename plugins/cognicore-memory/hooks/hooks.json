@@ -1,0 +1,55 @@
+{
+  "description": "CogniCore automatic memory: resume this project's last sessions at startup, save each session from its transcript. Rule based, no model calls.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks session-start",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
+            "timeout": 60,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

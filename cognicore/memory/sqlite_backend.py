@@ -153,6 +153,10 @@ class SQLiteMemoryBackend(MemoryBackend):
             ("conversation_hash", "TEXT"),
             ("agent", "TEXT DEFAULT ''"),
             ("client", "TEXT DEFAULT ''"),
+            # The client's own session id (e.g. Claude Code's), so repeated automatic
+            # saves of one conversation update one session; and its project directory.
+            ("external_id", "TEXT"),
+            ("project", "TEXT"),
         ]:
             if col_name not in session_cols:
                 try:
@@ -161,6 +165,8 @@ class SQLiteMemoryBackend(MemoryBackend):
                     logger.warning(f"Migration error for sessions.{col_name}: {e}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_conversation_hash ON sessions(conversation_hash)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project, timestamp)")
 
     def _row_to_entry(self, row: sqlite3.Row) -> MemoryEntry:
         scope_str = row["scope"]

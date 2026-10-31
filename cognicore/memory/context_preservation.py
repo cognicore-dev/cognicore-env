@@ -5,6 +5,7 @@ Provides automatic context compression, session archiving, and session resumptio
 to solve token exhaustion in long LLM conversations without requiring additional LLM API calls.
 """
 
+import os
 import re
 import json
 import time
@@ -443,6 +444,11 @@ def _existing_ids_by_text(conn, texts: List[str]) -> Dict[str, str]:
     return found
 
 
+def project_key(path: str) -> str:
+    """Normalize a project directory so the same folder always maps to the same key."""
+    return os.path.normcase(os.path.realpath(os.path.expanduser(path))).rstrip("\\/")
+
+
 def save_session(
     backend: Any,
     conversation: Optional[List[Dict[str, Any]]] = None,
@@ -453,6 +459,8 @@ def save_session(
     current_state: str = "",
     environment: Any = None,
     supplied_handoff: Any = None,
+    session_key: str = "",
+    project: str = "",
 ) -> str:
     """
     TOOL 2: cognicore_save_session
@@ -501,9 +509,19 @@ def save_session(
 
     timestamp = time.time()
     dt_str = datetime.fromtimestamp(timestamp).strftime("%Y%m%d_%H%M%S")
+    project = project_key(project) if project else ""
+    previous = None
+    if session_key:
+        # Automatic capture saves the same conversation again as it grows: update one session.
+        with backend._get_conn() as conn:
+            previous = conn.execute(
+                "SELECT session_id, name, summary_memory_id FROM sessions WHERE external_id = ?", (session_key,)
+            ).fetchone()
     # The random suffix keeps two agents saving in the same second from
     # overwriting each other's session row.
-    session_id = f"sess_{dt_str}_{uuid.uuid4().hex[:8]}"
+    session_id = previous["session_id"] if previous else f"sess_{dt_str}_{uuid.uuid4().hex[:8]}"
+    if previous and not session_name:
+        session_name = previous["name"]
 
     if not session_name:
         date_pretty = datetime.fromtimestamp(timestamp).strftime("%b %d, %Y")
@@ -513,7 +531,7 @@ def save_session(
         handoff = build_handoff(
             conversation, session_id, session_name, timestamp,
             agent=agent, client=client, goal=goal, current_state=current_state, environment=environment,
-            supplied=supplied_handoff,
+            supplied=supplied_handoff, project=project,
         )
     except HandoffInputError as e:
         return _compact_json({"error": str(e)})
@@ -551,13 +569,28 @@ def save_session(
 
     handoff_json = json.dumps(handoff, ensure_ascii=False)
     with backend._get_conn() as conn:
-        conn.execute("""
-            INSERT INTO sessions (
-                session_id, name, timestamp, message_count, total_tokens_estimated, summary_memory_id,
-                handoff_json, conversation_hash, agent, client
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, session_name, timestamp, len(conversation), TokenBudget.estimate_tokens(conversation),
-              summary_id, handoff_json, conv_hash if hashed else None, agent or "", client or ""))
+        values = (session_name, timestamp, len(conversation), TokenBudget.estimate_tokens(conversation),
+                  summary_id, handoff_json, conv_hash if hashed else None, agent or "", client or "",
+                  session_key or None, project or None)
+        if previous:
+            conn.execute("""
+                UPDATE sessions SET name = ?, timestamp = ?, message_count = ?, total_tokens_estimated = ?,
+                    summary_memory_id = ?, handoff_json = ?, conversation_hash = ?, agent = ?, client = ?,
+                    external_id = ?, project = ?
+                WHERE session_id = ?
+            """, values + (session_id,))
+            # The rebuilt summary replaces the previous one.
+            old_summary = previous["summary_memory_id"]
+            if old_summary and str(old_summary) != str(summary_id):
+                conn.execute("DELETE FROM memory_entries WHERE entry_id = ?", (old_summary,))
+                conn.execute("DELETE FROM session_memories WHERE memory_id = ?", (old_summary,))
+        else:
+            conn.execute("""
+                INSERT INTO sessions (
+                    name, timestamp, message_count, total_tokens_estimated, summary_memory_id,
+                    handoff_json, conversation_hash, agent, client, external_id, project, session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, values + (session_id,))
         conn.executemany(
             "INSERT OR IGNORE INTO session_memories (session_id, memory_id) VALUES (?, ?)",
             [(session_id, int(mid)) for mid in linked_ids if str(mid).isdigit()],
@@ -692,6 +725,7 @@ def resume_session(
     session_id: Optional[str] = None,
     section: Optional[str] = None,
     environment: Any = None,
+    project: Optional[str] = None,
 ) -> str:
     """
     TOOL 3: cognicore_resume_session
@@ -712,7 +746,11 @@ def resume_session(
             rows = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchall()
         else:
             limit = 200 if query and query.strip() else max(1, last_n_sessions)
-            rows = conn.execute("SELECT * FROM sessions ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+            if project:  # only this project's sessions
+                rows = conn.execute("SELECT * FROM sessions WHERE project = ? ORDER BY timestamp DESC LIMIT ?",
+                                    (project_key(project), limit)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM sessions ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
     if not rows:
         if session_id:
             return f"Error: no saved session with id {session_id!r}."

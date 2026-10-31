@@ -17,7 +17,8 @@
         "client": {"type": "string", "description": "Which client/app, e.g. claude-desktop, vscode. Empty if not given."},
         "created_at": {"type": "string", "description": "UTC, ISO-8601, e.g. 2026-10-27T13:22:02Z"},
         "message_count": {"type": ["integer", "null"], "description": "null for sessions migrated from pre-v1 storage"},
-        "migrated": {"type": "boolean", "description": "true when rebuilt from a pre-v1 session's memory rows"}
+        "migrated": {"type": "boolean", "description": "true when rebuilt from a pre-v1 session's memory rows"},
+        "project": {"type": "string", "description": "Normalized project directory the session belongs to, or empty"}
       }
     },
     "goal": {"type": "string", "description": "What the work is for. Explicit goal from the agent, else extracted."},

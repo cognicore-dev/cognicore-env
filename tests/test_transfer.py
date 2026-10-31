@@ -147,7 +147,7 @@ def test_build_handoff_sections_and_schema():
     assert h["code"][0]["code"] == "leeway = 30"
     assert h["provenance"] == {
         "session_id": "sess_1", "session_name": "jwt", "agent": "claude-code", "client": "vscode",
-        "created_at": "2023-11-14T22:13:20Z", "message_count": len(RICH), "migrated": False,
+        "created_at": "2023-11-14T22:13:20Z", "message_count": len(RICH), "migrated": False, "project": "",
     }
     assert h["environment"] == {"os": "macOS", "python_version": "3.11.4"}
     dump = json.dumps(h)
