@@ -46,10 +46,12 @@ if not hasattr(FastMCP, "sse_app"):
         )
     FastMCP.sse_app = sse_app
 
+from cognicore.mcp.server import MEMORY_INSTRUCTIONS  # noqa: E402
+
 if _transport_security is not None:
-    mcp = FastMCP("cognicore-remote", transport_security=_transport_security)
+    mcp = FastMCP("cognicore-remote", instructions=MEMORY_INSTRUCTIONS, transport_security=_transport_security)
 else:
-    mcp = FastMCP("cognicore-remote")
+    mcp = FastMCP("cognicore-remote", instructions=MEMORY_INSTRUCTIONS)
 security = HTTPBearer()
 
 # ── Tool annotations ──────────────────────────────────────────────────────

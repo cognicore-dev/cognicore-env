@@ -125,6 +125,19 @@ def _entry_from_parts(
     }
 
 
+# Sent to every client at initialize. Clients that show server instructions to the model
+# (and agents without CogniCore hooks, such as Codex) otherwise never think to resume:
+# in a Claude Code -> Codex test, Codex had the tools but never called them.
+MEMORY_INSTRUCTIONS = (
+    "Persistent memory shared across sessions and agents (Claude, Codex, Cursor, ChatGPT). "
+    "At the start of a task, or whenever the user says to continue earlier work, call "
+    "cognicore_resume_session with a short query describing the task. It returns the previous "
+    "session's goal, state, open tasks, decisions and exact values. Before you finish, call "
+    "cognicore_save_session with handoff_json (goal, current_state, decisions with why, "
+    "open_tasks, key_facts, files), keeping ids, versions, names and numbers verbatim."
+)
+
+
 def strip_schema_titles(server: Any) -> None:
     """Drop the auto-generated "title" annotations from every tool's input schema.
 
@@ -217,14 +230,7 @@ def create_mcp_server() -> "FastMCP":
             "Install it with:  pip install mcp"
         )
 
-    mcp = FastMCP(
-        "cognicore",
-        instructions=(
-            "Runtime cognition layer for AI agents — provides episodic "
-            "memory, semantic recall, pattern reflection, and threat "
-            "detection via the Model Context Protocol."
-        ),
-    )
+    mcp = FastMCP("cognicore", instructions=MEMORY_INSTRUCTIONS)
 
     # ------------------------------------------------------------------
     # Tool 1: cognicore_remember
