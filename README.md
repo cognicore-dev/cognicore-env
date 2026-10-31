@@ -314,7 +314,7 @@ The module-by-module map is in [CONTRIBUTING.md](CONTRIBUTING.md#module-map).
 
 ## Links
 
-- **Website:** https://cognicore-frontend.vercel.app
+- **Website:** https://www.cognicoree.tech
 - **PyPI:** https://pypi.org/project/cognicore-env/
 - **Demo video:** https://github.com/cognicore-dev/cognicore-env/releases/download/demo-video/cognicore-demo.mp4
 - **LinkedIn:** https://www.linkedin.com/company/135163927/
