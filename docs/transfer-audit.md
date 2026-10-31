@@ -254,3 +254,60 @@ The same 11 `tests/test_content_studio.py` failures (ModuleNotFoundError) occur 
   `-`, `/` or `.` (e.g. `payments-api`) and falls back. That is retrieval behaviour, so it is left
   for prompt 2's eval-driven work.
 - Semantic (sentence-transformers) mode was not benchmarked. `--semantic` is supported once it is installed.
+
+## Token efficiency (round 2)
+
+Goal: same facts recovered, fewer tokens across the *whole* transfer, not just the resume
+brief. Measured with `scripts/bench_transfer.py` (chars / 4) on upstream `main`, on the end of
+round 1 (`132bef4`), and now.
+
+### Where the tokens of one transfer go
+
+| Cost | Paid | Upstream | Round 1 | Now |
+|---|---|---|---|---|
+| Tool definitions, hosted server (31 tools) | **every turn** | 6,151 | 6,863 | **4,856** |
+| Tool definitions, local stdio server (10 tools) | every turn | 1,719 | 2,237 | **1,555** |
+| Save arguments, s1 (agent output) | per save | 257 | 257 | 257, or **134** with `handoff_json` |
+| Save arguments, 105-message session | per save | 2,801 | 2,801 | 2,801, or **337** with `handoff_json` |
+| Save reply | per save | 61–105 | 102–228 | **71–74** |
+| Resume brief, s1 | per resume | 184 (45% of facts) | 222 (100%) | **174** (100%), **128** from a handoff |
+| Resume brief, 105-message session | per resume | 267 (34.5%) | 501 (100%) | **419** (100%), **313** from a handoff |
+| Resume tokens per recovered fact | | 16–42 | 13–26 | **11–22** |
+
+A full transfer of the 105-message session (save arguments + reply + resume):
+
+| | Tokens | Facts recovered |
+|---|---|---|
+| Upstream | 3,171 | 34.5% |
+| Now, sending the conversation | 3,291 | 100% |
+| Now, agent writes `handoff_json` | **721 (−77%)** | 100%* |
+
+\* The agent handoffs in the benchmark were written with the seeded facts in view. They show that
+supplied values survive verbatim, and what the transfer costs. They do not show that a real agent
+will include every fact. The conversation path makes no such assumption.
+
+### What changed
+
+1. **Agent-written handoff** (`handoff_json` on `cognicore_save_session`, with `conversation` now
+   optional). Sending the transcript costs output tokens proportional to its length, which is
+   2,801 for 105 messages and impossible for a long chat. A handoff costs about 100–350 tokens
+   however long the work was. It is redacted, merged ahead of any extracted items without
+   repeats, and covered by the idempotency hash.
+2. **Tool definitions about 30% smaller.** These are paid on every turn of every conversation. Auto-generated
+   schema `title`s were about 20% of all tool tokens and are stripped; the user-facing tool
+   titles remain. The session and experience tool descriptions were rewritten short.
+3. **Leaner resume brief** (−15 to −24%, same facts). It drops lead-ins that repeat the heading,
+   does not repeat files or code context already in the text, and uses a shorter session line,
+   shorter headings and no indentation. The stored handoff keeps the verbatim sentences.
+4. **One-line save reply**: ids and counts only (137 → 73 tokens).
+
+### Not done (needs a product decision)
+
+- **58% of the remaining hosted tool tokens** (2,814 of 4,856 per turn) are the Figma/Fabric
+  (1,109), ElevenLabs (1,069) and commerce (636) tools, which memory transfer never uses.
+  An opt-in setting (e.g. `COGNICORE_TOOLSETS=memory,experience`) would bring the hosted server to
+  about 2,000 tokens per turn. The default decides whether existing users lose tools.
+- **Other sessions in a no-query resume** take about half of the 3-session brief (≈440 tokens). Listing
+  only their goal and open tasks would save about 200 tokens, but recovery of the oldest session would
+  fall from 82% to about 18%. It stays as it is; `last_n_sessions=1` or a `query` gives a
+  one-session brief.

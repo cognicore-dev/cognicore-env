@@ -145,6 +145,59 @@ HELDOUT = {
     },
 }
 
+# What a careful agent would send as handoff_json instead of the conversation.
+# Written with the seeded facts in view, so "facts recovered" on this path
+# mostly shows that supplied values survive verbatim; the point is token cost.
+AGENT_HANDOFFS = {
+    "s1_jwt_debug": {
+        "goal": "Fix intermittent 401s on /api/v2/orders (AUTH-1423)",
+        "current_state": "Root cause: clock skew between pods. Fix committed as 9f3c2ab",
+        "decisions": [{"what": "Switch python-jose -> PyJWT 2.8.0, leeway=30", "why": "python-jose unmaintained"},
+                      "Rejected: token TTL 24h (no effect on nbf)"],
+        "open_tasks": ["Regression test for expired tokens in tests/test_auth.py"],
+        "key_facts": ["Python 3.11.4, FastAPI 0.110.0"],
+        "files": ["auth/tokens.py"],
+    },
+    "s2_launch_plan": {
+        "goal": "Plan product launch on November 15 for indie developers",
+        "decisions": [{"what": "Launch on Product Hunt first, Hacker News a week later", "why": "PH drives indie devs"}],
+        "open_tasks": ["Priya: landing page copy by Nov 8"],
+        "key_facts": ["Brand color #111111", "Pro plan $12/month", "Domain cognicore.dev", "Waitlist 1,240 signups"],
+    },
+    "s3_db_migration": {
+        "goal": "Migrate users table (3.2 million rows) from MySQL 5.7 to Postgres 16",
+        "current_state": "pgloader failed with 42P01 on the sessions table (created after the snapshot)",
+        "decisions": [{"what": "Dual-write for two weeks instead of big-bang cutover", "why": "cheap rollback"}],
+        "open_tasks": ["Backfill account_id for 18,000 orphaned rows"],
+        "key_facts": ["migrations/0042_rename_user_id.sql renames user_id -> account_id", "New env var DATABASE_URL_V2",
+                      "Workers run Node 20.11.1",
+                      "Backfill SQL: UPDATE accounts SET account_id = user_id WHERE account_id IS NULL"],
+    },
+    "h1_frontend_bug": {
+        "goal": "Fix checkout button double-submit on slow networks (Safari 17.4)",
+        "current_state": "useRef guard pushed to branch fix/double-submit, PR #882",
+        "decisions": [{"what": "ref guard + disable button until POST /api/checkout resolves",
+                       "why": "debounce delays legit clicks"}, "Rejected: debounce"],
+        "open_tasks": ["Playwright test in e2e/checkout.spec.ts", "Dana to QA on iOS"],
+        "key_facts": ["React 18.2.0 batches state, so setLoading(true) lands after the second click"],
+        "files": ["src/components/CheckoutButton.tsx"],
+    },
+    "h2_training_run": {
+        "goal": "Recover training run r-0917 (diverged at step 12k, loss NaN)",
+        "current_state": "Resume from s3://ml-ckpt/r-0917/step-11000 (last clean checkpoint)",
+        "decisions": [{"what": "Warmup 500 -> 2000 steps and grad clipping at 1.0",
+                       "why": "warmup too short for lr 3e-4 at batch 2048"}],
+        "open_tasks": ["Tomorrow: compare against baseline run r-0899 (eval F1 0.871)"],
+    },
+    "h3_prod_incident": {
+        "goal": "Resolve payments-api outage: 503s since 14:05 UTC, pods in CrashLoopBackOff",
+        "current_state": "Rolled back v2.14.0 -> v2.13.2 (helm rollback payments-api 41); recovering",
+        "decisions": [{"what": "Long term: memory limit 512Mi -> 1Gi and lazy-load the fraud model",
+                       "why": "OOMKilled at startup"}],
+        "open_tasks": ["Open INC-2291 postmortem", "Tell Marco: on-call handover at 18:00"],
+    },
+}
+
 CHATTER = re.compile(r"^(hey|hi|ok|okay|sure|thanks|great|nice|perfect|sounds good|got it|noted|yes|no)\b", re.I)
 FILLER = [
     {"role": "user", "content": "Ok, let me think about that for a second and get back to you shortly."},
@@ -212,8 +265,23 @@ def run(repo: Path, semantic: bool) -> dict:
             "rows_with_source_agent": sum(bool(r.get("source_agent")) for r in rows),
         }
 
-    report = {"repo": str(repo), "semantic": semantic, "api": {"max_tokens": has_budget, "environment": has_env},
-              "sessions": {}}
+    has_handoff = "supplied_handoff" in save_params
+
+    def est(obj):
+        return TokenBudget.estimate_tokens(obj if isinstance(obj, str) else json.dumps(obj))
+
+    def agent_path(handoff, name, facts):
+        """Save from an agent-written handoff (no conversation), then resume."""
+        b = fresh()
+        reply = save_session(b, supplied_handoff=handoff, session_name=name, agent="claude-code")
+        out = resume_session(b)
+        return {"save_args_tokens": est({"handoff_json": json.dumps(handoff), "session_name": name}),
+                "save_response_tokens": est(reply), "resume_tokens": est(out),
+                "facts_recovered_pct": recovered(out, facts)[0]}
+
+    report = {"repo": str(repo), "semantic": semantic,
+              "api": {"max_tokens": has_budget, "environment": has_env, "handoff_json": has_handoff},
+              "tool_definition_tokens": tool_definition_tokens(), "sessions": {}}
 
     all_sessions = [("dev", n, s) for n, s in SESSIONS.items()] + [("heldout", n, s) for n, s in HELDOUT.items()]
     for group, name, s in all_sessions:
@@ -242,6 +310,13 @@ def run(repo: Path, semantic: bool) -> dict:
             "secret_stored": any(FAKE_SECRET in r["text"] for r in rows),
             "secret_in_resume": FAKE_SECRET in brief,
         }
+        # Token cost of the transfer itself: what the agent sends, what it reads back.
+        entry["save_args_tokens"] = est({"conversation": s["conversation"], "session_name": name})
+        entry["save_response_tokens"] = est(save(fresh(), s, name, agent="claude-code"))
+        n_recovered = round(entry["facts_recovered_pct"] * len(facts) / 100)
+        entry["resume_tokens_per_fact"] = round(entry["resume_tokens"] / max(1, n_recovered), 1)
+        if has_handoff and name in AGENT_HANDOFFS:
+            entry["agent_handoff"] = agent_path(AGENT_HANDOFFS[name], name, facts)
         if has_budget:
             for budget in (150, 300):
                 small = resume_session(b, max_tokens=budget)
@@ -263,15 +338,24 @@ def run(repo: Path, semantic: bool) -> dict:
         long_facts.update({f"{name}.{k}": v for k, v in s["facts"].items()})
     b = fresh()
     t = time.perf_counter()
-    save_session(b, long_conv, session_name="long")
+    long_reply = save_session(b, long_conv, session_name="long")
     long_save_ms = round((time.perf_counter() - t) * 1000, 1)
     brief = resume_session(b)
     report["long_session"] = {
         "messages": len(long_conv), "input_tokens": TokenBudget.estimate_tokens(long_conv),
         "save_ms": long_save_ms, **row_stats(rows_of(b)),
+        "save_args_tokens": est({"conversation": long_conv, "session_name": "long"}),
+        "save_response_tokens": est(long_reply),
         "resume_tokens": TokenBudget.estimate_tokens(brief),
         "facts_recovered_pct": recovered(brief, long_facts)[0],
     }
+    if has_handoff:
+        parts = [AGENT_HANDOFFS[n] for n in SESSIONS]
+        merged = {"goal": "; ".join(p["goal"] for p in parts),
+                  "current_state": "; ".join(p["current_state"] for p in parts if p.get("current_state"))}
+        for key in ("decisions", "open_tasks", "key_facts", "files"):
+            merged[key] = [x for p in parts for x in p.get(key, [])]
+        report["long_session"]["agent_handoff"] = agent_path(merged, "long", long_facts)
     if has_budget:
         small = resume_session(b, max_tokens=500)
         report["long_session"]["budget_500_tokens"] = TokenBudget.estimate_tokens(small)
@@ -320,6 +404,28 @@ def run(repo: Path, semantic: bool) -> dict:
                                              "dependencies": {"pyjwt": "1.7.1"}})
         report["environment_warning_shown"] = "Environment warnings" in out
     return report
+
+
+def tool_definition_tokens() -> dict:
+    """Tokens every client loads into context on every turn: all tool names, descriptions and schemas."""
+    import asyncio
+
+    def total(tools):
+        return sum(len(json.dumps({"name": t.name, "description": t.description, "input_schema": t.inputSchema}))
+                   for t in tools) // 4
+
+    out = {}
+    try:
+        from cognicore.mcp import server as local
+        out["local"] = total(asyncio.run(local.create_mcp_server().list_tools()))
+    except Exception as e:  # mcp not installed
+        out["local"] = f"unavailable: {type(e).__name__}"
+    try:
+        from cognicore.connectors import remote
+        out["remote"] = total(asyncio.run(remote.mcp.list_tools()))
+    except Exception as e:  # server extras not installed
+        out["remote"] = f"unavailable: {type(e).__name__}"
+    return out
 
 
 def summarize(r: dict) -> str:
