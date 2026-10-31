@@ -722,10 +722,18 @@ def cognicore_fabric_sync_figma(
     fabric = get_fabric(backend)
     register_all_plugins(fabric)
     
+    token = token or os.environ.get("FIGMA_ACCESS_TOKEN", "")
+    if not token:
+        result = {"success": False, "error": "provide token or set FIGMA_ACCESS_TOKEN env var."}
+        return apply_auto_compression(ctx, conversation, json.dumps(result, indent=2))
+
     try:
         figma = fabric.connect("figma")
-        success = figma.sync_file(file_key, token)
-        result = {"success": success, "message": f"Successfully pulled design semantics for {file_key}"}
+        synced = figma.sync(file_key=file_key, access_token=token)
+        if synced.get("status") == "success":
+            result = {"success": True, "message": synced.get("message", f"Synced {file_key}")}
+        else:
+            result = {"success": False, "error": synced.get("message", "Figma sync failed")}
     except Exception as e:
         result = {"success": False, "error": str(e)}
         
