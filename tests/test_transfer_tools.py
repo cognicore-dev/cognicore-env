@@ -98,3 +98,46 @@ def test_strip_schema_titles_keeps_a_parameter_named_title():
     assert not _has_title(schema)
     result = asyncio.run(server.call_tool("make_doc", {"title": "a", "body": "b"}))
     assert "a:b" in str(result)
+
+
+def test_toolsets_groups_cover_every_hosted_tool():
+    import asyncio
+
+    remote = pytest.importorskip("cognicore.connectors.remote")
+    listed = {t.name for t in asyncio.run(remote.mcp.list_tools())}
+    grouped = {name for names in remote.TOOLSETS.values() for name in names}
+    assert listed == grouped  # a new tool must be put in a group
+
+
+@pytest.mark.parametrize("spec,kept", [
+    ("", {"a1", "a2", "b1", "loose"}),
+    ("all", {"a1", "a2", "b1", "loose"}),
+    ("a", {"a1", "a2", "loose"}),
+    (" A , nope ", {"a1", "a2", "loose"}),
+])
+def test_limit_toolsets(spec, kept):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cognicore.mcp.server import limit_toolsets
+
+    server = FastMCP("t")
+    for name in ("a1", "a2", "b1", "loose"):
+        server.tool(name=name)(lambda: "ok")
+    limit_toolsets(server, spec, {"a": ["a1", "a2"], "b": ["b1"]})
+    assert {t.name for t in asyncio.run(server.list_tools())} == kept
+
+
+def test_hosted_toolset_token_cost(monkeypatch):
+    """Report what a memory-only hosted server costs per turn (kept as a regression bound)."""
+    import asyncio
+    import json
+
+    remote = pytest.importorskip("cognicore.connectors.remote")
+    tools = asyncio.run(remote.mcp.list_tools())
+    keep = set(remote.TOOLSETS["memory"] + remote.TOOLSETS["session"] + remote.TOOLSETS["experience"])
+    cost = sum(len(json.dumps({"name": t.name, "description": t.description, "input_schema": t.inputSchema}))
+               for t in tools if t.name in keep) // 4
+    assert cost < 2200

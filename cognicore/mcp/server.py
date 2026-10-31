@@ -148,6 +148,28 @@ def strip_schema_titles(server: Any) -> None:
         strip(getattr(tool, "parameters", None))
 
 
+def limit_toolsets(server: Any, spec: str, groups: Dict[str, List[str]]) -> List[str]:
+    """Keep only the tools in the named groups; return the names removed.
+
+    ``spec`` is a comma-separated list such as "memory,session". Empty or "all"
+    keeps everything. Every tool definition is loaded into the model's context on
+    every turn, so unused groups cost tokens all the time. Tools not listed in
+    any group are always kept.
+    """
+    wanted = {s.strip().lower() for s in (spec or "").split(",") if s.strip()}
+    if not wanted or "all" in wanted:
+        return []
+    unknown = wanted - set(groups)
+    if unknown:
+        logger.warning("Unknown COGNICORE_TOOLSETS entries ignored: %s", ", ".join(sorted(unknown)))
+    drop = {name for group, names in groups.items() if group not in wanted for name in names}
+    tools = getattr(getattr(server, "_tool_manager", None), "_tools", {})
+    removed = [name for name in list(tools) if name in drop]
+    for name in removed:
+        del tools[name]
+    return removed
+
+
 def _with_local_os(environment_json: str) -> Dict[str, Any]:
     """Parse an environment fingerprint and fill in the OS.
 

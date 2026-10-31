@@ -1894,9 +1894,25 @@ async def figma_webhook(request: Request):
     }
 
 
-# All tools are registered by now; trim their listed schemas (see strip_schema_titles).
-from cognicore.mcp.server import strip_schema_titles  # noqa: E402
+# All tools are registered by now. Optionally keep only some groups (every listed tool
+# costs context tokens on every turn), then trim the listed schemas.
+from cognicore.mcp.server import limit_toolsets, strip_schema_titles  # noqa: E402
 
+TOOLSETS = {
+    "memory": ["cognicore_remember", "cognicore_recall", "cognicore_forget", "cognicore_list", "cognicore_stats"],
+    "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
+    "experience": ["cognicore_record_experience", "cognicore_verify_experience", "cognicore_recall_experience",
+                   "cognicore_share_experience", "cognicore_check_experience"],
+    "commerce": ["cognicore_list_for_sale", "cognicore_purchase_memory", "cognicore_value_my_memory",
+                 "cognicore_reputation", "cognicore_discover_sellers"],
+    "figma": ["cognicore_figma_sync", "cognicore_figma_recall", "cognicore_figma_check_component",
+              "cognicore_figma_record_implementation", "cognicore_figma_design_system", "cognicore_figma_recommend",
+              "cognicore_fabric_recommend", "cognicore_fabric_sync_figma"],
+    "elevenlabs": ["cognicore_elevenlabs_sync", "cognicore_elevenlabs_recall", "cognicore_elevenlabs_learn",
+                   "cognicore_elevenlabs_feedback", "cognicore_elevenlabs_recommend"],
+}
+# e.g. COGNICORE_TOOLSETS=memory,session,experience. Default: all tools.
+limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), TOOLSETS)
 strip_schema_titles(mcp)
 
 # Expose one canonical, authenticated MCP surface. Mounting the same app at "/"
