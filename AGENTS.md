@@ -41,6 +41,11 @@ reformat or mass-fix unrelated files in the same change.
   Use `_READ`, `_WRITE`, `_DELETE` or `_EXTERNAL_WRITE`. Clients use these hints
   to decide when to ask the user, and `tests/test_remote_tool_annotations.py`
   fails on any tool without them.
+- **Write tool descriptions that describe, never instruct.** A description says what the
+  tool does; it must not tell the model when to call it ("call this before …") or name
+  another tool. Clients feed these strings to the model, so an instruction there is a
+  prompt-injection surface, and the connector directory rejects it.
+  `tests/test_remote_tool_descriptions.py` fails on both.
 - **Get storage through `get_backend(ctx)`.** It resolves the signed-in user and
   opens their own database. Do not open database files or build paths yourself.
 - **Never read or write another user's data.** Users are identified as

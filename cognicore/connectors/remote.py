@@ -501,7 +501,7 @@ def cognicore_compress_context(ctx: Context, conversation: list, keep_last_n: in
 
 @_tool("Save session summary", _WRITE)
 def cognicore_save_session(ctx: Context, conversation: list, session_name: str = "") -> str:
-    """Called at END of conversation automatically. Saves atomic facts, decisions, code snippets, and action items before context is lost."""
+    """Save a session summary: atomic facts, decisions, code snippets and action items from the conversation."""
     backend = get_backend(ctx)
     res = save_session(backend, conversation, session_name=session_name if session_name else None)
     return apply_auto_compression(ctx, conversation, res)
@@ -509,7 +509,7 @@ def cognicore_save_session(ctx: Context, conversation: list, session_name: str =
 
 @_tool("Resume from past sessions", _READ)
 def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int = 3, include_action_items: bool = True, conversation: Optional[list] = None) -> str:
-    """Called at START of every new conversation. Reconstructs context brief from past sessions instantly."""
+    """Reconstruct a context brief from past sessions."""
     backend = get_backend(ctx)
     res = resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
     return apply_auto_compression(ctx, conversation, res)
@@ -752,9 +752,9 @@ def cognicore_elevenlabs_sync(
     conversation: Optional[list] = None,
 ) -> str:
     """Store ElevenLabs voice preferences, settings, and usage context.
-    Call this when the user specifies voice preferences, or after generating audio.
-    Stores voice_id, stability, similarity_boost, speed, content_type, audience, tone.
-    Also stores custom pronunciation overrides as a JSON dict string.
+
+    Stores voice_id, stability, similarity_boost, speed, content_type, audience
+    and tone, plus custom pronunciation overrides given as a JSON dict string.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -800,11 +800,11 @@ def cognicore_elevenlabs_recall(
     include_advanced: bool = False,
     conversation: Optional[list] = None,
 ) -> str:
-    """Retrieve stored ElevenLabs preferences as ready-to-use API parameters.
-    Call this before generating any ElevenLabs audio.
+    """Return stored ElevenLabs preferences as ready-to-use API parameters.
+
     Returns voice_id, voice_settings (stability, similarity_boost, style, speed),
-    model_id, content_context (type, audience, tone), and optionally usage patterns.
-    The returned voice_settings can be passed directly to the ElevenLabs API.
+    model_id, content_context (type, audience, tone), and optionally usage
+    patterns. The voice_settings fields match the ElevenLabs API parameters.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -837,11 +837,11 @@ def cognicore_elevenlabs_learn(
     audio_length_sec: float = 0.0,
     conversation: Optional[list] = None,
 ) -> str:
-    """Record an ElevenLabs generation so CogniCore learns from it over time.
-    Call this after every audio generation. Returns a generation_id to use
-    with cognicore_elevenlabs_feedback when audience feedback comes in.
-    Over time, this powers cognicore_elevenlabs_recommend to automatically
-    pick the best voice and settings.
+    """Record an ElevenLabs generation and the settings it used.
+
+    Returns a generation_id that identifies this generation when audience
+    feedback is recorded later. Stored generations inform later voice and
+    settings recommendations.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -869,11 +869,11 @@ def cognicore_elevenlabs_feedback(
     audience_feedback: str = "",
     conversation: Optional[list] = None,
 ) -> str:
-    """Record feedback for a previous ElevenLabs generation.
-    This is how CogniCore learns what works. Pass the generation_id from
-    cognicore_elevenlabs_learn, plus a rating (1-5), engagement percentage,
-    and any audience feedback text. The more feedback you provide, the better
-    cognicore_elevenlabs_recommend becomes.
+    """Record audience feedback for a previously recorded ElevenLabs generation.
+
+    Takes the generation_id of that generation, a rating (1-5), an engagement
+    percentage and any audience feedback text. Recorded feedback informs later
+    voice and settings recommendations.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -965,11 +965,10 @@ def cognicore_record_experience(
 ) -> str:
     """Record a structured experience from a completed task.
 
-    Call this after solving a non-trivial problem. Records the task,
-    what you tried, what failed, what worked, and why.
+    Stores the task, the approaches taken, what failed, what worked, and why.
 
     Args:
-        task: What you were trying to do, e.g. "Fix JWT auth failures".
+        task: What the task was, e.g. "Fix JWT auth failures".
         problem: The specific problem, e.g. "Intermittent 401s after deploy".
         solution: What actually fixed it.
         why_it_worked: Root cause explanation.
@@ -1055,14 +1054,14 @@ def cognicore_verify_experience(
     evidence_json: str = "[]",
     conversation: Optional[list] = None,
 ) -> str:
-    """Verify a recorded experience with real evidence.
+    """Attach evidence to a recorded experience, promoting it from CANDIDATE
+    to VERIFIED.
 
-    Call this after recording an experience to promote it from CANDIDATE
-    to VERIFIED. Provide evidence of the solution working (test results,
-    command outputs, etc.).
+    Evidence is a record of the solution working, such as test results or
+    command output.
 
     Args:
-        experience_id: The ID returned by cognicore_record_experience.
+        experience_id: ID of the experience to verify.
         evidence_json: JSON array of evidence records:
             [{"command": "pytest tests/", "exit_code": 0, "commit": "abc123"}]
     """
@@ -1109,14 +1108,14 @@ def cognicore_recall_experience(
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
 ) -> str:
-    """Recall relevant past experiences before starting a task.
+    """Return past experiences relevant to a task.
 
-    Call this BEFORE working on a non-trivial problem. CogniCore will tell
-    you what was tried before, what failed, and what worked — with evidence.
+    Each result records what was tried, what failed, what worked, and the
+    evidence stored with it.
 
     Args:
-        query: Describe what you're working on, e.g. "JWT auth bug in FastAPI".
-        include_failures: Include past failed approaches as warnings.
+        query: What the task is about, e.g. "JWT auth bug in FastAPI".
+        include_failures: Include past failed approaches.
         require_verified: Only return evidence-verified experiences.
         top_k: Max number of experiences to return.
         python_version: Current Python version for compatibility filtering.
@@ -1258,10 +1257,10 @@ def cognicore_check_experience(
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
 ) -> str:
-    """Check if a past experience is still valid in the current environment.
+    """Report whether a past experience is still valid in the current environment.
 
-    Call this when you're about to rely on a past experience but your
-    environment has changed (new Python version, upgraded dependencies, etc.).
+    Compares the environment recorded with the experience against the values
+    given here.
 
     Args:
         experience_id: ID of the experience to check.
@@ -1657,11 +1656,10 @@ def cognicore_figma_sync(
     ctx: Context,
     access_token: str = "",
 ) -> str:
-    """Pull design tokens, styles, components, and variables from a real Figma file
+    """Pull design tokens, styles, components, and variables from a Figma file
     and store them in CogniCore memory.
 
-    After syncing, all design data is available via cognicore_figma_recall
-    without needing the token again.
+    The stored design data persists, so reading it later needs no Figma token.
 
     Args:
         file_key: Figma file key from the URL (figma.com/file/<KEY>/...).
@@ -1691,10 +1689,10 @@ def cognicore_figma_sync(
 
 @_tool("Get Figma design tokens", _READ)
 def cognicore_figma_recall(ctx: Context) -> str:
-    """Retrieve all stored Figma design tokens, typography, colors, and variables.
+    """Return all stored Figma design tokens, typography, colors, and variables.
 
-    Works across sessions — no Figma token needed after the first sync.
-    Returns a JSON summary of the design system.
+    The stored design data persists across sessions, so reading it needs no
+    Figma token. Returns a JSON summary of the design system.
     """
     figma, _ = _get_figma_adapters(ctx)
     tokens = figma.recall()
@@ -1719,12 +1717,12 @@ def cognicore_figma_check_component(
     figma_component: str,
     ctx: Context,
 ) -> str:
-    """Check if a Figma component has already been implemented in the codebase.
+    """Report whether a Figma component already has an implementation recorded.
 
-    Call this BEFORE writing any new component. CogniCore will tell you:
-    - REUSE: implementation exists and is verified — use it, don't duplicate
-    - UPDATE: implementation exists but unverified — review before reusing
-    - IMPLEMENT: not found — implement fresh
+    Returns one of:
+    - REUSE: a verified implementation is recorded
+    - UPDATE: an implementation is recorded but unverified
+    - IMPLEMENT: no implementation is recorded
 
     Args:
         figma_component: Figma component name, e.g. "Button/Primary".
@@ -1768,10 +1766,10 @@ def cognicore_figma_record_implementation(
     verified: bool = False,
     test_file: str = "",
 ) -> str:
-    """Record that a Figma component has been implemented.
+    """Record that a Figma component has been implemented in code.
 
-    Call this after successfully implementing a Figma component.
-    CogniCore stores the mapping permanently so future agents can reuse it.
+    Stores the mapping from the Figma component to its implementation so it can
+    be looked up later.
 
     Args:
         figma_component: Figma component name, e.g. "Button/Primary".
