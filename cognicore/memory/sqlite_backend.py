@@ -280,7 +280,10 @@ class SQLiteMemoryBackend(MemoryBackend):
         with self._get_conn() as conn:
             if query_vec:
                 # Semantic / Hybrid search mode: evaluate across candidate corpus
-                sql = "SELECT *, 0 as bm25_score FROM memory_entries WHERE 1=1"
+                sql = (
+                    "SELECT *, 0 as bm25_score FROM memory_entries "
+                    "WHERE 1=1 AND state NOT IN ('archived', 'deleted')"
+                )
                 params = []
                 if category:
                     sql += " AND category = ?"
@@ -368,6 +371,7 @@ class SQLiteMemoryBackend(MemoryBackend):
                     FROM memory_entries m
                     INNER JOIN ({fts_sql}) f ON m.entry_id = f.rowid
                     WHERE 1=1
+                      AND m.state NOT IN ('archived', 'deleted')
                 """  # nosec B608
                 params = [fts_tokens]
             
@@ -398,6 +402,7 @@ class SQLiteMemoryBackend(MemoryBackend):
                     SELECT m.*, 0 as bm25_score
                     FROM memory_entries m
                     WHERE 1=1
+                      AND m.state NOT IN ('archived', 'deleted')
                 """
                 params = []
 
@@ -548,7 +553,10 @@ class SQLiteMemoryBackend(MemoryBackend):
                          scope_id: Optional[str],
                          metadata_filters: Optional[Dict[str, str]] = None) -> List[SearchResult]:
         """Load all rows and run BM25; fall back to LIKE only for empty corpora."""
-        all_sql = "SELECT *, 0 as bm25_score FROM memory_entries ORDER BY timestamp DESC"
+        all_sql = (
+            "SELECT *, 0 as bm25_score FROM memory_entries "
+            "WHERE state NOT IN ('archived', 'deleted') ORDER BY timestamp DESC"
+        )
         all_rows = conn.execute(all_sql).fetchall()
 
         if not all_rows:
@@ -562,7 +570,10 @@ class SQLiteMemoryBackend(MemoryBackend):
         # Last resort: LIKE scan (handles very short corpora where BM25 scores all 0)
         logger.info("BM25 scored 0; falling back to LIKE scan")
         clean_query = query.replace('"', '').replace("'", '').strip()
-        like_sql = "SELECT *, 0 as bm25_score FROM memory_entries WHERE text LIKE ?"
+        like_sql = (
+            "SELECT *, 0 as bm25_score FROM memory_entries "
+            "WHERE text LIKE ? AND state NOT IN ('archived', 'deleted')"
+        )
         like_params: List = [f"%{clean_query}%"]
         if category:
             like_sql += " AND category = ?"
