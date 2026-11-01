@@ -49,21 +49,36 @@ def _relative(path: str, cwd: str) -> str:
     return path if rel.startswith("..") else rel.replace("\\", "/")
 
 
-def read_transcript(path: str, cwd: str = "") -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
-    """Return ``(conversation, supplied_handoff)`` from a Claude Code transcript file.
-
-    ``supplied_handoff`` merges every handoff the agent saved through the
-    CogniCore tool during the session, plus the files it edited.
-    """
-    conversation: List[Dict[str, str]] = []
-    supplied: Dict[str, Any] = {}
-    files: List[str] = []
-
+def _entries(path: str) -> List[Dict[str, Any]]:
+    out = []
     for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def read_transcript(path: str, cwd: str = "") -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+    """Return ``(conversation, supplied_handoff)`` from a Claude Code or Codex transcript file.
+
+    ``supplied_handoff`` merges every handoff the agent saved through the
+    CogniCore tool during the session, plus the files it edited.
+    """
+    entries = _entries(path)
+    if any(e.get("type") in ("session_meta", "response_item") and "payload" in e for e in entries[:20]):
+        return _read_codex(entries, cwd)
+    return _read_claude(entries, cwd)
+
+
+def _read_claude(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+    conversation: List[Dict[str, str]] = []
+    supplied: Dict[str, Any] = {}
+    files: List[str] = []
+
+    for entry in entries:
         kind = entry.get("type")
         if kind not in ("user", "assistant") or entry.get("isMeta") or entry.get("isSidechain"):
             continue
@@ -91,9 +106,66 @@ def read_transcript(path: str, cwd: str = "") -> Tuple[List[Dict[str, str]], Dic
         if texts:
             conversation.append({"role": kind, "content": "\n".join(texts)})
 
+    return conversation, _with_files(supplied, files)
+
+
+# Codex session logs ("rollouts"): one {"type", "payload"} object per line.
+_CODEX_INJECTED = [
+    re.compile(r"<(environment_context|user_instructions|INSTRUCTIONS|skills_instructions)>.*?</\1>", re.S),
+    re.compile(r"^# AGENTS\.md instructions for .*?(?=\n\n[^<\s]|\Z)", re.S),
+]
+_PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$", re.M)
+_SHELL_WRITE = re.compile(r"(?:Set-Content|Add-Content|Out-File|New-Item)\b[^\n]*?-(?:Path|FilePath)\s+['\"]?([^'\";\s)]+)", re.I)
+
+
+def _read_codex(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+    conversation: List[Dict[str, str]] = []
+    supplied: Dict[str, Any] = {}
+    files: List[str] = []
+    for entry in entries:
+        if entry.get("type") == "session_meta" and not cwd:
+            cwd = (entry.get("payload") or {}).get("cwd") or ""
+        if entry.get("type") != "response_item":
+            continue  # event_msg, turn_context, token counts: bookkeeping
+        item = entry.get("payload") or {}
+        kind = item.get("type")
+        if kind == "message" and item.get("role") in ("user", "assistant"):
+            # developer messages hold Codex's own system prompt, skills and permissions text
+            parts = [c.get("text", "") for c in item.get("content") or []
+                     if isinstance(c, dict) and c.get("type") in ("input_text", "output_text")]
+            text = "\n".join(parts)
+            for pattern in _CODEX_INJECTED:
+                text = pattern.sub(" ", text)
+            text = _clean(text)
+            if text:
+                conversation.append({"role": item["role"], "content": text})
+        elif kind in ("function_call", "custom_tool_call", "local_shell_call"):
+            name = str(item.get("name") or "")
+            raw = item.get("arguments") if "arguments" in item else item.get("input")
+            args = raw
+            if isinstance(raw, str) and raw.strip().startswith("{"):
+                try:
+                    args = json.loads(raw)  # function_call arguments are a JSON-encoded object
+                except json.JSONDecodeError:
+                    args = raw
+            if isinstance(args, dict):
+                body = "\n".join(str(v) for v in args.values() if isinstance(v, str))
+                if _SAVE_TOOL.search(name):
+                    _merge_supplied(supplied, args.get("handoff_json"))
+            else:
+                body = args if isinstance(args, str) else json.dumps(args or item.get("action") or "")
+            # Edited paths only; tool output (custom_tool_call_output etc.) is never read.
+            for target in _PATCH_FILE.findall(body) + _SHELL_WRITE.findall(body):
+                rel = _relative(target, cwd) if cwd else target
+                if rel not in files:
+                    files.append(rel)
+    return conversation, _with_files(supplied, files)
+
+
+def _with_files(supplied: Dict[str, Any], files: List[str]) -> Dict[str, Any]:
     if files:
         supplied["files"] = supplied.get("files", []) + [f for f in files if f not in supplied.get("files", [])]
-    return conversation, supplied
+    return supplied
 
 
 def _merge_supplied(into: Dict[str, Any], raw: Any) -> None:

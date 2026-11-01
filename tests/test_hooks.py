@@ -101,7 +101,7 @@ def test_repeated_saves_update_one_session(tmp_path, monkeypatch):
 def test_hooks_never_fail_the_session(tmp_path, monkeypatch):
     bad = {"session_id": "x", "transcript_path": str(tmp_path / "missing.jsonl"), "cwd": str(tmp_path)}
     assert _run("save", bad, monkeypatch, tmp_path / "mem") == ""
-    monkeypatch.setattr(hooks, "save", lambda event: 1 / 0)
+    monkeypatch.setattr(hooks, "save", lambda event, **kw: 1 / 0)
     monkeypatch.setitem(hooks.COMMANDS, "save", hooks.save)
     assert _run("save", bad, monkeypatch, tmp_path / "mem") == ""
     assert "ZeroDivisionError" in (tmp_path / "mem" / "hooks.log").read_text()
@@ -125,3 +125,82 @@ def test_assistant_restatements_are_merged(statement):
             {"role": "assistant", "content": statement}]
     h = build_handoff(conv, "s", "n", 0.0)
     assert sum("Anika" in f for f in [h["goal"], *h["key_facts"]]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Codex: session-log parsing and hooks
+# ---------------------------------------------------------------------------
+
+def _codex_rollout(path, cwd):
+    """A Codex rollout in the format Codex 0.164 writes (shapes copied from a real log)."""
+    def item(payload):
+        return json.dumps({"timestamp": "2026-11-01T15:42:35Z", "type": "response_item", "payload": payload})
+    lines = [
+        json.dumps({"type": "session_meta", "payload": {"id": "c-1", "cwd": cwd, "base_instructions": {"text": "SYSTEM"}}}),
+        item({"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "You are Codex. SECRET SYSTEM PROMPT"}]}),
+        item({"type": "message", "role": "user", "content": [{"type": "input_text", "text":
+             f"<environment_context>\n  <cwd>{cwd}</cwd>\n</environment_context>"}]}),
+        item({"type": "message", "role": "user", "content": [{"type": "input_text", "text":
+             "Ticket CALC-9: add() subtracts. We decided to keep the signature because callers depend on it. "
+             "The reviewer is Lena. Token sk-test-FAKE0000000000000000000000."}]}),
+        item({"type": "custom_tool_call", "name": "exec", "input":
+             """await tools.exec_command({cmd:"Set-Content -Path calc.py -Value @('def add(a, b):')"})"""}),
+        item({"type": "custom_tool_call_output", "output": "FILE CONTENTS THAT MUST NOT BE STORED"}),
+        item({"type": "function_call", "name": "apply_patch",
+              "arguments": json.dumps({"input": "*** Begin Patch\n*** Update File: tests/test_calc.py\n*** End Patch"})}),
+        item({"type": "message", "role": "assistant", "content": [{"type": "output_text",
+             "text": "Changed add() in calc.py to return a + b, keeping the signature."}]}),
+        json.dumps({"type": "event_msg", "payload": {"type": "token_count"}}),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_read_codex_rollout(tmp_path):
+    cwd = str(tmp_path / "calc-app")
+    conv, supplied = read_transcript(str(_codex_rollout(tmp_path / "rollout.jsonl", cwd)), cwd)
+    text = json.dumps(conv)
+    assert [m["role"] for m in conv] == ["user", "assistant"]
+    assert "CALC-9" in text and "callers depend on it" in text and "Lena" in text and "a + b" in text
+    for leaked in ("SECRET SYSTEM PROMPT", "environment_context", "FILE CONTENTS"):
+        assert leaked not in text
+    assert supplied["files"] == ["calc.py", "tests/test_calc.py"]
+
+
+def test_codex_save_then_claude_session_start(tmp_path, monkeypatch):
+    """Work saved by Codex's hooks is resumed by Claude Code's, in the same project."""
+    cwd = tmp_path / "calc-app"
+    cwd.mkdir()
+    rollout = _codex_rollout(tmp_path / "rollout.jsonl", str(cwd))
+    monkeypatch.setenv("COGNICORE_DATA_DIR", str(tmp_path / "mem"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"session_id": "c-1", "transcript_path": str(rollout), "cwd": str(cwd), "hook_event_name": "Stop"})))
+    assert hooks.main(["save", "--agent", "codex"]) == 0
+    out = json.loads(_run("session-start", {"cwd": str(cwd), "source": "startup"}, monkeypatch, tmp_path / "mem"))
+    brief = out["hookSpecificOutput"]["additionalContext"]
+    assert "CALC-9" in brief and "Lena" in brief and "by codex" in brief and "sk-test-FAKE" not in brief
+    assert _run("session-start", {"cwd": str(cwd), "source": "resume"}, monkeypatch, tmp_path / "mem") == ""
+
+
+def test_setup_codex_hooks_merges_and_removes(tmp_path):
+    from cognicore.agent_setup import setup_codex, setup_codex_hooks
+
+    target = tmp_path / "hooks.json"
+    mine = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify-send done"}]}]}}
+    target.write_text(json.dumps(mine), encoding="utf-8")
+
+    assert "/hooks" in setup_codex_hooks(str(tmp_path), python="C:/py/python.exe")
+    setup_codex_hooks(str(tmp_path), python="C:/py/python.exe")  # re-run replaces, no duplicates
+    doc = json.loads(target.read_text(encoding="utf-8"))
+    commands = [h["command"] for groups in doc["hooks"].values() for g in groups for h in g["hooks"]]
+    assert "notify-send done" in commands
+    assert sorted(c for c in commands if "cognicore.hooks" in c) == sorted([
+        '"C:/py/python.exe" -m cognicore.hooks session-start --agent codex',
+        '"C:/py/python.exe" -m cognicore.hooks save --agent codex',
+        '"C:/py/python.exe" -m cognicore.hooks save --agent codex',
+    ])
+    assert "SessionEnd" not in doc["hooks"]  # Codex gives SessionEnd 1-3 s: too short to save
+
+    assert "Removed" in setup_codex(str(tmp_path), remove=True)
+    assert json.loads(target.read_text(encoding="utf-8")) == mine
+    assert "nothing to remove" in setup_codex_hooks(str(tmp_path), remove=True)

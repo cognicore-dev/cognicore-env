@@ -153,7 +153,7 @@ def cmd_setup(args):
     """Add the CogniCore memory rule to an agent's instructions."""
     from cognicore.agent_setup import setup_codex
 
-    print(setup_codex(args.codex_home, remove=args.remove))
+    print(setup_codex(args.codex_home, remove=args.remove, hooks=not args.no_hooks))
 
 
 def cmd_mcp(args):
@@ -435,7 +435,8 @@ def main():
 
     setup_cmd = sub.add_parser("setup", help="Teach an agent without CogniCore hooks to use memory")
     setup_cmd.add_argument("agent", choices=["codex"])
-    setup_cmd.add_argument("--remove", action="store_true", help="Remove the CogniCore rule again")
+    setup_cmd.add_argument("--remove", action="store_true", help="Remove CogniCore's hooks and rule again")
+    setup_cmd.add_argument("--no-hooks", action="store_true", help="Only add the AGENTS.md rule")
     setup_cmd.add_argument("--codex-home", help="Codex home (default: $CODEX_HOME or ~/.codex)")
 
     args = p.parse_args()
