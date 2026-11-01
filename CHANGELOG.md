@@ -30,6 +30,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Security:** on the hosted server, one user could buy or receive another user's memories through the marketplace and sharing tools. `cognicore_purchase_memory` now requires the seller to have listed their memories, and `cognicore_share_experience` refuses to write into another account. (#161)
 - **Security:** removed hardcoded credentials and runtime artifacts from the repository.
 - Fabric tools on the hosted server called an undefined function and failed on every call.
+- **Security:** the ChatGPT connector no longer falls back to a hardcoded Supabase project URL. The project it named has since been deleted, so a deployment that did not set `SUPABASE_URL` pointed its OAuth metadata, sign-in redirect and token exchange at a dead host instead of failing. `SUPABASE_URL` is now required and read at request time.
+- Hosted tool descriptions no longer tell the model when to call a tool or name other tools, which the Claude connector directory rejects and which is a prompt-injection surface, because clients pass these strings straight to the model.
 - `import_bundle` in the mem0 bridge now flushes the quarantine backend, so quarantined entries are not lost. (#151)
 - `cognicore.integrations.elevenlabs` imports again after the module moved to `cognicore.fabric.plugins.elevenlabs`. (#113)
 - Undefined names in type hints in `decision/logging.py`, `fabric/engine.py` and `realbench/coding_bench.py`.

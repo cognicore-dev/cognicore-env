@@ -60,7 +60,21 @@ app.mount("/mcp", mcp.sse_app())
 def health_check():
     return {"status": "ok", "service": "cognicore-chatgpt-mcp"}
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://vtebftsovlncmyfxheko.supabase.co").rstrip("/")
+def _supabase_url() -> str:
+    """The Supabase project this connector delegates sign-in to.
+
+    Read at call time, with no default: a hardcoded fallback silently pointed
+    every deployment at one project, which no longer exists. ``supabase_auth``
+    reads the same variable for JWKS.
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    if not url:
+        raise HTTPException(
+            status_code=503,
+            detail="SUPABASE_URL is not set; this server cannot complete OAuth sign-in.",
+        )
+    return url
+
 
 @app.get("/.well-known/oauth-authorization-server")
 @app.get("/.well-known/openid-configuration")
@@ -69,12 +83,13 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://vtebftsovlncmyfxheko.supa
 def oauth_metadata(request: Request = None):
     """OAuth 2.0 Authorization Server Metadata (RFC 8414 / OpenID Connect) for MCP client discovery."""
     base = str(request.base_url).rstrip("/") if request else ""
+    supabase = _supabase_url()
     return {
-        "issuer": base or f"{SUPABASE_URL}/auth/v1",
+        "issuer": base or f"{supabase}/auth/v1",
         "authorization_endpoint": f"{base}/authorize",
         "token_endpoint": f"{base}/token",
         "registration_endpoint": f"{base}/register",
-        "jwks_uri": f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+        "jwks_uri": f"{supabase}/auth/v1/.well-known/jwks.json",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
@@ -88,7 +103,7 @@ async def authorize_redirect(request: Request):
     """Redirect OAuth authorize requests to Supabase, passing through all query params."""
     from fastapi.responses import RedirectResponse
     query_string = str(request.query_params)
-    target_url = f"{SUPABASE_URL}/auth/v1/oauth/authorize?{query_string}"
+    target_url = f"{_supabase_url()}/auth/v1/oauth/authorize?{query_string}"
     return RedirectResponse(
         url=target_url,
         status_code=302,
@@ -104,7 +119,7 @@ async def token_proxy(request: Request):
     headers = {"Content-Type": content_type}
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{SUPABASE_URL}/auth/v1/oauth/token",
+            f"{_supabase_url()}/auth/v1/oauth/token",
             content=body,
             headers=headers,
         )
