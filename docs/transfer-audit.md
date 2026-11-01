@@ -436,3 +436,53 @@ now keep the project's goal, rather than taking "continue where we left off" as 
 - **Unverified end-to-end:** CogniCore's Codex hooks have not been run by Codex itself after a
   trust step in this test.
 - **Untested here:** claude-mem's Codex path.
+
+## Head-to-head with claude-mem on current versions (2026-11-01)
+
+Both systems were rerun on the same versions: Claude Code 2.1.316 (Sonnet), Codex CLI 0.164,
+claude-mem 15.7.0, and CogniCore at this branch's tip. The tasks, scoring and isolation are as
+above. Every result has zero transcript reads in session 2. One claude-mem run that had read a
+parallel run's transcript was discarded and rerun alone.
+
+- **Claude Code → Codex:** both systems' Codex hooks were simulated the same way. The harness ran
+  each system's own Codex SessionStart command (`python -m cognicore.hooks session-start --agent
+  codex`, and claude-mem's `worker-service.cjs hook codex context` from its `codex-hooks.json`)
+  and passed the output to Codex as developer context. Codex had each system's MCP tools.
+- **Why simulated:** Codex runs hooks only after a person trusts them, and auto mode blocks the
+  bypass flag.
+
+| | Claude→Claude CogniCore | Claude→Claude claude-mem | Claude→Codex CogniCore | Claude→Codex claude-mem |
+|---|---|---|---|---|
+| Questions (scorer) | **24 / 24** | 23 / 24 ¹ | 23 / 24 ² | **24 / 24** |
+| Facts only in conversation | **17 / 17** | 16 / 17 ¹ | 16 / 17 ² | **17 / 17** |
+| Follow-ups done | **3 / 3** | **3 / 3** | **3 / 3** | **3 / 3** |
+| New tokens (not from cache) | **52,609** | 102,766 | **60,310** | 86,252 |
+| + claude-mem background model tokens | 0 | +113,122 | 0 | +60,268 |
+| **New tokens, total** | **52,609** | 215,888 (4.1×) | **60,310** | 146,520 (2.4×) |
+| Total input incl. cache | **0.87M** | 1.37M | **0.69M** | 1.24M |
+| Output tokens | **8,460** | 10,954 | **6,188** | 9,256 |
+| Claude cost (API-price equivalent) ³ | **$0.378** | $0.649 + bg | **$0.161** | $0.253 + bg |
+| Agent turns | **30** | 43 | **19** | 21 |
+| Session time | **151 s** | 215 s | **127 s** | 270 s |
+| Memory ready after session 1 | **~1 s** | 70–80 s | **~1 s** | 80–130 s |
+| Brief size at session start | 380–510 tok | – | **380–510 tok** | 1,050–1,110 tok |
+
+¹ claude-mem's one "miss" was a correct answer in other words ("the request itself is wrong"),
+so the substring scorer was too strict. Its true score is 24/24 and 17/17.
+² CogniCore's one miss was a real miss: Codex gave float rounding as the reason instead of
+"finance requires commercial rounding".
+³ Claude sessions only. The Codex session's cost is not reported by `codex exec`; its tokens are
+included in the token rows.
+
+**Result:** the two systems are on par on accuracy and follow-through in both scenarios. CogniCore
+uses 2.4–4.1× fewer new tokens counting claude-mem's background summarizing, 37–45% less total
+input and 23–33% less output. Its memory is ready about a minute or more sooner, and its injected
+brief is less than half the size.
+
+**Remaining differences:**
+- **claude-mem captures more in the background.** It observes every tool call, at the token cost
+  above. This is likely an advantage on long, messy sessions, which this small benchmark does not
+  cover.
+- **Not verified end-to-end:** neither system's Codex hooks were run by Codex itself; both need
+  `/hooks` trust once.
+- **Small sample:** three tasks, one run each.
