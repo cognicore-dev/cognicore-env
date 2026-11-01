@@ -79,9 +79,15 @@ _FILE_EXT = (r"(?:py|pyi|ts|tsx|js|jsx|mjs|cjs|sql|prisma|json|ya?ml|toml|ini|cf
 # (kind, pattern) — earlier patterns claim their span first.
 _VALUE_PATTERNS: List[Tuple[str, re.Pattern]] = [
     ("redacted", re.compile(r"\[REDACTED:[a-z_]+\]")),
-    ("url", re.compile(r"\bhttps?://[^\s<>\"')\]]+[^\s<>\"')\].,;:!?]")),
+    ("url", re.compile(r"\b(?:https?|s3|gs|wss?|ftp|ssh|git|file|postgres(?:ql)?|mysql|redis|mongodb)://"
+                       r"[^\s<>\"')\]]+[^\s<>\"')\].,;:!?]")),
     ("money", re.compile(r"[$€£¥₹]\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:k|m|bn|million|billion))?(?:/\w+)?")),
-    ("path", re.compile(r"(?<![\w@])(?:\.{0,2}/)?(?:[\w.\-]+/)+[\w.\-]*[\w\-]")),
+    # A path starts at a root (/, ./, ../, ~/), has 2+ slashes, or ends in a file extension.
+    # Prose like "Decimal/ROUND_HALF_UP" or "staging/reviewer" is not a path.
+    ("path", re.compile(
+        r"(?<![\w@])(?:(?:\.{1,2}|~)?/(?:[\w.\-]+/)*[\w.\-]*[\w\-]"
+        r"|(?:[\w.\-]+/){2,}[\w.\-]*[\w\-]"
+        r"|(?:[\w.\-]+/)+[\w\-]+(?:\.[\w\-]+)*\.[A-Za-z0-9]{1,8}\b)")),
     ("file", re.compile(rf"\b[\w\-]+(?:\.[\w\-]+)*\.{_FILE_EXT}\b")),
     ("domain", re.compile(
         r"\b(?:[a-z0-9-]+\.)+(?:com|dev|io|ai|org|net|app|co|sh|xyz|cloud|tech|so|me|us|uk|in)\b", re.I)),

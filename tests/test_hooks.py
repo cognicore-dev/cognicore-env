@@ -204,3 +204,18 @@ def test_setup_codex_hooks_merges_and_removes(tmp_path):
     assert "Removed" in setup_codex(str(tmp_path), remove=True)
     assert json.loads(target.read_text(encoding="utf-8")) == mine
     assert "nothing to remove" in setup_codex_hooks(str(tmp_path), remove=True)
+
+
+def test_codex_agents_md_injection_is_not_saved(tmp_path):
+    rollout = tmp_path / "r.jsonl"
+    msg = ("# AGENTS.md instructions\n\n<INSTRUCTIONS>\n<!-- cognicore:begin -->\r\n## CogniCore memory\r\nrule text"
+           "\r\n<!-- cognicore:end -->\n</INSTRUCTIONS>")
+    rollout.write_text("\n".join([
+        json.dumps({"type": "session_meta", "payload": {"cwd": str(tmp_path)}}),
+        json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user",
+                    "content": [{"type": "input_text", "text": msg}]}}),
+        json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user",
+                    "content": [{"type": "input_text", "text": "Fix the INC-7781 retries."}]}}),
+    ]), encoding="utf-8")
+    conv, _ = read_transcript(str(rollout), str(tmp_path))
+    assert conv == [{"role": "user", "content": "Fix the INC-7781 retries."}]

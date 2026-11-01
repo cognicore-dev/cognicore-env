@@ -134,7 +134,9 @@ MEMORY_INSTRUCTIONS = (
     "cognicore_resume_session with a short query describing the task. It returns the previous "
     "session's goal, state, open tasks, decisions and exact values. Before you finish, call "
     "cognicore_save_session with handoff_json (goal, current_state, decisions with why, "
-    "open_tasks, key_facts, files), keeping ids, versions, names and numbers verbatim."
+    "open_tasks, key_facts, files), keeping ids, versions, names and numbers verbatim. "
+    "If a brief starting \"=== COGNICORE CONTEXT RESUME ===\" is already in your context, "
+    "CogniCore's hooks are active: they resume and save automatically, so skip both calls."
 )
 
 

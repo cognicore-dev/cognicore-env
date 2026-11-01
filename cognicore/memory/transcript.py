@@ -112,7 +112,7 @@ def _read_claude(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str
 # Codex session logs ("rollouts"): one {"type", "payload"} object per line.
 _CODEX_INJECTED = [
     re.compile(r"<(environment_context|user_instructions|INSTRUCTIONS|skills_instructions)>.*?</\1>", re.S),
-    re.compile(r"^# AGENTS\.md instructions for .*?(?=\n\n[^<\s]|\Z)", re.S),
+    re.compile(r"^#\s*AGENTS\.md instructions\b[^\n]*", re.M),  # heading of Codex's AGENTS.md injection
 ]
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$", re.M)
 _SHELL_WRITE = re.compile(r"(?:Set-Content|Add-Content|Out-File|New-Item)\b[^\n]*?-(?:Path|FilePath)\s+['\"]?([^'\";\s)]+)", re.I)

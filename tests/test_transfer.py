@@ -454,3 +454,17 @@ def test_compress_redacts_secrets(backend):
     conv = [{"role": "user", "content": "Deploy key is sk-test-FAKE0000000000000000000000 for 3 envs."}]
     data = json.loads(compress_context(backend, conv, keep_last_n=0))
     assert "sk-test-FAKE" not in data["summary"] and data["redactions"] == 1
+
+
+@pytest.mark.parametrize("text,paths", [
+    ("Edit /api/v2/orders and auth/tokens.py", ["/api/v2/orders", "auth/tokens.py"]),
+    ("e2e/checkout.spec.ts and ./run.sh", ["e2e/checkout.spec.ts", "./run.sh"]),
+    ("Decimal/ROUND_HALF_UP, staging/reviewer", []),  # prose, not paths
+])
+def test_path_detection(text, paths):
+    assert [v["value"] for v in extract_exact_values(text) if v["kind"] == "path"] == paths
+
+
+def test_urls_with_any_common_scheme():
+    vals = {v["value"] for v in extract_exact_values("Resume from s3://ml-ckpt/r-0917/step-11000 via https://a.io/x.")}
+    assert {"s3://ml-ckpt/r-0917/step-11000", "https://a.io/x"} <= vals
