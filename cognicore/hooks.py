@@ -71,14 +71,28 @@ def save(event: dict, agent: str = "claude-code") -> str:
     transcript, cwd = event.get("transcript_path"), event.get("cwd") or ""
     if not transcript or not Path(transcript).is_file():
         return ""
-    from cognicore.memory.context_preservation import save_session
+    from cognicore.memory.context_preservation import project_key, save_session
+    from cognicore.memory.handoff import stated_goal
     from cognicore.memory.transcript import read_transcript
 
     conversation, supplied = read_transcript(transcript, cwd)
     if not conversation and not supplied:
         return ""
+    backend = _backend()
+    goal = ""
+    if cwd and not supplied.get("goal") and not stated_goal(conversation):
+        # A continuation session: keep the project's goal rather than promoting
+        # "continue where we left off" to goal. This session's own row is skipped.
+        with backend._get_conn() as conn:
+            row = conn.execute(
+                "SELECT handoff_json FROM sessions WHERE project = ? AND (external_id IS NULL OR external_id != ?) "
+                "AND handoff_json IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
+                (project_key(cwd), f"{agent}:{event.get('session_id', '')}"),
+            ).fetchone()
+        if row:
+            goal = json.loads(row[0]).get("goal", "")
     save_session(
-        _backend(), conversation,
+        backend, conversation, goal=goal,
         session_name=Path(cwd).name if cwd else "",
         agent=agent, client=f"{agent}-hooks",
         supplied_handoff=supplied or None,

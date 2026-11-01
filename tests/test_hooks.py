@@ -219,3 +219,35 @@ def test_codex_agents_md_injection_is_not_saved(tmp_path):
     ]), encoding="utf-8")
     conv, _ = read_transcript(str(rollout), str(tmp_path))
     assert conv == [{"role": "user", "content": "Fix the INC-7781 retries."}]
+
+
+def test_continuation_session_keeps_the_project_goal(tmp_path, monkeypatch):
+    """Claude saves the task; a later Codex session that only says "continue" keeps that goal."""
+    cwd = tmp_path / "billing-app"
+    cwd.mkdir()
+    first = _write_transcript(tmp_path / "t1.jsonl", str(cwd))
+    _run("save", {"session_id": "s-1", "transcript_path": str(first), "cwd": str(cwd)}, monkeypatch, tmp_path / "mem")
+
+    rollout = tmp_path / "r.jsonl"
+    rollout.write_text("\n".join(json.dumps(x) for x in [
+        {"type": "session_meta", "payload": {"cwd": str(cwd)}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text",
+         "text": "Continue where the previous session left off. Don't ask me questions."}]}},
+        {"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text",
+         "text": "format_eur now returns '12,34 €' and its test passes."}]}},
+    ]), encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
+        {"session_id": "c-2", "transcript_path": str(rollout), "cwd": str(cwd)})))
+    hooks.main(["save", "--agent", "codex"])
+
+    conn = sqlite3.connect(tmp_path / "mem" / "mcp_memories.db")
+    goals = dict(conn.execute("SELECT agent, json_extract(handoff_json, '$.goal') FROM sessions").fetchall())
+    assert "BILL-311" in goals["claude-code"]
+    assert goals["codex"] == goals["claude-code"]
+
+
+def test_stated_goal():
+    from cognicore.memory.handoff import stated_goal
+
+    assert stated_goal([{"role": "user", "content": "Continue where we left off."}]) == ""
+    assert "migrating" in stated_goal([{"role": "user", "content": "We are migrating users to Postgres 16."}])

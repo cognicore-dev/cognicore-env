@@ -403,3 +403,36 @@ ran in Codex CLI 0.164 (`codex exec`, its default model). For isolation:
    this automated test did not do. Its Codex installer also edited the user's real
    `~/.codex/config.toml` (it enabled hooks and the claude-mem plugin) even when `CODEX_HOME`
    pointed elsewhere. The file was restored from a backup.
+
+### Update: Codex hooks (2026-11-01)
+
+`cognicore setup codex` now also installs Codex hooks:
+- **SessionStart:** injects the project brief, using the same `hookSpecificOutput.additionalContext`
+  output Codex accepts.
+- **Stop and PreCompact:** save the session from Codex's own session log.
+  `cognicore.memory.transcript` reads Codex logs as well as Claude Code transcripts.
+
+Codex runs a hook only after a person trusts it once via `/hooks`, and automation can't do that
+step. So for this test, the harness ran CogniCore's real hooks exactly where Codex would:
+- **Session-start hook:** its output was passed as Codex developer context (`-c developer_instructions=…`).
+- **Save hook:** run on Codex's session log afterwards.
+- **Same Codex setup as before:** MCP server plus the AGENTS.md rule.
+
+| Claude Code → Codex | Questions | Facts only in conversation | Follow-ups | Codex input tokens | Memory tool calls |
+|---|---|---|---|---|---|
+| Tools only | 7 / 24 | 1 / 17 | 0 / 3 | 258k | 0 |
+| + AGENTS.md rule | 18 / 24 | 11 / 17 | 2 / 3 | 371k | 4 |
+| + hooks | 24 / 24 | 17 / 17 | 3 / 3 | 483k | 6 (brief and rule both acted on) |
+| **+ hooks, rule skips when the brief is present** | **23 / 24** | **16 / 17** | **3 / 3** | **258k** | **1** |
+
+With hooks, CogniCore in Codex matches its Claude Code result: every follow-up was done, and the
+one miss was a differently worded "why" answer. Codex's own work was saved by the Stop hook, so
+a Codex → Claude Code handoff uses the same path. Continuation sessions that never restate the task
+now keep the project's goal, rather than taking "continue where we left off" as the goal.
+
+**Still not equal to claude-mem:**
+- **Trust step:** Codex users must trust CogniCore's hooks once, with `/hooks`. claude-mem's hooks
+  need the same step.
+- **Unverified end-to-end:** CogniCore's Codex hooks have not been run by Codex itself after a
+  trust step in this test.
+- **Untested here:** claude-mem's Codex path.

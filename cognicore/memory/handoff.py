@@ -181,6 +181,24 @@ def is_chatter(sentence: str) -> bool:
     return bool(_STALLING.search(s))
 
 
+def stated_goal(conversation: List[Any]) -> str:
+    """The first sentence that states a goal, or "" if the conversation never states one.
+
+    Continuation sessions ("continue where we left off") usually don't restate the
+    task; callers can then carry the project's previous goal forward instead of
+    promoting the first instruction to goal.
+    """
+    for msg in conversation or []:
+        content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
+        if not isinstance(content, str):
+            continue
+        for sent in extract_sentences(re.sub(r"```[\s\S]*?```", " ", content)):
+            s = clean_statement(sent)
+            if s and not s.endswith("?") and not is_chatter(s) and _GOAL.search(s):
+                return s
+    return ""
+
+
 def _split_why(sentence: str) -> Tuple[str, str]:
     m = _WHY.search(sentence)
     if not m:
