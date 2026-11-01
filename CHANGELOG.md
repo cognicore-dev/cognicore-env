@@ -9,7 +9,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.11.0] — 2026-10-30
+## [0.11.0] — 2026-11-01
 
 ### Added
 - **Hosted MCP server** (`cognicore.connectors.remote`), running at `https://mcp.cognicoree.tech/mcp/stream` (Streamable HTTP) and `/mcp/sse`. Each signed-in user gets their own SQLite memory store.
