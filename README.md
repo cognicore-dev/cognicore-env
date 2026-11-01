@@ -199,6 +199,9 @@ Cowork) and sign in with GitHub. The server is its own OAuth 2.1 authorization s
 GitHub account gets its own memory database — see
 [`docs/remote-mcp-server.md`](docs/remote-mcp-server.md).
 
+All 31 tools are listed in [`docs/mcp-tools.md`](docs/mcp-tools.md), which states for each one
+whether it reads your data, changes it, or calls a third-party service.
+
 ### Claude plugin
 
 A Claude plugin that gives Claude persistent memory across conversations — see
@@ -311,7 +314,7 @@ The module-by-module map is in [CONTRIBUTING.md](CONTRIBUTING.md#module-map).
 
 ## Links
 
-- **Website:** https://cognicore-frontend.vercel.app
+- **Website:** https://www.cognicoree.tech
 - **PyPI:** https://pypi.org/project/cognicore-env/
 - **Demo video:** https://github.com/cognicore-dev/cognicore-env/releases/download/demo-video/cognicore-demo.mp4
 - **LinkedIn:** https://www.linkedin.com/company/135163927/
