@@ -1,38 +1,49 @@
-# CogniCore ChatGPT App Deployment Guide
+# Deploying CogniCore
 
-This page covers the **ChatGPT** connector (`cognicore.connectors.chatgpt`), which signs users
-in through Supabase. The Claude connector is a different server with its own sign-in and its
-own deployment: see [remote-mcp-server.md](remote-mcp-server.md).
+CogniCore has one deployed server: the hosted MCP server in
+`cognicore/connectors/remote.py`, running at `https://mcp.cognicoree.tech`.
+**Claude and ChatGPT both connect to it**, through the same OAuth 2.1 sign-in.
 
-## 1. Local Architecture (Development)
-During local development, the architecture consists of the FastAPI server running natively (or via Docker) mapping tenant data to a local `.cognicore/` folder.
+For how to deploy it — the host setup, environment variables, Docker Compose,
+TLS and the GitHub OAuth app — see
+[remote-mcp-server.md](remote-mcp-server.md). This page covers only the shape
+of the deployment and the pieces that are *not* part of it.
 
-```mermaid
-graph TD
-    A[ChatGPT OAuth] -->|Bearer Token| B(FastAPI / FastMCP Server)
-    B --> C{SQLiteMemoryBackend}
-    C -->|memory_userA.db| D[~/.cognicore/chatgpt/]
-    C -->|memory_userB.db| D
-```
-
-## 2. Production Architecture (Cloud Deployment)
-For production deployment, the App must be hosted behind a public HTTPS endpoint with a persistent volume attached to prevent data loss when the stateless container restarts.
+## Architecture
 
 ```mermaid
 graph TD
-    A[ChatGPT Clients] -->|HTTPS SSE / POST| B[Cloud Load Balancer / SSL Termination]
-    B --> C(Docker Container: FastAPI/MCP)
-    C --> D{Persistent Block Volume}
-    D -->|/data/cognicore/memory_userA.db| E[(User A SQLite)]
-    D -->|/data/cognicore/memory_userB.db| F[(User B SQLite)]
+    A[Claude / ChatGPT / any MCP client] -->|HTTPS| B[Caddy: TLS, X-Real-IP]
+    B --> C[uvicorn: cognicore.connectors.remote]
+    C --> D{Per-user SQLite}
+    D -->|memory_sha256-of-github-id.db| E[(Persistent volume at /data)]
 ```
 
-### Environment Variables Required
-* `SUPABASE_URL`: **Required.** The URL of your own Supabase project, e.g.
-  `https://<project>.supabase.co`. It is used for JWKS fetching and to proxy the OAuth
-  authorize and token endpoints. There is no default: without it those endpoints return
-  `503`, rather than silently pointing at someone else's project.
-* `COGNICORE_DATA_DIR`: Must be set to `/data/cognicore` (or wherever your persistent volume is mounted).
+Each signed-in account gets its own database file, named with a one-way hash of
+its account ID, so one user's tools cannot reach another user's data.
 
-### Health Checks
-The container exposes `GET /health` which returns `200 OK {"status": "ok"}` for load balancer readiness probes.
+## What the deployment needs
+
+| Requirement | Why |
+|---|---|
+| A persistent volume at `/data` | SQLite databases live in `$COGNICORE_DATA_DIR`; a stateless container loses every memory on restart |
+| A local filesystem for that volume | SQLite locking is unreliable on SMB and NFS |
+| HTTPS with a real certificate | MCP clients refuse plain HTTP, and OAuth redirects must match `COGNICORE_PUBLIC_URL` |
+| `GET /health` reachable | Returns `{"status":"ok","version":"1.0"}` for readiness probes |
+
+Everything host-specific lives in `deploy/.env` and DNS, so the same compose
+file runs on any Linux host with Docker.
+
+## Not deployed
+
+Two other entry points exist in the repository. Neither is part of the hosted
+service, and neither is required to run it:
+
+- **`cognicore/connectors/chatgpt.py`** — an earlier ChatGPT connector that
+  delegated sign-in to Supabase. It is not served anywhere: ChatGPT now
+  connects to `remote.py` like every other client. It needs `SUPABASE_URL` set
+  to a Supabase project of your own, and returns `503` from its OAuth
+  endpoints without one. Kept for the import path only.
+- **`cognicore/extension/server.py`** — the local stdio MCP server, which runs
+  on the user's own machine rather than on a server. See
+  [claude-desktop-extension.md](claude-desktop-extension.md).

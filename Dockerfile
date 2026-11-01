@@ -32,5 +32,6 @@ USER 10001
 
 EXPOSE 8000
 
-# MCP requires stdout for stdio transport, but we use SSE so standard uvicorn logging is fine
-CMD ["uvicorn", "cognicore.connectors.chatgpt:app", "--host", "0.0.0.0", "--port", "8000"]
+# The hosted server: Streamable HTTP at /mcp/stream, SSE at /mcp/sse, so standard
+# uvicorn logging is fine. deploy/docker-compose.yml passes the proxy flags on top.
+CMD ["uvicorn", "cognicore.connectors.remote:app", "--host", "0.0.0.0", "--port", "8000"]
