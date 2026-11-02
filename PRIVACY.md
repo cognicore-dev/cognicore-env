@@ -41,7 +41,7 @@ We do not sell your data, use it for advertising, or use it to train AI models.
 
 ## Where it is stored, and who can see it
 
-Your memories are kept in a separate database for your account, named with a one-way hash of your account ID. Other users cannot read it. The service runs on servers operated by our hosting provider (currently Railway), so your data may be stored and processed outside your country, including in the United States.
+Your memories are kept in a separate database for your account, named with a one-way hash of your account ID. Other users cannot read it. The service runs on servers operated by our hosting provider (currently Microsoft Azure, in South Korea), so your data may be stored and processed outside your country.
 
 ## Sharing
 
@@ -51,7 +51,7 @@ We share data only in these cases:
 - **The AI app you use.** Results of the tools you call are returned to the app you connected (such as Claude or ChatGPT), and that app's own privacy policy applies to them.
 - **Services that run CogniCore:**
   - GitHub, for sign-in
-  - our hosting provider (currently Railway), which stores the data and runs the server
+  - our hosting provider (currently Microsoft Azure), which stores the data and runs the server
   - Cloudflare, which provides the domain name service for `cognicoree.tech`
 - **Figma, when you ask.** If you sync a Figma file, the Figma access token you provide is sent to Figma for that request only. We do not store it.
 - **When required by law**, or to protect the service and its users from abuse.
@@ -59,6 +59,7 @@ We share data only in these cases:
 ## How long we keep it
 
 - **Your memories:** until you delete them or ask us to delete your data.
+- **Backups:** we copy the stored databases to our hosting provider's storage nightly, so the service can be restored after a failure, and each backup is deleted automatically after 30 days. Our storage provider can keep a deleted backup for up to 7 more days, so a memory you delete is gone from the live service immediately and from all backups within about 40 days.
 - **Sign-in tokens:** expire automatically; access tokens after 1 hour, refresh tokens after 30 days.
 - **Server logs:** kept by our hosting provider for a limited period, then deleted.
 

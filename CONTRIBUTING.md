@@ -158,7 +158,9 @@ in [`cognicore/_compat.py`](cognicore/_compat.py), which lists every move. Use t
 | `content_studio/` | Content Studio app |
 | `env/`, `server/`, `openenv.yaml`, `inference.py`, `dashboard.html` | The OpenEnv AI Safety Monitor environment. These stay at the root because the OpenEnv format expects them there. |
 | `api/`, `public/` | Vercel deployment (serverless function and static page) |
-| `Dockerfile`, `railway.toml`, `render.yaml`, `fly.toml`, `Procfile` | Deployment configs for the hosted connectors |
+| `deploy/` | How the hosted server actually runs: Docker Compose, the Caddy reverse proxy, host setup and the backup script (see `docs/remote-mcp-server.md`) |
+| `Dockerfile` | Image for the hosted server (`cognicore.connectors.remote`), used by `deploy/docker-compose.yml` |
+| `railway.toml`, `render.yaml`, `fly.toml`, `Procfile` | Configs kept for platforms that build from the `Dockerfile` |
 
 Generated output (`results/`, `benchmark_output/`, `experiments/`, `cognicore_data/`) is git-ignored.
 
