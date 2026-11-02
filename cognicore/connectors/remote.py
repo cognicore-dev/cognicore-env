@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import os
 import hashlib
 from pathlib import Path
@@ -438,7 +438,7 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
 
 
 @_tool("Delete a memory", _DELETE)
-def cognicore_forget(entry_id: Any, ctx: Context, conversation: Optional[list] = None) -> str:
+def cognicore_forget(entry_id: Union[int, str], ctx: Context, conversation: Optional[list] = None) -> str:
     """Delete a memory by ID."""
     backend = get_backend(ctx)
     success = backend.delete(str(entry_id))
@@ -767,10 +767,18 @@ def cognicore_fabric_sync_figma(
     fabric = get_fabric(backend)
     register_all_plugins(fabric)
     
+    token = token or os.environ.get("FIGMA_ACCESS_TOKEN", "")
+    if not token:
+        result = {"success": False, "error": "provide token or set FIGMA_ACCESS_TOKEN env var."}
+        return apply_auto_compression(ctx, conversation, json.dumps(result, indent=2))
+
     try:
         figma = fabric.connect("figma")
-        success = figma.sync_file(file_key, token)
-        result = {"success": success, "message": f"Successfully pulled design semantics for {file_key}"}
+        synced = figma.sync(file_key=file_key, access_token=token)
+        if synced.get("status") == "success":
+            result = {"success": True, "message": synced.get("message", f"Synced {file_key}")}
+        else:
+            result = {"success": False, "error": synced.get("message", "Figma sync failed")}
     except Exception as e:
         result = {"success": False, "error": str(e)}
         
@@ -797,9 +805,9 @@ def cognicore_elevenlabs_sync(
     conversation: Optional[list] = None,
 ) -> str:
     """Store ElevenLabs voice preferences, settings, and usage context.
-    Call this when the user specifies voice preferences, or after generating audio.
-    Stores voice_id, stability, similarity_boost, speed, content_type, audience, tone.
-    Also stores custom pronunciation overrides as a JSON dict string.
+
+    Stores voice_id, stability, similarity_boost, speed, content_type, audience
+    and tone, plus custom pronunciation overrides given as a JSON dict string.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -845,11 +853,11 @@ def cognicore_elevenlabs_recall(
     include_advanced: bool = False,
     conversation: Optional[list] = None,
 ) -> str:
-    """Retrieve stored ElevenLabs preferences as ready-to-use API parameters.
-    Call this before generating any ElevenLabs audio.
+    """Return stored ElevenLabs preferences as ready-to-use API parameters.
+
     Returns voice_id, voice_settings (stability, similarity_boost, style, speed),
-    model_id, content_context (type, audience, tone), and optionally usage patterns.
-    The returned voice_settings can be passed directly to the ElevenLabs API.
+    model_id, content_context (type, audience, tone), and optionally usage
+    patterns. The voice_settings fields match the ElevenLabs API parameters.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -882,11 +890,11 @@ def cognicore_elevenlabs_learn(
     audio_length_sec: float = 0.0,
     conversation: Optional[list] = None,
 ) -> str:
-    """Record an ElevenLabs generation so CogniCore learns from it over time.
-    Call this after every audio generation. Returns a generation_id to use
-    with cognicore_elevenlabs_feedback when audience feedback comes in.
-    Over time, this powers cognicore_elevenlabs_recommend to automatically
-    pick the best voice and settings.
+    """Record an ElevenLabs generation and the settings it used.
+
+    Returns a generation_id that identifies this generation when audience
+    feedback is recorded later. Stored generations inform later voice and
+    settings recommendations.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -914,11 +922,11 @@ def cognicore_elevenlabs_feedback(
     audience_feedback: str = "",
     conversation: Optional[list] = None,
 ) -> str:
-    """Record feedback for a previous ElevenLabs generation.
-    This is how CogniCore learns what works. Pass the generation_id from
-    cognicore_elevenlabs_learn, plus a rating (1-5), engagement percentage,
-    and any audience feedback text. The more feedback you provide, the better
-    cognicore_elevenlabs_recommend becomes.
+    """Record audience feedback for a previously recorded ElevenLabs generation.
+
+    Takes the generation_id of that generation, a rating (1-5), an engagement
+    percentage and any audience feedback text. Recorded feedback informs later
+    voice and settings recommendations.
     """
     backend = get_backend(ctx)
     el = ElevenLabsIntegration(backend)
@@ -1009,7 +1017,7 @@ def cognicore_record_experience(
     conversation: Optional[list] = None,
     os_name: str = "",
 ) -> str:
-    """Record a solved non-trivial problem so other agents can reuse the fix, then verify it with cognicore_verify_experience.
+    """Record a solved non-trivial problem so other agents can reuse the fix.
 
     attempts_json: [{"approach","outcome":"success"|"failure","reason"}]. affected_files: comma-separated. dependencies_json: {"pyjwt":"2.8.0"}."""
     manager = _get_experience_manager(ctx)
@@ -1655,11 +1663,10 @@ def cognicore_figma_sync(
     ctx: Context,
     access_token: str = "",
 ) -> str:
-    """Pull design tokens, styles, components, and variables from a real Figma file
+    """Pull design tokens, styles, components, and variables from a Figma file
     and store them in CogniCore memory.
 
-    After syncing, all design data is available via cognicore_figma_recall
-    without needing the token again.
+    The stored design data persists, so reading it later needs no Figma token.
 
     Args:
         file_key: Figma file key from the URL (figma.com/file/<KEY>/...).
@@ -1689,10 +1696,10 @@ def cognicore_figma_sync(
 
 @_tool("Get Figma design tokens", _READ)
 def cognicore_figma_recall(ctx: Context) -> str:
-    """Retrieve all stored Figma design tokens, typography, colors, and variables.
+    """Return all stored Figma design tokens, typography, colors, and variables.
 
-    Works across sessions — no Figma token needed after the first sync.
-    Returns a JSON summary of the design system.
+    The stored design data persists across sessions, so reading it needs no
+    Figma token. Returns a JSON summary of the design system.
     """
     figma, _ = _get_figma_adapters(ctx)
     tokens = figma.recall()
@@ -1717,12 +1724,12 @@ def cognicore_figma_check_component(
     figma_component: str,
     ctx: Context,
 ) -> str:
-    """Check if a Figma component has already been implemented in the codebase.
+    """Report whether a Figma component already has an implementation recorded.
 
-    Call this BEFORE writing any new component. CogniCore will tell you:
-    - REUSE: implementation exists and is verified — use it, don't duplicate
-    - UPDATE: implementation exists but unverified — review before reusing
-    - IMPLEMENT: not found — implement fresh
+    Returns one of:
+    - REUSE: a verified implementation is recorded
+    - UPDATE: an implementation is recorded but unverified
+    - IMPLEMENT: no implementation is recorded
 
     Args:
         figma_component: Figma component name, e.g. "Button/Primary".
@@ -1766,10 +1773,10 @@ def cognicore_figma_record_implementation(
     verified: bool = False,
     test_file: str = "",
 ) -> str:
-    """Record that a Figma component has been implemented.
+    """Record that a Figma component has been implemented in code.
 
-    Call this after successfully implementing a Figma component.
-    CogniCore stores the mapping permanently so future agents can reuse it.
+    Stores the mapping from the Figma component to its implementation so it can
+    be looked up later.
 
     Args:
         figma_component: Figma component name, e.g. "Button/Primary".

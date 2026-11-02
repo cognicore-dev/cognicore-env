@@ -2,7 +2,7 @@
   "name": "cognicore-memory",
   "displayName": "CogniCore Memory",
   "version": "1.0.0",
-  "description": "Give Claude persistent, searchable memory across all your conversations. Store project decisions, preferences, bug fixes, and context — then recall them instantly with BM25 semantic search. Your own self-hosted cloud brain on Railway.",
+  "description": "Give Claude persistent, searchable memory across all your conversations. Store project decisions, preferences, bug fixes, and context — then recall them instantly with BM25 search. Sign in with GitHub; your memories live in a database of your own, and you can self-host the server.",
   "author": {
     "name": "CogniCore",
     "url": "https://github.com/cognicore-dev/cognicore-my-openenv"

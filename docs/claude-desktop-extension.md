@@ -2,6 +2,13 @@
 
 This extension integrates CogniCore's persistent memory capabilities directly into Claude Desktop using the Model Context Protocol (MCP).
 
+> **Local install only.** Anthropic has deprecated desktop-extension listings, and
+> its directory no longer accepts local servers packaged as MCP Bundles (`.mcpb`).
+> This extension still installs and runs locally as described below. To share
+> CogniCore through the directory instead, use the hosted connector
+> ([remote-mcp-server.md](remote-mcp-server.md)) or the Claude Code plugin
+> ([plugins/cognicore-memory](../plugins/cognicore-memory/README.md)).
+
 ## Overview
 
 Claude Desktop sessions are typically ephemeral. When you start a new chat, Claude forgets what you discussed previously.

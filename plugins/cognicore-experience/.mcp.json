@@ -1,6 +1,8 @@
 {
-  "cognicore-experience": {
-    "command": "python",
-    "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/server.py"]
+  "mcpServers": {
+    "cognicore-experience": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/server.py"]
+    }
   }
 }

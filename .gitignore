@@ -68,3 +68,5 @@ scratch_repo/
 # Real-world benchmark work folder (scripts/bench_realworld.py)
 .bench_realworld/
 !docs/launch/kit/cognicore-demo.mp4
+# Deployment secrets (deploy/.env.example is the template)
+deploy/.env

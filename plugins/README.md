@@ -11,8 +11,9 @@ package.
 | [`claude-desktop-extension/`](claude-desktop-extension/) | Claude Desktop | Local-first memory in SQLite, packaged as a Desktop extension | The local stdio server in [`cognicore/extension/server.py`](../cognicore/extension/server.py), built by [`scripts/build_extension.py`](../scripts/build_extension.py) |
 
 The Claude Code marketplace definition is [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)
-at the repository root, where Claude Code looks for it. It currently lists
-`cognicore-memory` only.
+at the repository root, where Claude Code looks for it. It lists `cognicore-memory`
+only; `cognicore-experience` and the Desktop extension are installed from this
+repository rather than from the marketplace.
 
 ## Tests
 

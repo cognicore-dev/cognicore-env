@@ -72,6 +72,18 @@ def _hex(r: float, g: float, b: float) -> str:
     return "#{:02X}{:02X}{:02X}".format(int(r * 255), int(g * 255), int(b * 255))
 
 
+def _sync_error_message(exc: Exception, file_key: str) -> str:
+    """Explain a failed Figma file fetch without echoing the request or the token."""
+    code = getattr(getattr(exc, "response", None), "status_code", None)
+    if code in (401, 403):
+        return f"Figma rejected the access token (HTTP {code}). Check the token and that it can read this file."
+    if code == 404:
+        return f"Figma file '{file_key}' was not found. Check the file key."
+    if code is not None:
+        return f"Figma returned HTTP {code} for this file."
+    return "Could not reach the Figma API."
+
+
 class FigmaAdapter(CognitiveAdapter):
     """Persistent memory + intelligence layer for Figma.
 
@@ -231,8 +243,10 @@ class FigmaAdapter(CognitiveAdapter):
             stored["file"] = 1
             logger.info(f"[Figma] Synced file metadata: {file_name}")
         except Exception as e:
+            # The file is the anchor for every other call, so a bad token or an
+            # unreadable file means nothing can be synced: report it, don't claim success.
             logger.warning(f"[Figma] File fetch failed: {e}")
-            stored["file"] = 0
+            return {"status": "error", "file_key": file_key, "message": _sync_error_message(e, file_key)}
 
         # ── 2. Styles (colors, typography, effects) ───────────────────────────
         if include_styles:

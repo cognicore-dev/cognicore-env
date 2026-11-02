@@ -38,3 +38,20 @@ def test_writing_tools_are_not_marked_read_only():
 def test_tools_calling_external_apis_are_open_world():
     for name in ("cognicore_figma_sync", "cognicore_fabric_sync_figma"):
         assert TOOLS[name].annotations.openWorldHint is True, name
+
+
+def _untyped_params(schema, path=""):
+    """Yield schema paths where a property declares no type, anyOf or $ref."""
+    for key, prop in (schema.get("properties") or {}).items():
+        if not any(k in prop for k in ("type", "anyOf", "oneOf", "allOf", "$ref")):
+            yield f"{path}{key}"
+
+
+def test_every_tool_parameter_declares_a_type():
+    """The directory portal flags a parameter with no type ("Add a type to this parameter")."""
+    untyped = {
+        name: list(_untyped_params(t.inputSchema))
+        for name, t in TOOLS.items()
+    }
+    untyped = {n: p for n, p in untyped.items() if p}
+    assert not untyped, f"tool parameters without a type: {untyped}"
