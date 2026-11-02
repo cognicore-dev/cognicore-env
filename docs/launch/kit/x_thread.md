@@ -4,7 +4,7 @@
 
 It already knows the ticket, the decisions, and the follow-up you left for later.
 
-CogniCore: open-source memory that moves between agents. 🧵 [demo GIF]
+CogniCore: open-source memory that moves between agents. 🧵 [attach docs/launch/kit/cognicore-demo.mp4]
 
 2/ It saves each session from the agent's own transcript, with zero model calls.
 

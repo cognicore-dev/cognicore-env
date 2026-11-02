@@ -2,6 +2,8 @@
 
 **Memory that moves between your agents.** Work in Claude Code, close it, open Codex, and it carries on: same ticket, same decisions, same open follow-up. Nothing to re-explain.
 
+![Claude Code hands its work to Codex through CogniCore memory](../../docs/launch/kit/cognicore-demo.gif)
+
 ```bash
 pipx install "cognicore-env[mcp]"   # or: uv tool install "cognicore-env[mcp]"
 cognicore install                   # sets up Claude Code and Codex

@@ -37,6 +37,25 @@ Python 3.10+. No mandatory dependencies. No API key is needed for memory, reflec
 
 ---
 
+## Memory that moves between your agents
+
+Work in Claude Code, close it, open Codex, and it carries on with the same ticket, the same decisions and the same open follow-up.
+
+![Claude Code hands its work to Codex through CogniCore memory](docs/launch/kit/cognicore-demo.gif)
+
+```bash
+pipx install "cognicore-env[mcp]"   # or: uv tool install "cognicore-env[mcp]"
+cognicore install                   # sets up Claude Code and Codex
+```
+
+Restart Claude Code. In Codex, run `/hooks` once and trust the three CogniCore hooks.
+
+Hooks save each session from the agent's own transcript, with no model calls. At the next start, the agent gets a brief of about 450 tokens: goal, current state, open tasks, decisions with their reasons, and exact IDs, versions and paths. On real Claude Code and Codex sessions against claude-mem 15.7.0, both got every follow-up right. CogniCore used **2.4–4.1× fewer tokens**, and its memory was ready **about 1 second** after a session ended, against 70–130 seconds. See [method and full results](docs/transfer-audit.md#head-to-head-with-claude-mem-on-current-versions-2026-11-01); rerun them with `scripts/bench_realworld.py`.
+
+Plugin details: [`plugins/cognicore/README.md`](plugins/cognicore/README.md). Full-quality video: [MP4](docs/launch/kit/cognicore-demo.mp4).
+
+---
+
 ## Quickstart
 
 Give any function a memory of its own past runs:
@@ -89,6 +108,7 @@ for episode in range(5):
 | Capability | What it does |
 | --- | --- |
 | **Memory** | Store experiences and recall them by meaning, across sessions and processes |
+| **Session handoff** | Save a session automatically and resume it in any agent (Claude Code ↔ Codex) |
 | **Reflection** | Derive lessons from repeated failures and surface them before the next attempt |
 | **Safety** | Block prompt injection and jailbreak attempts before they reach your agent |
 | **Replay & time travel** | Every decision is recorded — replay a past run, or branch from any step |
@@ -204,8 +224,13 @@ whether it reads your data, changes it, or calls a third-party service.
 
 ### Claude plugin
 
-A Claude plugin that gives Claude persistent memory across conversations — see
-[`plugins/cognicore-memory/README.md`](plugins/cognicore-memory/README.md).
+[`plugins/cognicore`](plugins/cognicore/README.md) is the local-first plugin. It saves and resumes sessions automatically through hooks, with memory kept in `~/.cognicore/mcp`. `cognicore install` sets it up for both Claude Code and Codex. Inside Claude Code alone you can also run:
+
+```
+/plugin install cognicore --marketplace cognicore-dev/cognicore-env
+```
+
+For the hosted, GitHub-sign-in variant, see [`plugins/cognicore-memory`](plugins/cognicore-memory/README.md).
 
 ### mem0
 

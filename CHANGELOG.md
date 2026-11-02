@@ -9,6 +9,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Cross-agent session handoff.** The new `plugins/cognicore` plugin uses hooks to save each Claude Code or Codex session from its transcript, with no model calls. At the next start it resumes the project's latest work as a brief of about 450 tokens. `cognicore install` sets up both agents, and `cognicore setup codex` sets up Codex only.
+- **Console scripts** `cognicore-mcp` and `cognicore-hooks`.
+- **`COGNICORE_TOOLSETS`** loads only the tool groups you use, on both the local and the hosted server.
+- **Read-only memory viewer:** `python -m cognicore.memory.viewer`.
+- **Optional AI compression** of long sessions through the Claude API (`COGNICORE_AI_COMPRESS`). It checks the summary against the session, so it can't add facts that weren't there.
+- **Benchmarks:** `scripts/bench_transfer.py` runs offline in CI. `scripts/bench_realworld.py` runs head to head against claude-mem; see `docs/transfer-audit.md`.
+- **Launch kit and 30-second demo** in `docs/launch/kit/`, with the Remotion source in `docs/launch/kit/video/`.
+
+### Changed
+- The resume brief is leaner and fits a token budget. Save replies are compact, and agents can write their own handoff.
+- Tool definitions cost about 30% fewer tokens per turn.
+
+### Fixed
+- FTS5 search quotes tokens, so hyphens, paths and keywords match.
+- Merging near-duplicate sentences no longer drops ones that carry new values.
+- Deploy configs are hardened against common 502 causes, such as keep-alive and health-check timeouts.
+
 ## [0.11.0] — 2026-11-01
 
 ### Added

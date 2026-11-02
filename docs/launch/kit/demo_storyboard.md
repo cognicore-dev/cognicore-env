@@ -1,6 +1,6 @@
 # 30-second demo: Claude Code → Codex
 
-Record at 1080p with a large terminal font. Cut pauses, keep typing at real speed, and caption each shot.
+Rendered as [cognicore-demo.mp4](cognicore-demo.mp4) and [cognicore-demo.gif](cognicore-demo.gif) from the Remotion project in [video/](video/). The screen text comes from a real `scripts/bench_realworld.py` run. To record a live screen capture instead, use 1080p with a large terminal font, cut pauses, and caption each shot.
 
 | Time | Screen | Caption |
 |---|---|---|

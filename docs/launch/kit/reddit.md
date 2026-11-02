@@ -18,7 +18,7 @@ Repo: https://github.com/cognicore-dev/cognicore-env/tree/main/plugins/cognicore
 
 **Title:** Hand off work between Claude Code and Codex without re-explaining: open-source memory plugin
 
-Lead with the cross-agent demo GIF, then: same body as above, opening with "Start a task in Claude Code, continue it in Codex".
+Lead with the cross-agent demo (`docs/launch/kit/cognicore-demo.gif`), then: same body as above, opening with "Start a task in Claude Code, continue it in Codex".
 
 ## r/cursor
 

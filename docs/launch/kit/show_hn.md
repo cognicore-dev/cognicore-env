@@ -20,6 +20,8 @@ I benchmarked it against claude-mem on real sessions. Each task: session 1 does 
 
 The harness is in the repo (`scripts/bench_realworld.py`) if you want to rerun it or poke holes in it. It's only three tasks so far, and I'd welcome harder ones.
 
+30-second demo (Claude Code → Codex): https://github.com/cognicore-dev/cognicore-env/blob/main/docs/launch/kit/cognicore-demo.gif
+
 Everything is local (`~/.cognicore/mcp`). It never reads tool output, file contents, or the model's thinking, and it redacts secrets. Install:
 
     pipx install "cognicore-env[mcp]" && cognicore install
