@@ -21,8 +21,8 @@ primary_region = "iad"
   processes = ["app"]
 
 [[http_service.checks]]
-  grace_period = "10s"
+  grace_period = "30s"  # startup imports can exceed 10 s on a cold machine
   interval = "15s"
-  timeout = "2s"
+  timeout = "5s"
   method = "GET"
   path = "/health"

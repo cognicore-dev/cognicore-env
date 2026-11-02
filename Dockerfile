@@ -24,4 +24,6 @@ RUN mkdir -p /data/cognicore
 EXPOSE 8000
 
 # MCP requires stdout for stdio transport, but we use SSE so standard uvicorn logging is fine
-CMD ["uvicorn", "cognicore.connectors.chatgpt:app", "--host", "0.0.0.0", "--port", "8000"]
+# Keep idle connections open longer than Cloudflare reuses them (100 s); uvicorn's 5 s default
+# lets the origin close a connection the proxy is about to reuse, which shows up as a 502.
+CMD ["uvicorn", "cognicore.connectors.chatgpt:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "120"]
