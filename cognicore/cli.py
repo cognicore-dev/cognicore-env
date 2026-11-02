@@ -156,6 +156,27 @@ def cmd_install(args):
     return install(args.agent, dry_run=args.dry_run, codex_home=args.codex_home)
 
 
+def cmd_login(args):
+    """Sign in to your hosted CogniCore account so local agents sync with it."""
+    from cognicore.sync import main as sync_main
+
+    return sync_main(["login"] + ([args.server] if args.server else []))
+
+
+def cmd_logout(args):
+    """Stop syncing and forget the sign-in."""
+    from cognicore.sync import main as sync_main
+
+    return sync_main(["logout"])
+
+
+def cmd_sync(args):
+    """Push and pull sessions now, or show sync status."""
+    from cognicore.sync import main as sync_main
+
+    return sync_main([args.action])
+
+
 def cmd_setup(args):
     """Add the CogniCore memory rule to an agent's instructions."""
     from cognicore.agent_setup import setup_codex
@@ -451,13 +472,20 @@ def main():
     setup_cmd.add_argument("--no-hooks", action="store_true", help="Only add the AGENTS.md rule")
     setup_cmd.add_argument("--codex-home", help="Codex home (default: $CODEX_HOME or ~/.codex)")
 
+    login_cmd = sub.add_parser("login", help="Sign in so Claude Code and Codex sync with claude.ai, Desktop and mobile")
+    login_cmd.add_argument("server", nargs="?", help="Server URL (default: the hosted CogniCore server)")
+    sub.add_parser("logout", help="Stop syncing and forget the sign-in")
+    sync_cmd = sub.add_parser("sync", help="Sync memory with your hosted account now, or show status")
+    sync_cmd.add_argument("action", nargs="?", default="now", choices=["now", "status"])
+
     args = p.parse_args()
     cmds = {"list": cmd_list, "train": cmd_train, "benchmark": cmd_benchmark,
             "arena": cmd_arena, "ui": cmd_ui, "integrations": cmd_integrations,
             "webhooks": cmd_webhooks, "mcp": cmd_mcp,
             "bench": cmd_bench, "doctor": cmd_doctor, "sleep": cmd_sleep,
             "passport": cmd_passport, "civilization": cmd_civilization,
-            "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install}
+            "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install,
+            "login": cmd_login, "logout": cmd_logout, "sync": cmd_sync}
     if args.command in cmds:
         result = cmds[args.command](args)
         if isinstance(result, int) and result:

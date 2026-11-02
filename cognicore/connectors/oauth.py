@@ -259,6 +259,8 @@ def _client_label(redirect_uri: str) -> tuple[str, str]:
     """(app name, where the user returns) for the consent screen."""
     target = urllib.parse.urlparse(redirect_uri)
     if target.hostname in LOOPBACK_HOSTS:
+        if target.path.startswith("/cognicore-cli/"):  # `cognicore login` (cognicore.sync)
+            return "CogniCore CLI", target.netloc
         return "Claude Code", target.netloc
     if redirect_uri in CLAUDE_REDIRECT_URIS:
         return "Claude", target.netloc
@@ -391,7 +393,7 @@ class GitHubOAuthServer:
         app_name, return_to = _client_label(redirect_uri)
         loopback = urllib.parse.urlparse(redirect_uri).hostname in LOOPBACK_HOSTS
         warning = f"""<div class="warn" role="note">{_ICON_WARN}<div>Only continue if you just started this
-connection from Claude Code. Any program on this computer can request a local sign-in.</div></div>""" if loopback else ""
+connection from {html.escape(app_name)}. Any program on this computer can request a local sign-in.</div></div>""" if loopback else ""
         continue_url = f"/authorize/github?{urllib.parse.urlencode({'request': auth_request})}"
         cancel_url = _with_query(redirect_uri, {
             "error": "access_denied", "error_description": "The user cancelled sign-in", "state": state,

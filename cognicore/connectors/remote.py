@@ -1359,7 +1359,7 @@ class AuthMiddleware:
         # FastMCP's SSE transport can expose both the mounted /mcp routes and
         # root-level transport paths. Protect every form so a mount change
         # cannot silently create an authentication bypass.
-        protected_prefixes = ("/mcp", "/sse", "/messages")
+        protected_prefixes = ("/mcp", "/sse", "/messages", "/sync")
         is_protected = any(
             path == prefix or path.startswith(f"{prefix}/")
             for prefix in protected_prefixes
@@ -1535,6 +1535,69 @@ if hasattr(mcp, "streamable_http_app"):
 @app.get("/health")
 def health_check():
     return {"status": "ok", "version": "1.0"}
+
+
+# ── Session sync for local agents (cognicore.sync) ───────────────────────────
+# Claude Code and Codex save sessions locally; with `cognicore login` their
+# hooks upload each session's handoff here and download sessions saved through
+# the connector (claude.ai, Claude Desktop, mobile). Same OAuth tokens as MCP.
+
+SYNC_MAX_BYTES = 512 * 1024
+
+
+def _sync_backend(request: Request):
+    from cognicore.memory import SQLiteMemoryBackend
+
+    return SQLiteMemoryBackend(get_db_path_for_user(get_user_id(request)), provider=_get_shared_provider())
+
+
+@app.put("/sync/sessions")
+async def sync_push(request: Request):
+    """Store one session's handoff. An older or equal revision than the stored one changes nothing."""
+    import asyncio
+
+    from cognicore.memory.context_preservation import import_handoff
+
+    raw = await request.body()
+    if len(raw) > SYNC_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="handoff too large")
+    try:
+        body = json.loads(raw)
+        external_id, handoff = str(body["external_id"]), body["handoff"]
+        revision = float(body.get("revision") or _time.time())
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="expected {external_id, revision, handoff}")
+    if external_id.startswith("hosted:"):
+        raise HTTPException(status_code=400, detail="hosted: ids are reserved for sessions saved here")
+    revision = min(revision, _time.time() + 300)  # a client clock far ahead must not pin a session
+    res = await asyncio.to_thread(import_handoff, _sync_backend(request), handoff, external_id, revision)
+    if res.get("error"):
+        raise HTTPException(status_code=400, detail=res["error"])
+    return res
+
+
+@app.get("/sync/sessions")
+def sync_pull(request: Request, since: float = 0.0, limit: int = 50):
+    """Sessions saved since ``since`` (oldest first), each with its handoff and revision."""
+    backend = _sync_backend(request)
+    with backend._get_conn() as conn:
+        rows = conn.execute(
+            "SELECT session_id, external_id, timestamp, handoff_json FROM sessions "
+            "WHERE timestamp > ? AND handoff_json IS NOT NULL ORDER BY timestamp ASC LIMIT ?",
+            (since, max(1, min(int(limit), 200))),
+        ).fetchall()
+    sessions = []
+    for row in rows:
+        try:
+            handoff = json.loads(row["handoff_json"])
+        except ValueError:
+            continue
+        sessions.append({
+            "external_id": row["external_id"] or f"hosted:{row['session_id']}",
+            "revision": row["timestamp"],
+            "handoff": handoff,
+        })
+    return {"sessions": sessions, "server_time": _time.time()}
 
 from fastapi import status
 

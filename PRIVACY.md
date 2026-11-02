@@ -25,6 +25,8 @@ It does **not** cover the open-source `cognicore-env` Python package when you ru
 - voice preferences you give for ElevenLabs (voice ID and settings; we do not contact ElevenLabs)
 - memories you choose to list on the CogniCore marketplace (see "Sharing" below)
 
+**Sessions synced from your computer, if you turn sync on.** If you run `cognicore login` on your computer, the CogniCore plugin for Claude Code and Codex also uploads each session's handoff to your account. That's the goal, current state, open tasks, decisions with their reasons, facts, exact values such as ticket IDs and versions, the paths of files mentioned, and the project folder's path. It is not the transcript. Secrets detected in it are redacted on your computer and again on our server. Until you sign in this way, the plugin sends us nothing. `cognicore logout` stops it.
+
 **3. Long conversations, in one case.** Some tools accept the current conversation so they can keep it within the AI app's limits. If a conversation sent this way is longer than about 150,000 tokens, the older part is compressed into a summary and **saved to your memory**, so it can be recalled later. Shorter conversations are not stored.
 
 **4. Technical data.** Our hosting provider records standard server logs: IP address, time, the address requested and the response status, plus error messages. We use one short-lived cookie (up to 10 minutes) during sign-in to protect it against forgery. We use no analytics, advertising or tracking cookies.

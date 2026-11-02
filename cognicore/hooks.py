@@ -21,6 +21,7 @@ Environment:
     COGNICORE_AUTO_CAPTURE   "0" disables saving
     COGNICORE_AUTO_RESUME    "0" disables the start-of-session brief
     COGNICORE_RESUME_TOKENS  budget for the brief (default 1000)
+    COGNICORE_SYNC           "0" pauses sync with the hosted account (see cognicore.sync)
 """
 
 import json
@@ -54,14 +55,39 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
     from cognicore.memory.context_preservation import project_key, resume_session
 
     backend = _backend()
+    pointer = _pull_from_other_apps(backend, event["cwd"])
     with backend._get_conn() as conn:
         known = conn.execute("SELECT 1 FROM sessions WHERE project = ? LIMIT 1",
                              (project_key(event["cwd"]),)).fetchone()
-    if not known:
+    if not known and not pointer:
         return ""  # nothing to resume: inject nothing, cost nothing
     budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "1000"))
-    brief = resume_session(backend, project=event["cwd"], max_tokens=budget)
-    return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": brief}})
+    brief = resume_session(backend, project=event["cwd"], max_tokens=budget) if known else ""
+    context = "\n\n".join(part for part in (brief, pointer) if part)
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})
+
+
+def _pull_from_other_apps(backend, cwd: str) -> str:
+    """With sync on, fetch sessions saved in other apps; return a short pointer to the new ones."""
+    from cognicore import sync
+
+    if not sync.enabled():
+        return ""
+    try:
+        return sync.pointer_text(sync.pull(backend), cwd)
+    except sync.SyncError as e:  # offline or signed out: the session starts as usual
+        _log(f"sync pull skipped: {e}")
+        return ""
+
+
+def _push_in_background(session_key: str) -> None:
+    from cognicore import sync
+
+    if session_key and sync.enabled():
+        try:
+            sync.push_in_background(session_key)
+        except OSError as e:
+            _log(f"sync push not started: {e}")
 
 
 def save(event: dict, agent: str = "claude-code") -> str:
@@ -93,7 +119,7 @@ def save(event: dict, agent: str = "claude-code") -> str:
             ).fetchone()
         if row:
             goal = json.loads(row[0]).get("goal", "")
-    save_session(
+    res = json.loads(save_session(
         backend, conversation, goal=goal,
         session_name=Path(cwd).name if cwd else "",
         agent=agent, client=f"{agent}-hooks",
@@ -101,7 +127,9 @@ def save(event: dict, agent: str = "claude-code") -> str:
         session_key=session_key,
         project=cwd,
         compact=compression is not None, compression=compression,
-    )
+    ))
+    if not res.get("deduplicated") and not res.get("error"):
+        _push_in_background(session_key)
     return ""
 
 
