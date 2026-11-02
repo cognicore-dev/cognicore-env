@@ -461,6 +461,8 @@ def save_session(
     supplied_handoff: Any = None,
     session_key: str = "",
     project: str = "",
+    compact: bool = False,
+    compression: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     TOOL 2: cognicore_save_session
@@ -531,7 +533,7 @@ def save_session(
         handoff = build_handoff(
             conversation, session_id, session_name, timestamp,
             agent=agent, client=client, goal=goal, current_state=current_state, environment=environment,
-            supplied=supplied_handoff, project=project,
+            supplied=supplied_handoff, project=project, compact=compact, compression=compression,
         )
     except HandoffInputError as e:
         return _compact_json({"error": str(e)})

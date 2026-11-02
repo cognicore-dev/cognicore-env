@@ -51,6 +51,11 @@ The plugin's hooks make memory automatic, so Claude doesn't have to remember to 
 - **Requirements:** the `cognicore-env` package in the Python that runs the hooks (`pip install cognicore-env`). Set `COGNICORE_PYTHON` if that isn't `python` on your PATH.
 - **Where:** `~/.cognicore/mcp/mcp_memories.db`, shared with the local MCP server (`cognicore mcp serve`). Change it with `COGNICORE_DATA_DIR`.
 - **See what's stored:** `python -m cognicore.memory.viewer` opens a read-only page at http://127.0.0.1:37780 listing sessions by project, with each one's brief and stored handoff.
+- **Optional AI compression** for long sessions: set `COGNICORE_AI_COMPRESS=auto`, and Claude summarizes the session into a much smaller handoff. Exact values are kept verbatim, and any summary item citing a value not in the transcript is dropped.
+  - **When it runs:** only for sessions over 3,000 tokens (`COGNICORE_AI_MIN_TOKENS`), and at most once per 3,000 new tokens, not once per tool call.
+  - **Requirements:** `pip install anthropic` and Anthropic credentials (`ANTHROPIC_API_KEY` or `ant auth login`).
+  - **Model:** `claude-opus-5-5` at low effort by default. `COGNICORE_AI_MODEL=claude-haiku-5-5` is the low-cost option.
+  - **Default:** off, and capture stays free.
 - **Options:** `COGNICORE_AUTO_CAPTURE=0` stops saving, `COGNICORE_AUTO_RESUME=0` stops the start-of-session context, and `COGNICORE_RESUME_TOKENS` sets the budget.
 
 The hooks write to local memory. The hosted connector in `.mcp.json` keeps its own separate memory.

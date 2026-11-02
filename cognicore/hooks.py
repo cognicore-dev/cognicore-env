@@ -79,6 +79,8 @@ def save(event: dict, agent: str = "claude-code") -> str:
     if not conversation and not supplied:
         return ""
     backend = _backend()
+    session_key = f"{agent}:{event.get('session_id', '')}" if event.get("session_id") else ""
+    supplied, compression = _with_ai_summary(backend, conversation, supplied, session_key)
     goal = ""
     if cwd and not supplied.get("goal") and not stated_goal(conversation):
         # A continuation session: keep the project's goal rather than promoting
@@ -96,10 +98,66 @@ def save(event: dict, agent: str = "claude-code") -> str:
         session_name=Path(cwd).name if cwd else "",
         agent=agent, client=f"{agent}-hooks",
         supplied_handoff=supplied or None,
-        session_key=f"{agent}:{event.get('session_id', '')}" if event.get("session_id") else "",
+        session_key=session_key,
         project=cwd,
+        compact=compression is not None, compression=compression,
     )
     return ""
+
+
+AI_MODES = {"auto", "always"}
+
+
+def _with_ai_summary(backend, conversation, supplied: dict, session_key: str):
+    """Add an AI summary to the supplied handoff when COGNICORE_AI_COMPRESS is on.
+
+    Calls the model at most once per COGNICORE_AI_MIN_TOKENS of new conversation;
+    between calls the session's previous summary is reused, so the Stop hook,
+    which fires after every turn, doesn't call the model every turn. Returns
+    ``(supplied, compression)``; compression is None when no summary is used.
+    """
+    mode = os.environ.get("COGNICORE_AI_COMPRESS", "").strip().lower()
+    if mode not in AI_MODES:
+        return supplied, None
+    from cognicore.memory.ai_compress import compress_with_ai
+    from cognicore.memory.context_preservation import TokenBudget
+
+    min_tokens = int(os.environ.get("COGNICORE_AI_MIN_TOKENS", "3000"))
+    tokens = TokenBudget.estimate_tokens(conversation)
+    previous = None
+    if session_key:
+        with backend._get_conn() as conn:
+            row = conn.execute("SELECT handoff_json FROM sessions WHERE external_id = ?", (session_key,)).fetchone()
+        if row and row[0]:
+            previous = json.loads(row[0]).get("compression")
+    if previous and previous.get("summary") and tokens - previous.get("conversation_tokens", 0) < min_tokens:
+        info = previous  # not enough new conversation to be worth another call
+    elif tokens >= min_tokens or mode == "always":
+        summary, info = compress_with_ai(conversation)
+        if summary is None:
+            _log(f"ai compression skipped: {info.get('skipped')}")
+            if not (previous and previous.get("summary")):
+                return supplied, None
+            info = previous  # keep the last good summary
+        else:
+            info = {**info, "summary": summary, "conversation_tokens": tokens}
+    else:
+        return supplied, None
+
+    summary = info["summary"]
+    merged = {key: list(summary.get(key) or []) + list(supplied.get(key) or [])
+              for key in ("decisions", "open_tasks", "key_facts", "files")}
+    for key in ("goal", "current_state"):  # the agent's own handoff, if any, wins
+        merged[key] = supplied.get(key) or summary.get(key) or ""
+    return merged, info
+
+
+def _log(message: str) -> None:
+    try:
+        with open(data_dir() / "hooks.log", "a", encoding="utf-8") as log:
+            log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except OSError:
+        pass
 
 
 COMMANDS = {"session-start": session_start, "save": save}
