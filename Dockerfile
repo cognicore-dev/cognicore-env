@@ -1,6 +1,6 @@
 # Base image pinned by digest so a rebuild cannot silently pick up a changed
 # image. Dependabot (docker ecosystem) proposes digest updates as PRs.
-FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
+FROM python:3.14-slim@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
 
 WORKDIR /app
 
