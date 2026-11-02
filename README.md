@@ -2,30 +2,57 @@
 
 <!-- mcp-name: io.github.cognicore-dev/cognicore-env -->
 
-**Persistent memory, reflection and safety for AI agents — with zero mandatory dependencies.**
+**Memory that moves between your coding agents.** Work in Claude Code, close it, open Codex, and it carries on with the same ticket, the same decisions and the same open follow-up. There's nothing to re-explain.
 
 [![PyPI](https://img.shields.io/pypi/v/cognicore-env)](https://pypi.org/project/cognicore-env/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/cognicore-env/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Downloads](https://img.shields.io/pypi/dm/cognicore-env)](https://pypi.org/project/cognicore-env/)
 
-[![Watch the 56-second demo](docs/demo-poster.svg)](https://github.com/cognicore-dev/cognicore-env/releases/download/demo-video/cognicore-demo.mp4)
+![Claude Code hands its work to Codex through CogniCore memory](https://raw.githubusercontent.com/cognicore-dev/cognicore-env/main/docs/launch/kit/cognicore-demo.gif)
+
+```bash
+pipx install "cognicore-env[mcp]"   # or: uv tool install "cognicore-env[mcp]"
+cognicore install                   # sets up Claude Code and Codex
+```
+
+Restart Claude Code. In Codex, run `/hooks` once and trust the three CogniCore hooks. Using Claude Code only? Run `/plugin install cognicore --marketplace cognicore-dev/cognicore-env` inside it.
 
 ---
 
-## The problem
+## Why CogniCore
 
-An agent debugs an issue, finds the fix, and the session ends. The next run starts from zero — the
-same questions, the same dead ends, the same fixes that were already rejected.
+Measured on real Claude Code and Codex sessions against claude-mem 15.7.0. In each task, session 1 does part of a job, its transcript is moved out of reach, and a fresh session 2 must finish a deferred follow-up and answer 8 questions. Both systems got every follow-up right.
 
-Conversation history does not solve this. History records what was *said*. It does not record what
-was *tried*, what *failed*, what *worked*, or how you know. That is experience, and it is the part
-that gets thrown away.
+| | CogniCore | claude-mem |
+|---|---|---|
+| Hands work from Claude Code to Codex | ✅ | ✅ |
+| New tokens per 3-task benchmark (incl. background) | **53k–60k** | 147k–216k |
+| Memory ready after a session ends | **~1 second** | 70–130 seconds |
+| Brief injected at the next start | **~450 tokens** | ~1,080 tokens |
+| Model calls to save a session | **0** (optional AI compression) | one per tool use |
 
-CogniCore is a memory and reflection layer that keeps it. It runs in-process, on plain Python —
-**no vector database, no embedding server, no infrastructure to operate.**
+Method and full results: [`docs/transfer-audit.md`](docs/transfer-audit.md#head-to-head-with-claude-mem-on-current-versions-2026-11-01). Rerun them yourself with `scripts/bench_realworld.py`.
+
+## How it works
+
+- **Automatic.** When a session ends, hooks save it from the agent's own transcript. At the next start they inject that project's latest work. There's nothing to remember to call.
+- **A short, useful brief.** It covers the goal, where things stand, open tasks, decisions with their reasons, and exact values like ticket IDs, versions and paths. It's sized to a token budget, and the agent can ask for more sections when it needs them.
+- **Any agent.** Work saved in Claude Code resumes in Codex, and the other way round. Any MCP client can call `cognicore_save_session` and `cognicore_resume_session`.
+- **Local and private.** Memory stays in `~/.cognicore/mcp` (SQLite). CogniCore never reads tool output, file contents or the model's thinking, and it redacts secrets before saving.
+- **Inspectable.** `python -m cognicore.memory.viewer` opens a read-only page listing every saved session.
+
+Plugin details: [`plugins/cognicore/README.md`](plugins/cognicore/README.md) · full-quality demo: [MP4](docs/launch/kit/cognicore-demo.mp4)
 
 ---
+
+# The CogniCore library
+
+Under the plugin is a Python library for persistent memory, reflection and safety in any agent. It has **zero mandatory dependencies**, and it needs no vector database, embedding server or other infrastructure.
+
+An agent debugs an issue, finds the fix, and the session ends. The next run starts from zero: the same questions, the same dead ends, the same fixes that were already rejected. Conversation history records what was *said*, not what was *tried*, what *failed* and what *worked*. CogniCore keeps that experience.
+
+[![Watch the 56-second library demo](docs/demo-poster.svg)](https://github.com/cognicore-dev/cognicore-env/releases/download/demo-video/cognicore-demo.mp4)
 
 ## Install
 
@@ -34,27 +61,6 @@ pip install cognicore-env
 ```
 
 Python 3.10+. No mandatory dependencies. No API key is needed for memory, reflection or safety.
-
----
-
-## Memory that moves between your agents
-
-Work in Claude Code, close it, open Codex, and it carries on with the same ticket, the same decisions and the same open follow-up.
-
-![Claude Code hands its work to Codex through CogniCore memory](docs/launch/kit/cognicore-demo.gif)
-
-```bash
-pipx install "cognicore-env[mcp]"   # or: uv tool install "cognicore-env[mcp]"
-cognicore install                   # sets up Claude Code and Codex
-```
-
-Restart Claude Code. In Codex, run `/hooks` once and trust the three CogniCore hooks.
-
-Hooks save each session from the agent's own transcript, with no model calls. At the next start, the agent gets a brief of about 450 tokens: goal, current state, open tasks, decisions with their reasons, and exact IDs, versions and paths. On real Claude Code and Codex sessions against claude-mem 15.7.0, both got every follow-up right. CogniCore used **2.4–4.1× fewer tokens**, and its memory was ready **about 1 second** after a session ended, against 70–130 seconds. See [method and full results](docs/transfer-audit.md#head-to-head-with-claude-mem-on-current-versions-2026-11-01); rerun them with `scripts/bench_realworld.py`.
-
-Plugin details: [`plugins/cognicore/README.md`](plugins/cognicore/README.md). Full-quality video: [MP4](docs/launch/kit/cognicore-demo.mp4).
-
----
 
 ## Quickstart
 
