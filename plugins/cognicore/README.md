@@ -9,6 +9,12 @@ cognicore install                   # sets up Claude Code and Codex
 
 Then restart Claude Code. In Codex, run `/hooks` once and trust the three CogniCore hooks.
 
+Claude Code only? After the `pipx` line, install the plugin from inside Claude Code:
+
+```
+/plugin install cognicore --marketplace cognicore-dev/cognicore-env
+```
+
 ## Why CogniCore
 
 Measured on real Claude Code and Codex sessions against claude-mem 15.7.0. Both systems got every follow-up right ([method and full results](../../docs/transfer-audit.md#head-to-head-with-claude-mem-on-current-versions-2026-11-01)):
