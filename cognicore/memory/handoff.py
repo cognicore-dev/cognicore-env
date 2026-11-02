@@ -260,6 +260,8 @@ def build_handoff(
     migrated: bool = False,
     supplied: Any = None,
     project: str = "",
+    compact: bool = False,
+    compression: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a ``cognicore.handoff/v1`` document from a conversation and/or an
     agent-written partial handoff (``supplied``, see :func:`parse_supplied_handoff`).
@@ -324,6 +326,21 @@ def build_handoff(
                 facts.remove(s)
                 break
 
+    if supplied and compact:
+        # The supplied handoff is a summary (e.g. AI compression): keep an extracted
+        # statement only if it carries an exact value the summary doesn't mention.
+        # Every value still lands in exact_values below.
+        covered = json.dumps(supplied, ensure_ascii=False).lower()
+
+        def uncovered(text: str) -> bool:
+            return any(v["value"].lower() not in covered for v in extract_exact_values(text))
+
+        decisions = [d for d in decisions if uncovered(f"{d['what']} {d['why']}")]
+        tasks = [t for t in tasks if uncovered(t["task"])]
+        facts = [f for f in facts if uncovered(f)]
+        states = [s for s in states if uncovered(s)]
+        if supplied.get("goal"):
+            found_goal = ""
     if supplied:
         decisions = _merge_unique(supplied["decisions"], decisions, lambda d: d["what"])
         tasks = _merge_unique(supplied["open_tasks"], tasks, lambda t: t["task"])
@@ -356,7 +373,7 @@ def build_handoff(
     facts.sort(key=lambda s: 0 if extract_exact_values(s) else 1)
     facts = older_states + facts
 
-    return {
+    doc = {
         "schema": SCHEMA_VERSION,
         "provenance": {
             "session_id": session_id,
@@ -379,6 +396,9 @@ def build_handoff(
         "environment": normalize_environment(environment),
         "redactions": redactions,
     }
+    if compression:
+        doc["compression"] = compression  # how the summary part was made (method, model, tokens)
+    return doc
 
 
 class HandoffInputError(ValueError):
@@ -470,7 +490,7 @@ def _dedupe(items: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
     user said; the first statement, usually the user's own words, is kept.
     """
     norms = [normalize_sentence(s) for _, s in items]
-    out, seen, kept_words = [], set(), []
+    out, seen, kept = [], set(), []  # kept: (words, exact values) of each kept statement
     for i, (role, s) in enumerate(items):
         n = norms[i]
         if not n or n in seen:
@@ -478,10 +498,13 @@ def _dedupe(items: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
         if any(n != other and n in other for other in norms):
             continue
         words = _words(s)
-        if len(words) >= 4 and any(len(words & k) / len(words | k) >= 0.8 for k in kept_words):
+        values = {v["value"].lower() for v in extract_exact_values(s)}
+        # Similar wording is only a repeat if it adds no exact value: "STG-39 runs 1.39.0"
+        # is a different fact from "STG-0 runs 1.0.0".
+        if len(words) >= 4 and any(len(words & w) / len(words | w) >= 0.8 and values <= v for w, v in kept):
             continue
         seen.add(n)
-        kept_words.append(words)
+        kept.append((words, values))
         out.append((role, s))
     return out
 

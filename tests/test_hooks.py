@@ -251,3 +251,12 @@ def test_stated_goal():
 
     assert stated_goal([{"role": "user", "content": "Continue where we left off."}]) == ""
     assert "migrating" in stated_goal([{"role": "user", "content": "We are migrating users to Postgres 16."}])
+
+
+def test_similar_sentences_with_different_values_are_both_kept():
+    from cognicore.memory.handoff import build_handoff
+
+    conv = [{"role": "user", "content": f"Cluster STG-{i} runs release 1.{i}.0 in staging today."} for i in range(3)]
+    h = build_handoff(conv, "s", "n", 0.0)
+    text = json.dumps(h)
+    assert all(f"STG-{i}" in text and f"1.{i}.0" in text for i in range(3))
