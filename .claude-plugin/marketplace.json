@@ -7,6 +7,12 @@
   },
   "plugins": [
     {
+      "name": "cognicore",
+      "description": "Automatic local memory across sessions and agents (Claude Code, Codex). No model calls to save.",
+      "category": "productivity",
+      "source": "./plugins/cognicore"
+    },
+    {
       "name": "cognicore-memory",
       "description": "Persistent memory for Claude across conversations.",
       "category": "productivity",

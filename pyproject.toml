@@ -73,6 +73,9 @@ Changelog = "https://github.com/cognicore-dev/cognicore-env/blob/main/CHANGELOG.
 cognicore = "cognicore.cli:main"
 cognicore-extension = "cognicore.extension.__main__:main"
 cognicore-code-setup = "cognicore.extension.code_setup:main"
+# Used by the cognicore plugin (plugins/cognicore): the local MCP server and the memory hooks.
+cognicore-mcp = "cognicore.mcp.server:main"
+cognicore-hooks = "cognicore.hooks:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]

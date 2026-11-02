@@ -8,7 +8,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks session-start",
+            "command": "command -v cognicore-hooks >/dev/null 2>&1 && exec cognicore-hooks session-start || exec \"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks session-start",
             "timeout": 30
           }
         ]
@@ -20,7 +20,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
+            "command": "command -v cognicore-hooks >/dev/null 2>&1 && exec cognicore-hooks save || exec \"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
             "timeout": 60,
             "async": true
           }
@@ -33,7 +33,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
+            "command": "command -v cognicore-hooks >/dev/null 2>&1 && exec cognicore-hooks save || exec \"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
             "timeout": 60
           }
         ]
@@ -45,7 +45,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "\"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
+            "command": "command -v cognicore-hooks >/dev/null 2>&1 && exec cognicore-hooks save || exec \"${COGNICORE_PYTHON:-python}\" -m cognicore.hooks save",
             "timeout": 60
           }
         ]

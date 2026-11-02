@@ -141,3 +141,23 @@ def test_hosted_toolset_token_cost(monkeypatch):
     cost = sum(len(json.dumps({"name": t.name, "description": t.description, "input_schema": t.inputSchema}))
                for t in tools if t.name in keep) // 4
     assert cost < 2200
+
+
+def test_local_toolsets_cover_every_tool_and_trim(monkeypatch, tmp_path):
+    pytest.importorskip("mcp")
+    import asyncio
+    import json
+
+    from cognicore.mcp import server as mcp_server
+
+    monkeypatch.setenv("COGNICORE_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("COGNICORE_TOOLSETS", raising=False)
+    all_tools = asyncio.run(mcp_server.create_mcp_server().list_tools())
+    grouped = {n for names in mcp_server.LOCAL_TOOLSETS.values() for n in names}
+    assert {t.name for t in all_tools} == grouped  # a new tool must be put in a group
+
+    monkeypatch.setenv("COGNICORE_TOOLSETS", "memory,session")
+    lean = asyncio.run(mcp_server.create_mcp_server().list_tools())
+    assert {t.name for t in lean} == set(mcp_server.LOCAL_TOOLSETS["memory"] + mcp_server.LOCAL_TOOLSETS["session"])
+    cost = lambda ts: sum(len(json.dumps({"n": t.name, "d": t.description, "s": t.inputSchema})) for t in ts) // 4
+    assert cost(lean) < 0.75 * cost(all_tools)

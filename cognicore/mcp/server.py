@@ -140,6 +140,14 @@ MEMORY_INSTRUCTIONS = (
 )
 
 
+LOCAL_TOOLSETS: Dict[str, List[str]] = {
+    "memory": ["cognicore_remember", "cognicore_recall", "cognicore_stats"],
+    "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
+    "reflection": ["cognicore_recall_failures", "cognicore_recall_successes", "cognicore_reflect"],
+    "safety": ["cognicore_scan_threat"],
+}
+
+
 def strip_schema_titles(server: Any) -> None:
     """Drop the auto-generated "title" annotations from every tool's input schema.
 
@@ -672,6 +680,8 @@ def create_mcp_server() -> "FastMCP":
             environment=_with_local_os(environment_json) if environment_json else None,
         )
 
+    # e.g. COGNICORE_TOOLSETS=memory,session for a memory-only agent. Default: all tools.
+    limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), LOCAL_TOOLSETS)
     strip_schema_titles(mcp)
     return mcp
 
