@@ -67,3 +67,4 @@ scratch_repo/
 
 # Real-world benchmark work folder (scripts/bench_realworld.py)
 .bench_realworld/
+!docs/launch/kit/cognicore-demo.mp4
