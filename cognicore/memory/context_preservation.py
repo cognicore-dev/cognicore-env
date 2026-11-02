@@ -411,17 +411,20 @@ def _memory_rows(handoff: Dict[str, Any]) -> List[Tuple[str, str, str]]:
         rows.append((handoff["current_state"], auto_categorize(handoff["current_state"])[0], "session_state"))
     for d in handoff["decisions"]:
         text = f"Rejected: {d['what']}" if d["status"] == "rejected" else d["what"]
-        if d["why"]:
+        if d.get("why"):
             text += f" (why: {d['why']})"
         rows.append((text, "decisions", "session_decision"))
     for t in handoff["open_tasks"]:
         rows.append((t["task"], "action_items", "session_action"))
     for fact in handoff["key_facts"]:
-        for atom in decompose(fact):
-            rows.append((atom, auto_categorize(atom)[0], "session_fact"))
+        if isinstance(fact, str):
+            for atom in decompose(fact):
+                rows.append((atom, auto_categorize(atom)[0], "session_fact"))
     for c in handoff["code"]:
-        head = f"{c['context']}\n" if c["context"] else ""
-        rows.append((f"{head}```{c['lang']}\n{c['code']}\n```", "code_snippets", "session_code"))
+        if not isinstance(c, dict) or not c.get("code"):
+            continue
+        head = f"{c['context']}\n" if c.get("context") else ""
+        rows.append((f"{head}```{c.get('lang', '')}\n{c['code']}\n```", "code_snippets", "session_code"))
 
     seen, unique = set(), []
     for text, cat, reason in rows:
@@ -537,8 +540,44 @@ def save_session(
         )
     except HandoffInputError as e:
         return _compact_json({"error": str(e)})
-    rows = _memory_rows(handoff)
+    new_rows, existing_ids = _store_session(
+        backend, handoff, session_id, session_name, timestamp, previous,
+        message_count=len(conversation), tokens=TokenBudget.estimate_tokens(conversation),
+        conv_hash=conv_hash if hashed else None, agent=agent, client=client,
+        external_id=session_key, project=project,
+    )
 
+    def _count(category: str) -> int:
+        return sum(1 for _, cat, _ in new_rows if cat == category)
+
+    # The agent already knows what it saved, so the reply is ids and counts only.
+    n_tasks = sum(1 for t in handoff["open_tasks"] if t["status"] == "open")
+    res = {
+        "session_id": session_id,
+        "memories_stored": len(new_rows),
+        "decisions_saved": _count("decisions"),
+        "action_items_saved": _count("action_items"),
+        "code_snippets_saved": _count("code_snippets"),
+        "summary": f"Saved '{session_name}': {len(handoff['decisions'])} decisions, {n_tasks} open tasks, "
+                   f"{len(handoff['key_facts'])} facts.",
+        "schema": SCHEMA_VERSION,
+        "already_in_memory": len(existing_ids),
+        "redactions": handoff["redactions"],
+        "deduplicated": False,
+    }
+    return _compact_json(res)
+
+
+def _store_session(backend: Any, handoff: Dict[str, Any], session_id: str, session_name: str,
+                   timestamp: float, previous: Any, message_count: int, tokens: int,
+                   conv_hash: Optional[str], agent: str, client: str, external_id: str,
+                   project: str) -> Tuple[List[Tuple[str, str, str]], Dict[str, str]]:
+    """Write a handoff's searchable rows, its summary and its session row (insert or update).
+
+    Returns ``(new_rows, existing_ids)``: rows stored now, and statements already
+    in memory that were linked instead of copied.
+    """
+    rows = _memory_rows(handoff)
     with backend._get_conn() as conn:
         existing_ids = _existing_ids_by_text(conn, [text for text, _, _ in rows])
     new_rows = [r for r in rows if r[0] not in existing_ids]
@@ -571,9 +610,9 @@ def save_session(
 
     handoff_json = json.dumps(handoff, ensure_ascii=False)
     with backend._get_conn() as conn:
-        values = (session_name, timestamp, len(conversation), TokenBudget.estimate_tokens(conversation),
-                  summary_id, handoff_json, conv_hash if hashed else None, agent or "", client or "",
-                  session_key or None, project or None)
+        values = (session_name, timestamp, message_count, tokens,
+                  summary_id, handoff_json, conv_hash, agent or "", client or "",
+                  external_id or None, project or None)
         if previous:
             conn.execute("""
                 UPDATE sessions SET name = ?, timestamp = ?, message_count = ?, total_tokens_estimated = ?,
@@ -597,26 +636,75 @@ def save_session(
             "INSERT OR IGNORE INTO session_memories (session_id, memory_id) VALUES (?, ?)",
             [(session_id, int(mid)) for mid in linked_ids if str(mid).isdigit()],
         )
+    return new_rows, existing_ids
 
-    def _count(category: str) -> int:
-        return sum(1 for _, cat, _ in new_rows if cat == category)
 
-    # The agent already knows what it saved, so the reply is ids and counts only.
-    n_tasks = sum(1 for t in handoff["open_tasks"] if t["status"] == "open")
-    res = {
-        "session_id": session_id,
-        "memories_stored": len(new_rows),
-        "decisions_saved": _count("decisions"),
-        "action_items_saved": _count("action_items"),
-        "code_snippets_saved": _count("code_snippets"),
-        "summary": f"Saved '{session_name}': {len(handoff['decisions'])} decisions, {n_tasks} open tasks, "
-                   f"{len(handoff['key_facts'])} facts.",
-        "schema": SCHEMA_VERSION,
-        "already_in_memory": len(existing_ids),
-        "redactions": handoff["redactions"],
-        "deduplicated": False,
-    }
-    return _compact_json(res)
+def _redact_strings(value: Any) -> Tuple[Any, int]:
+    """Redact secrets in every string of a JSON-like value. Returns (value, redactions)."""
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, list):
+        out, total = [], 0
+        for item in value:
+            item, n = _redact_strings(item)
+            out.append(item)
+            total += n
+        return out, total
+    if isinstance(value, dict):
+        out_d, total = {}, 0
+        for key, item in value.items():
+            item, n = _redact_strings(item)
+            out_d[key] = item
+            total += n
+        return out_d, total
+    return value, 0
+
+
+def import_handoff(backend: Any, doc: Any, external_id: str, revision: Optional[float] = None) -> Dict[str, Any]:
+    """Store a complete handoff made elsewhere (another machine, or the hosted server), as is.
+
+    Used by sync. ``external_id`` identifies the session across stores and
+    ``revision`` is when it was last saved. An older or equal revision than the
+    one already stored changes nothing, so pushes and pulls can repeat or
+    arrive out of order. The handoff's ``provenance.project`` is kept verbatim.
+    Returns ``{"session_id", "status"}`` with status created, updated or
+    unchanged, or ``{"error"}``.
+    """
+    if isinstance(doc, str):
+        try:
+            doc = json.loads(doc)
+        except json.JSONDecodeError:
+            return {"error": "handoff is not valid JSON"}
+    errors = validate_handoff(doc)
+    if errors:
+        return {"error": "; ".join(errors)}
+    if not external_id or not isinstance(external_id, str) or len(external_id) > 200:
+        return {"error": "external_id is required (at most 200 characters)"}
+    revision = float(revision if revision is not None else time.time())
+    doc, redactions = _redact_strings(doc)  # never trust the sender to have redacted
+    doc["redactions"] = int(doc.get("redactions") or 0) + redactions
+
+    with backend._get_conn() as conn:
+        previous = conn.execute(
+            "SELECT session_id, name, summary_memory_id, timestamp FROM sessions WHERE external_id = ?",
+            (external_id,),
+        ).fetchone()
+    if previous and previous["timestamp"] >= revision:
+        return {"session_id": previous["session_id"], "status": "unchanged"}
+
+    prov = doc["provenance"]
+    session_id = previous["session_id"] if previous else \
+        f"sess_{datetime.fromtimestamp(revision).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    prov["session_id"] = session_id
+    session_name = str(prov.get("session_name") or (previous["name"] if previous else "") or
+                       f"Session {datetime.fromtimestamp(revision).strftime('%b %d, %Y')}")
+    _store_session(
+        backend, doc, session_id, session_name, revision, previous,
+        message_count=int(prov.get("message_count") or 0), tokens=0, conv_hash=None,
+        agent=str(prov.get("agent") or ""), client=str(prov.get("client") or ""),
+        external_id=external_id, project=str(prov.get("project") or ""),
+    )
+    return {"session_id": session_id, "status": "updated" if previous else "created"}
 
 
 def _compact_json(obj: Dict[str, Any]) -> str:

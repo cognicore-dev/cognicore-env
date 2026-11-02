@@ -34,6 +34,18 @@ Measured on real Claude Code and Codex sessions against claude-mem 15.7.0. Both 
 - **Small.** The brief is budgeted: most important first (goal, state, open tasks, decisions, facts), with the rest fetchable on demand.
 - **Private.** Memory is local (`~/.cognicore/mcp`). CogniCore keeps what you and the agent said, plus the paths of edited files. It never reads tool output, file contents, the model's thinking, or the system context agents inject. Detected secrets are redacted.
 
+## Sync with claude.ai, Claude Desktop and mobile (optional)
+
+```bash
+cognicore login      # sign in once with GitHub, in the browser
+```
+
+After you sign in, a session saved in Claude Code or Codex is also uploaded to your hosted CogniCore account. Sessions saved through the CogniCore connector in claude.ai, Claude Desktop or the mobile app are downloaded when your next session starts. What's uploaded is the redacted handoff (goal, state, tasks, decisions, facts, values), never the transcript. A new session from another app appears in the brief as one line, and the agent loads it when it's relevant.
+
+- The upload runs in the background, so a turn never waits on the network. The download at session start gives up after 3 seconds, so working offline is unaffected.
+- `cognicore sync` syncs now. `cognicore sync status` shows who is signed in. `COGNICORE_SYNC=0` pauses sync. `cognicore logout` turns it off.
+- Nothing leaves your machine until you run `cognicore login`.
+
 ## What it adds to each turn
 
 The plugin's MCP server runs in lean mode, with 6 tools at about 1,000 tokens per turn. Its hooks inject nothing in a project with no history.
@@ -46,6 +58,7 @@ The plugin's MCP server runs in lean mode, with 6 tools at about 1,000 tokens pe
 | `COGNICORE_RESUME_TOKENS` | Budget for the start-of-session brief (default 1000) |
 | `COGNICORE_AUTO_CAPTURE=0` / `COGNICORE_AUTO_RESUME=0` | Turn saving / resuming off |
 | `COGNICORE_AI_COMPRESS=auto` | Summarize long sessions with Claude. Needs `pip install anthropic` and Anthropic credentials. `COGNICORE_AI_MODEL` picks the model. |
+| `COGNICORE_SYNC=0` | Pause sync with your hosted account (after `cognicore login`) |
 | `COGNICORE_TOOLSETS` | Which MCP tool groups load (`memory,session` here; `all` for every tool) |
 
 ## See what's stored

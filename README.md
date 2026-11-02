@@ -40,6 +40,7 @@ Method and full results: [`docs/transfer-audit.md`](docs/transfer-audit.md#head-
 - **A short, useful brief.** It covers the goal, where things stand, open tasks, decisions with their reasons, and exact values like ticket IDs, versions and paths. It's sized to a token budget, and the agent can ask for more sections when it needs them.
 - **Any agent.** Work saved in Claude Code resumes in Codex, and the other way round. Any MCP client can call `cognicore_save_session` and `cognicore_resume_session`.
 - **Local and private.** Memory stays in `~/.cognicore/mcp` (SQLite). CogniCore never reads tool output, file contents or the model's thinking, and it redacts secrets before saving.
+- **Optional sync with claude.ai, Desktop and mobile.** Run `cognicore login` once. Claude Code and Codex sessions then reach your hosted account, and sessions from the CogniCore connector come back. Only the redacted handoff is sent, never the transcript.
 - **Inspectable.** `python -m cognicore.memory.viewer` opens a read-only page listing every saved session.
 
 Plugin details: [`plugins/cognicore/README.md`](plugins/cognicore/README.md) · full-quality demo: [MP4](docs/launch/kit/cognicore-demo.mp4)

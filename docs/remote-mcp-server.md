@@ -23,6 +23,7 @@ No user database or Supabase project is involved.
 | `/mcp/stream` | Streamable HTTP transport. Use this as the connector URL. |
 | `/mcp/sse` | Legacy SSE transport, still supported by Claude but deprecated. |
 | `/health` | Health check for the platform. |
+| `PUT /sync/sessions`, `GET /sync/sessions?since=` | Session sync for `cognicore login` on local machines (`cognicore/sync.py`). The same bearer tokens as MCP; a handoff is at most 512 KB, and a newer revision always wins. |
 
 ## Environment variables
 

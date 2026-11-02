@@ -11,6 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **Cross-agent session handoff.** The new `plugins/cognicore` plugin uses hooks to save each Claude Code or Codex session from its transcript, with no model calls. At the next start it resumes the project's latest work as a brief of about 450 tokens. `cognicore install` sets up both agents, and `cognicore setup codex` sets up Codex only.
+- **Optional sync with the hosted account.** `cognicore login` signs in through the hosted server's OAuth flow (loopback redirect, PKCE). The hooks then upload each saved session's redacted handoff in the background, and download sessions saved through the connector (claude.ai, Claude Desktop, mobile) at session start, with a 3-second timeout. New ones show as a one-line pointer in the brief. The hosted server adds `PUT/GET /sync/sessions`; a newer revision always wins, so syncs can repeat or arrive out of order. Also adds `cognicore sync`, `cognicore sync status`, `cognicore logout` and `COGNICORE_SYNC=0`.
 - **Console scripts** `cognicore-mcp` and `cognicore-hooks`.
 - **`COGNICORE_TOOLSETS`** loads only the tool groups you use, on both the local and the hosted server.
 - **Read-only memory viewer:** `python -m cognicore.memory.viewer`.
