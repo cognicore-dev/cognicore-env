@@ -64,3 +64,6 @@ scratch_repo/
 /orig_remote.py
 /test_fastmcp.py
 /test_sarvam_tokens.py
+
+# Real-world benchmark work folder (scripts/bench_realworld.py)
+.bench_realworld/
