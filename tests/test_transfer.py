@@ -468,3 +468,57 @@ def test_path_detection(text, paths):
 def test_urls_with_any_common_scheme():
     vals = {v["value"] for v in extract_exact_values("Resume from s3://ml-ckpt/r-0917/step-11000 via https://a.io/x.")}
     assert {"s3://ml-ckpt/r-0917/step-11000", "https://a.io/x"} <= vals
+
+
+# --- Long, messy sessions: formatting is not a task, and sections are capped ---
+
+from cognicore.memory.handoff import MAX_FACTS, MAX_TASKS, is_fragment  # noqa: E402
+
+
+def _tasks(conv):
+    return [t["task"] for t in build_handoff(conv, "s", "n", 0.0)["open_tasks"]]
+
+
+def test_table_rows_and_list_lead_ins_are_not_tasks_but_keep_their_values():
+    conv = [{"role": "assistant", "content": (
+        "| Time | Screen |\n|---|---|\n| 0-5 s | Follow-up: tell it about BILL-311 |\n"
+        "Pending tasks (from the review):\n- We need to bump urllib3 to 2.2.1.")}]
+    h = build_handoff(conv, "s", "n", 0.0)
+    assert [t["task"] for t in h["open_tasks"]] == ["We need to bump urllib3 to 2.2.1."]
+    assert "BILL-311" in {v["value"] for v in h["exact_values"]}
+    assert is_fragment("| a | b |") and is_fragment("Next steps:") and not is_fragment("Use 2.2.1.")
+
+
+def test_questions_and_comparisons_are_not_tasks():
+    conv = [{"role": "assistant", "content": (
+        "Should we make the tool groups opt-in by default for everyone? "
+        "The second draft is messier than it needs to be. "
+        "The main remaining cost is tokens. The remaining tasks are the docs.")}]
+    assert _tasks(conv) == ["The remaining tasks are the docs."]
+
+
+def test_stray_italic_markers_are_stripped():
+    conv = [{"role": "user", "content": "*We must redeploy the hosted server tonight."}]
+    assert _tasks(conv) == ["We must redeploy the hosted server tonight."]
+
+
+def test_long_sessions_keep_the_latest_tasks_and_valued_facts():
+    tasks = [f"We need to fix flaky test number {i} soon." for i in range(MAX_TASKS + 10)]
+    facts = [f"Garden{i}a borders lake{i}b near forest{i}c and meadow{i}d." for i in range(MAX_FACTS + 20)]
+    facts.append("The API listens on port 8443 behind api.example.dev.")
+    conv = [{"role": "user", "content": " ".join(tasks + facts)}]
+    h = build_handoff(conv, "s", "n", 0.0)
+    assert len(h["open_tasks"]) == MAX_TASKS
+    assert h["open_tasks"][-1]["task"] == tasks[-1]
+    assert len(h["key_facts"]) == MAX_FACTS
+    assert facts[-1] in h["key_facts"]
+    # Exact values are never capped.
+    assert "api.example.dev" in {v["value"] for v in h["exact_values"]}
+
+
+def test_supplied_facts_survive_the_cap():
+    filler = " ".join(f"Server {i} has hostname node{i}.example.dev." for i in range(MAX_FACTS + 5))
+    h = build_handoff([{"role": "user", "content": filler}], "s", "n", 0.0,
+                      supplied={"key_facts": ["Finance requires commercial rounding."]})
+    assert "Finance requires commercial rounding." in h["key_facts"]
+    assert len(h["key_facts"]) == MAX_FACTS + 1

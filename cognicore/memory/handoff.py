@@ -64,7 +64,22 @@ def normalize_sentence(s: str) -> str:
 def clean_statement(s: str) -> str:
     """Clean bullet/heading markers, bold markers and whitespace while keeping full content."""
     cleaned = re.sub(r'^(?:#{1,6}\s+|[-*•]\s*|\d+\.\s*)', '', s.strip())
-    return cleaned.replace("**", "").strip()
+    # Bold markers, and a stray single "*" left at either end by italics split across sentences.
+    return re.sub(r'^\*+(?=\S)|(?<=\S)\*+$', '', cleaned.replace("**", "")).strip()
+
+
+_TABLE_SEPARATOR = re.compile(r"^\|?\s*:?-{3,}")
+
+
+def is_fragment(sentence: str) -> bool:
+    """Formatting rather than a statement: a table row, or a lead-in to a list or table.
+
+    Such lines still contribute their exact values, but never become a task,
+    decision or fact on their own.
+    """
+    s = sentence.strip()
+    return (s.startswith("|") or s.count("|") >= 2 or bool(_TABLE_SEPARATOR.match(s))
+            or s.endswith(":"))
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +169,11 @@ _REJECTED = re.compile(
 _TASK = re.compile(
     r"(?:^|\b)(?:todo|to-do|next step|action item|need(?:s)? to|must|pending|follow[- ]up|remaining|"
     r"still have to|blocked on|we should|don'?t forget)\b|- \[[ x]\]", re.I)
+# Phrases that contain a task keyword without stating a task:
+# "messier than it needs to be", "the remaining cost is tokens".
+_NOT_TASK = re.compile(
+    r"\bthan\s+(?:\w+\s+){1,2}needs?\s+to\b"
+    r"|\bremaining\b(?!\s*(?::|tasks?|work|items?|steps?|todos?|issues?|follow[- ]?ups?)\b)", re.I)
 _DONE = re.compile(r"- \[x\]|\b(?:done|completed|finished|shipped|merged)\s*[:\-]", re.I)
 _STATE = re.compile(
     r"\b(?:root cause|currently|status|is working|works now|fixed|failed with|failing|blocked|committed|"
@@ -197,6 +217,26 @@ def stated_goal(conversation: List[Any]) -> str:
             if s and not s.endswith("?") and not is_chatter(s) and _GOAL.search(s):
                 return s
     return ""
+
+
+def _is_task(sentence: str) -> bool:
+    return bool(_TASK.search(_NOT_TASK.sub(" ", sentence)))
+
+
+# Most items a single session keeps per section (exact values and files are
+# never capped, so every ID, version and path survives). Long sessions
+# otherwise keep hundreds of statements, and the brief fills with old ones.
+MAX_DECISIONS = 25
+MAX_TASKS = 25
+MAX_FACTS = 40
+
+
+def _cap_facts(facts: List[str], limit: int = MAX_FACTS) -> List[str]:
+    """Keep at most *limit* facts: those with exact values first, then the most recent."""
+    if len(facts) <= limit:
+        return facts
+    ranked = sorted(range(len(facts)), key=lambda i: (not extract_exact_values(facts[i]), -i))
+    return [facts[i] for i in ranked[:limit]]
 
 
 def _split_why(sentence: str) -> Tuple[str, str]:
@@ -300,11 +340,17 @@ def build_handoff(
             if cleaned:
                 sentences.append((role, cleaned))
 
-    kept = _dedupe([(r, s) for r, s in sentences if not is_chatter(s)])
+    substantive = [(r, s) for r, s in sentences if not is_chatter(s)]
+    fragments = [s for _, s in substantive if is_fragment(s)]
+    kept = _dedupe([(r, s) for r, s in substantive if not is_fragment(s)])
 
     found_goal, states, decisions, tasks, facts = "", [], [], [], []
     for role, s in kept:
-        if _TASK.search(s):
+        if s.endswith("?"):
+            # A question is not a task, decision or state; keep it only for its values.
+            if extract_exact_values(s):
+                facts.append(s)
+        elif _is_task(s):
             tasks.append({"task": s, "status": "done" if _DONE.search(s) else "open"})
         elif _REJECTED.search(s):
             decisions.append({"what": s, "why": "", "status": "rejected"})
@@ -321,10 +367,13 @@ def build_handoff(
     if not found_goal:
         # First substantive user statement is the best zero-LLM guess at the goal.
         for role, s in kept:
-            if role in ("user", "") and s in facts:
+            if role in ("user", "") and s in facts and not s.endswith("?"):
                 found_goal = s
                 facts.remove(s)
                 break
+
+    # Long sessions: keep the latest decisions and tasks. Facts are capped below.
+    decisions, tasks = decisions[-MAX_DECISIONS:], tasks[-MAX_TASKS:]
 
     if supplied and compact:
         # The supplied handoff is a summary (e.g. AI compression): keep an extracted
@@ -349,7 +398,7 @@ def build_handoff(
         if supplied.get("current_state") and not current_state:
             current_state = supplied["current_state"]
 
-    statements = [s for _, s in kept] + [found_goal, current_state or ""]
+    statements = [s for _, s in kept] + fragments + [found_goal, current_state or ""]
     statements += [d["what"] + " " + d["why"] for d in decisions] + [t["task"] for t in tasks] + facts
     statements += (supplied or {}).get("files", [])
     exact: List[Dict[str, str]] = []
@@ -372,6 +421,10 @@ def build_handoff(
     # Facts with exact values first, then plain statements.
     facts.sort(key=lambda s: 0 if extract_exact_values(s) else 1)
     facts = older_states + facts
+    # Agent-supplied facts are always kept; only the extracted ones are capped.
+    own = set((supplied or {}).get("key_facts", []))
+    keep = set(_cap_facts([f for f in facts if f not in own]))
+    facts = [f for f in facts if f in own or f in keep]
 
     doc = {
         "schema": SCHEMA_VERSION,
