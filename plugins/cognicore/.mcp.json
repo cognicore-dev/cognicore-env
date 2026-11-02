@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cognicore": {
+      "type": "stdio",
+      "command": "cognicore-mcp",
+      "env": {
+        "COGNICORE_TOOLSETS": "memory,session"
+      }
+    }
+  }
+}

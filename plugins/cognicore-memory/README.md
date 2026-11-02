@@ -37,6 +37,13 @@ These run automatically when you ask Claude to remember or recall something:
 
 ---
 
+## Automatic Memory
+
+This plugin uses the hosted CogniCore server. For automatic, local memory that also hands work
+over to Codex, use the [`cognicore`](../cognicore/README.md) plugin.
+
+---
+
 ## Slash Commands
 
 You can also trigger memory directly with slash commands:

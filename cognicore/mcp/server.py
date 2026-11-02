@@ -125,6 +125,92 @@ def _entry_from_parts(
     }
 
 
+# Sent to every client at initialize. Clients that show server instructions to the model
+# (and agents without CogniCore hooks, such as Codex) otherwise never think to resume:
+# in a Claude Code -> Codex test, Codex had the tools but never called them.
+MEMORY_INSTRUCTIONS = (
+    "Persistent memory shared across sessions and agents (Claude, Codex, Cursor, ChatGPT). "
+    "At the start of a task, or whenever the user says to continue earlier work, call "
+    "cognicore_resume_session with a short query describing the task. It returns the previous "
+    "session's goal, state, open tasks, decisions and exact values. Before you finish, call "
+    "cognicore_save_session with handoff_json (goal, current_state, decisions with why, "
+    "open_tasks, key_facts, files), keeping ids, versions, names and numbers verbatim. "
+    "If a brief starting \"=== COGNICORE CONTEXT RESUME ===\" is already in your context, "
+    "CogniCore's hooks are active: they resume and save automatically, so skip both calls."
+)
+
+
+LOCAL_TOOLSETS: Dict[str, List[str]] = {
+    "memory": ["cognicore_remember", "cognicore_recall", "cognicore_stats"],
+    "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
+    "reflection": ["cognicore_recall_failures", "cognicore_recall_successes", "cognicore_reflect"],
+    "safety": ["cognicore_scan_threat"],
+}
+
+
+def strip_schema_titles(server: Any) -> None:
+    """Drop the auto-generated "title" annotations from every tool's input schema.
+
+    pydantic adds one per parameter ("Session Name", "Environment Json") and one
+    per schema. They only restate the property name, yet clients load every tool
+    schema into the model's context on every turn: about 20% of all tool tokens.
+    Arguments are still validated by FastMCP's own model, which is untouched.
+    The tool-level ``title`` annotation (shown to users) is not affected.
+    """
+    def strip(node: Any) -> None:
+        if isinstance(node, dict):
+            if isinstance(node.get("title"), str):  # a property *named* "title" maps to a dict, and is kept
+                del node["title"]
+            for value in node.values():
+                strip(value)
+        elif isinstance(node, list):
+            for value in node:
+                strip(value)
+
+    for tool in getattr(getattr(server, "_tool_manager", None), "_tools", {}).values():
+        strip(getattr(tool, "parameters", None))
+
+
+def limit_toolsets(server: Any, spec: str, groups: Dict[str, List[str]]) -> List[str]:
+    """Keep only the tools in the named groups; return the names removed.
+
+    ``spec`` is a comma-separated list such as "memory,session". Empty or "all"
+    keeps everything. Every tool definition is loaded into the model's context on
+    every turn, so unused groups cost tokens all the time. Tools not listed in
+    any group are always kept.
+    """
+    wanted = {s.strip().lower() for s in (spec or "").split(",") if s.strip()}
+    if not wanted or "all" in wanted:
+        return []
+    unknown = wanted - set(groups)
+    if unknown:
+        logger.warning("Unknown COGNICORE_TOOLSETS entries ignored: %s", ", ".join(sorted(unknown)))
+    drop = {name for group, names in groups.items() if group not in wanted for name in names}
+    tools = getattr(getattr(server, "_tool_manager", None), "_tools", {})
+    removed = [name for name in list(tools) if name in drop]
+    for name in removed:
+        del tools[name]
+    return removed
+
+
+def _with_local_os(environment_json: str) -> Dict[str, Any]:
+    """Parse an environment fingerprint and fill in the OS.
+
+    The stdio server runs on the user's machine, so its OS is the agent's OS.
+    (The hosted server cannot know this and leaves it to the client.)
+    """
+    import platform
+
+    try:
+        env = json.loads(environment_json) if environment_json else {}
+    except json.JSONDecodeError:
+        env = {}
+    if not isinstance(env, dict):
+        env = {}
+    env.setdefault("os", platform.system())
+    return env
+
+
 def _state_path() -> Path:
     """Path to the JSON file that holds serialised memory."""
     return _get_data_dir() / "cognicore_memory.json"
@@ -154,14 +240,7 @@ def create_mcp_server() -> "FastMCP":
             "Install it with:  pip install mcp"
         )
 
-    mcp = FastMCP(
-        "cognicore",
-        instructions=(
-            "Runtime cognition layer for AI agents — provides episodic "
-            "memory, semantic recall, pattern reflection, and threat "
-            "detection via the Model Context Protocol."
-        ),
-    )
+    mcp = FastMCP("cognicore", instructions=MEMORY_INSTRUCTIONS)
 
     # ------------------------------------------------------------------
     # Tool 1: cognicore_remember
@@ -542,15 +621,7 @@ def create_mcp_server() -> "FastMCP":
         conversation: List[Dict[str, Any]],
         keep_last_n: int = 5,
     ) -> str:
-        """Called when conversation is getting long. Takes messages older than last N and compresses them into a dense summary without LLM API calls.
-
-        Args:
-            conversation: List of conversation messages [{role, content}] to compress.
-            keep_last_n: Number of recent messages to preserve verbatim (default 5).
-
-        Returns:
-            JSON string with compressed summary, token metrics, and stored memory ID.
-        """
+        """Compress messages older than the last keep_last_n into a dense stored summary (no LLM calls). Returns JSON with the summary and token counts."""
         _ensure_initialized()
         return compress_context(_runtime.backend, conversation, keep_last_n=keep_last_n)
 
@@ -559,20 +630,25 @@ def create_mcp_server() -> "FastMCP":
     # ------------------------------------------------------------------
     @mcp.tool()
     def cognicore_save_session(
-        conversation: List[Dict[str, Any]],
+        conversation: Optional[List[Dict[str, Any]]] = None,
         session_name: str = "",
+        agent: str = "",
+        goal: str = "",
+        current_state: str = "",
+        environment_json: str = "",
+        handoff_json: str = "",
     ) -> str:
-        """Called at END of conversation automatically or manually. Saves atomic facts, decisions, code snippets, and action items before context is lost.
+        """Save work so any agent can resume it later. Cheapest: send handoff_json (written by you) instead of the full conversation.
 
-        Args:
-            conversation: List of conversation messages [{role, content}] from the session.
-            session_name: Optional human-readable name for this session.
-
-        Returns:
-            JSON string confirming stored facts, decisions, snippets, and summary.
-        """
+        handoff_json: {"goal","current_state","decisions":[str|{"what","why"}],"open_tasks":[str],"key_facts":[str],"files":[str]}. Keep ids, versions, paths and numbers verbatim; prefix rejected approaches with "Rejected:".
+        environment_json: {"os","python_version","framework","framework_version","dependencies":{"name":"ver"}}.
+        agent: e.g. "claude-code". Secrets are redacted; saving the same content twice is a no-op."""
         _ensure_initialized()
-        return save_session(_runtime.backend, conversation, session_name=session_name if session_name else None)
+        return save_session(
+            _runtime.backend, conversation, session_name=session_name if session_name else None,
+            agent=agent, goal=goal, current_state=current_state,
+            environment=_with_local_os(environment_json), supplied_handoff=handoff_json or None,
+        )
 
     # ------------------------------------------------------------------
     # Tool 10: cognicore_resume_session
@@ -582,25 +658,31 @@ def create_mcp_server() -> "FastMCP":
         query: str = "",
         last_n_sessions: int = 3,
         include_action_items: bool = True,
+        max_tokens: int = 0,
+        format: str = "text",
+        session_id: str = "",
+        section: str = "",
+        environment_json: str = "",
     ) -> str:
-        """Called at START of every new conversation. Reconstructs context brief from past sessions instantly.
+        """Start of a conversation: resume past work, most important first (goal, state, open tasks, decisions, facts).
 
-        Args:
-            query: Optional search query describing what the user is currently working on.
-            last_n_sessions: Number of recent sessions to include in the brief (default 3).
-            include_action_items: Whether to retrieve pending action items (default true).
-
-        Returns:
-            Formatted context resume brief with token count.
-        """
+        query: picks the matching session, else the latest. max_tokens: budget (default 1500); omitted items are listed, fetch them with session_id + section. format: "text" or "json". environment_json: your environment, to get mismatch warnings."""
         _ensure_initialized()
         return resume_session(
             _runtime.backend,
             query=query if query else None,
             last_n_sessions=last_n_sessions,
             include_action_items=include_action_items,
+            max_tokens=max_tokens or None,
+            format=format,
+            session_id=session_id or None,
+            section=section or None,
+            environment=_with_local_os(environment_json) if environment_json else None,
         )
 
+    # e.g. COGNICORE_TOOLSETS=memory,session for a memory-only agent. Default: all tools.
+    limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), LOCAL_TOOLSETS)
+    strip_schema_titles(mcp)
     return mcp
 
 

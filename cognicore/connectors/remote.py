@@ -46,10 +46,12 @@ if not hasattr(FastMCP, "sse_app"):
         )
     FastMCP.sse_app = sse_app
 
+from cognicore.mcp.server import MEMORY_INSTRUCTIONS  # noqa: E402
+
 if _transport_security is not None:
-    mcp = FastMCP("cognicore-remote", transport_security=_transport_security)
+    mcp = FastMCP("cognicore-remote", instructions=MEMORY_INSTRUCTIONS, transport_security=_transport_security)
 else:
-    mcp = FastMCP("cognicore-remote")
+    mcp = FastMCP("cognicore-remote", instructions=MEMORY_INSTRUCTIONS)
 security = HTTPBearer()
 
 # ── Tool annotations ──────────────────────────────────────────────────────
@@ -289,6 +291,15 @@ def _get_reputation() -> ReputationEngine:
         _reputation_engine = ReputationEngine(_get_commerce_db_path())
     return _reputation_engine
 
+def _client_name(ctx: Optional[Context] = None) -> str:
+    """MCP client name from the initialize handshake (e.g. "claude-ai", "cursor"), or ""."""
+    try:
+        params = ctx.session.client_params
+        return params.clientInfo.name if params and params.clientInfo else ""
+    except Exception:
+        return ""
+
+
 def _get_agent_id(ctx: Optional[Context] = None) -> str:
     """Extract a stable agent_id from the request context or local environment."""
     if ctx is None or not getattr(ctx, "request_context", None):
@@ -500,18 +511,52 @@ def cognicore_compress_context(ctx: Context, conversation: list, keep_last_n: in
 
 
 @_tool("Save session summary", _WRITE)
-def cognicore_save_session(ctx: Context, conversation: list, session_name: str = "") -> str:
-    """Save a session summary: atomic facts, decisions, code snippets and action items from the conversation."""
+def cognicore_save_session(
+    ctx: Context,
+    conversation: Optional[list] = None,
+    session_name: str = "",
+    agent: str = "",
+    goal: str = "",
+    current_state: str = "",
+    environment_json: str = "",
+    handoff_json: str = "",
+) -> str:
+    """Save work so any agent can resume it later. Cheapest: send handoff_json (written by you) instead of the full conversation.
+
+    handoff_json: {"goal","current_state","decisions":[str|{"what","why"}],"open_tasks":[str],"key_facts":[str],"files":[str]}. Keep ids, versions, paths and numbers verbatim; prefix rejected approaches with "Rejected:".
+    environment_json: {"os","python_version","framework","framework_version","dependencies":{"name":"ver"}}.
+    agent: e.g. "claude-code". Secrets are redacted; saving the same content twice is a no-op."""
     backend = get_backend(ctx)
-    res = save_session(backend, conversation, session_name=session_name if session_name else None)
+    res = save_session(
+        backend, conversation, session_name=session_name if session_name else None,
+        agent=agent, client=_client_name(ctx), goal=goal, current_state=current_state,
+        environment=environment_json or None, supplied_handoff=handoff_json or None,
+    )
     return apply_auto_compression(ctx, conversation, res)
 
 
 @_tool("Resume from past sessions", _READ)
-def cognicore_resume_session(ctx: Context, query: str = "", last_n_sessions: int = 3, include_action_items: bool = True, conversation: Optional[list] = None) -> str:
-    """Reconstruct a context brief from past sessions."""
+def cognicore_resume_session(
+    ctx: Context,
+    query: str = "",
+    last_n_sessions: int = 3,
+    include_action_items: bool = True,
+    conversation: Optional[list] = None,
+    max_tokens: int = 0,
+    format: str = "text",
+    session_id: str = "",
+    section: str = "",
+    environment_json: str = "",
+) -> str:
+    """Start of a conversation: resume past work, most important first (goal, state, open tasks, decisions, facts).
+
+    query: picks the matching session, else the latest. max_tokens: budget (default 1500); omitted items are listed, fetch them with session_id + section. format: "text" or "json". environment_json: your environment, to get mismatch warnings."""
     backend = get_backend(ctx)
-    res = resume_session(backend, query=query if query else None, last_n_sessions=last_n_sessions, include_action_items=include_action_items)
+    res = resume_session(
+        backend, query=query if query else None, last_n_sessions=last_n_sessions,
+        include_action_items=include_action_items, max_tokens=max_tokens or None, format=format,
+        session_id=session_id or None, section=section or None, environment=environment_json or None,
+    )
     return apply_auto_compression(ctx, conversation, res)
 
 
@@ -970,27 +1015,11 @@ def cognicore_record_experience(
     framework_version: str = "",
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
+    os_name: str = "",
 ) -> str:
-    """Record a structured experience from a completed task.
+    """Record a solved non-trivial problem so other agents can reuse the fix.
 
-    Stores the task, the approaches taken, what failed, what worked, and why.
-
-    Args:
-        task: What the task was, e.g. "Fix JWT auth failures".
-        problem: The specific problem, e.g. "Intermittent 401s after deploy".
-        solution: What actually fixed it.
-        why_it_worked: Root cause explanation.
-        attempts_json: JSON array of attempts:
-            [{"approach": "...", "outcome": "success"|"failure", "reason": "..."}]
-        repository_id: Repo identifier, e.g. "acme/auth-service".
-        commit: Current commit hash.
-        branch: Current branch.
-        affected_files: Comma-separated file paths that were changed.
-        python_version: e.g. "3.11.4".
-        framework: e.g. "FastAPI".
-        framework_version: e.g. "0.95.0".
-        dependencies_json: JSON dict of key dependencies, e.g. {"pyjwt": "2.8.0"}.
-    """
+    attempts_json: [{"approach","outcome":"success"|"failure","reason"}]. affected_files: comma-separated. dependencies_json: {"pyjwt":"2.8.0"}."""
     manager = _get_experience_manager(ctx)
     agent_id = _get_agent_id(ctx)
 
@@ -1034,6 +1063,7 @@ def cognicore_record_experience(
         ),
         environment=EnvironmentContext(
             python_version=python_version,
+            os=os_name,
             framework=framework,
             framework_version=framework_version,
             dependencies=deps,
@@ -1062,17 +1092,7 @@ def cognicore_verify_experience(
     evidence_json: str = "[]",
     conversation: Optional[list] = None,
 ) -> str:
-    """Attach evidence to a recorded experience, promoting it from CANDIDATE
-    to VERIFIED.
-
-    Evidence is a record of the solution working, such as test results or
-    command output.
-
-    Args:
-        experience_id: ID of the experience to verify.
-        evidence_json: JSON array of evidence records:
-            [{"command": "pytest tests/", "exit_code": 0, "commit": "abc123"}]
-    """
+    """Promote a recorded experience to VERIFIED with evidence. evidence_json: [{"command":"pytest tests/","exit_code":0,"commit":"abc123"}]."""
     manager = _get_experience_manager(ctx)
 
     evidence = []
@@ -1115,26 +1135,13 @@ def cognicore_recall_experience(
     framework_version: str = "",
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
+    os_name: str = "",
 ) -> str:
-    """Return past experiences relevant to a task.
-
-    Each result records what was tried, what failed, what worked, and the
-    evidence stored with it.
-
-    Args:
-        query: What the task is about, e.g. "JWT auth bug in FastAPI".
-        include_failures: Include past failed approaches.
-        require_verified: Only return evidence-verified experiences.
-        top_k: Max number of experiences to return.
-        python_version: Current Python version for compatibility filtering.
-        framework: Current framework for compatibility filtering.
-        framework_version: Current framework version.
-        dependencies_json: Current key dependencies as JSON dict.
-    """
+    """Before a non-trivial task: what was tried before, what failed and what worked. Pass your environment (python_version, framework, framework_version, os_name, dependencies_json) to filter out incompatible experiences."""
     manager = _get_experience_manager(ctx)
 
     current_env = None
-    if python_version or framework:
+    if python_version or framework or os_name:
         try:
             deps = json.loads(dependencies_json) if dependencies_json else {}
             if not isinstance(deps, dict):
@@ -1143,6 +1150,7 @@ def cognicore_recall_experience(
             deps = {}
         current_env = EnvironmentContext(
             python_version=python_version,
+            os=os_name,
             framework=framework,
             framework_version=framework_version,
             dependencies=deps,
@@ -1264,19 +1272,9 @@ def cognicore_check_experience(
     framework_version: str = "",
     dependencies_json: str = "{}",
     conversation: Optional[list] = None,
+    os_name: str = "",
 ) -> str:
-    """Report whether a past experience is still valid in the current environment.
-
-    Compares the environment recorded with the experience against the values
-    given here.
-
-    Args:
-        experience_id: ID of the experience to check.
-        python_version: Current Python version.
-        framework: Current framework.
-        framework_version: Current framework version.
-        dependencies_json: Current dependencies as JSON dict.
-    """
+    """Check whether a past experience is still valid in your environment (python_version, framework, framework_version, os_name, dependencies_json)."""
     manager = _get_experience_manager(ctx)
 
     try:
@@ -1288,6 +1286,7 @@ def cognicore_check_experience(
 
     current_env = EnvironmentContext(
         python_version=python_version,
+        os=os_name,
         framework=framework,
         framework_version=framework_version,
         dependencies=deps,
@@ -1903,6 +1902,27 @@ async def figma_webhook(request: Request):
         "entry_id": entry_id,
     }
 
+
+# All tools are registered by now. Optionally keep only some groups (every listed tool
+# costs context tokens on every turn), then trim the listed schemas.
+from cognicore.mcp.server import limit_toolsets, strip_schema_titles  # noqa: E402
+
+TOOLSETS = {
+    "memory": ["cognicore_remember", "cognicore_recall", "cognicore_forget", "cognicore_list", "cognicore_stats"],
+    "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
+    "experience": ["cognicore_record_experience", "cognicore_verify_experience", "cognicore_recall_experience",
+                   "cognicore_share_experience", "cognicore_check_experience"],
+    "commerce": ["cognicore_list_for_sale", "cognicore_purchase_memory", "cognicore_value_my_memory",
+                 "cognicore_reputation", "cognicore_discover_sellers"],
+    "figma": ["cognicore_figma_sync", "cognicore_figma_recall", "cognicore_figma_check_component",
+              "cognicore_figma_record_implementation", "cognicore_figma_design_system", "cognicore_figma_recommend",
+              "cognicore_fabric_recommend", "cognicore_fabric_sync_figma"],
+    "elevenlabs": ["cognicore_elevenlabs_sync", "cognicore_elevenlabs_recall", "cognicore_elevenlabs_learn",
+                   "cognicore_elevenlabs_feedback", "cognicore_elevenlabs_recommend"],
+}
+# e.g. COGNICORE_TOOLSETS=memory,session,experience. Default: all tools.
+limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), TOOLSETS)
+strip_schema_titles(mcp)
 
 # Expose one canonical, authenticated MCP surface. Mounting the same app at "/"
 # previously made /sse and /messages reachable outside the /mcp-only auth check.

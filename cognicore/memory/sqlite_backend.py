@@ -145,6 +145,29 @@ class SQLiteMemoryBackend(MemoryBackend):
             )
         """)
 
+        # v1 handoff columns. Sessions saved before this have NULL handoff_json
+        # and are converted from their memory rows when resumed.
+        session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        for col_name, col_def in [
+            ("handoff_json", "TEXT"),
+            ("conversation_hash", "TEXT"),
+            ("agent", "TEXT DEFAULT ''"),
+            ("client", "TEXT DEFAULT ''"),
+            # The client's own session id (e.g. Claude Code's), so repeated automatic
+            # saves of one conversation update one session; and its project directory.
+            ("external_id", "TEXT"),
+            ("project", "TEXT"),
+        ]:
+            if col_name not in session_cols:
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {col_name} {col_def}")  # nosec B608 - names from the fixed list above
+                except Exception as e:
+                    logger.warning(f"Migration error for sessions.{col_name}: {e}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_conversation_hash ON sessions(conversation_hash)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project, timestamp)")
+
     def _row_to_entry(self, row: sqlite3.Row) -> MemoryEntry:
         scope_str = row["scope"]
         try:
@@ -193,23 +216,49 @@ class SQLiteMemoryBackend(MemoryBackend):
             invalidated_reason=row["invalidated_reason"] if "invalidated_reason" in row.keys() else "",
         )
 
+    @staticmethod
+    def _embedding_json(vec: List[float]) -> str:
+        # normalize for cosine sim
+        norm = sum(x*x for x in vec) ** 0.5
+        if norm > 0:
+            vec = [x/norm for x in vec]
+        return json.dumps(vec)
+
     def store(self, entry: MemoryEntry) -> str:
         embedding_json = None
         if self.provider:
-            text_to_embed = entry.text or entry.action
-            vec = self.provider.embed(text_to_embed)
-            # normalize for cosine sim
-            norm = sum(x*x for x in vec) ** 0.5
-            if norm > 0:
-                vec = [x/norm for x in vec]
-            embedding_json = json.dumps(vec)
+            embedding_json = self._embedding_json(self.provider.embed(entry.text or entry.action))
 
+        with self._get_conn() as conn:
+            entry_id = self._insert(conn, entry, embedding_json)
+        event_bus.publish("on_store", entry=entry, entry_id=entry_id)
+        return entry_id
+
+    def store_many(self, entries: List[MemoryEntry]) -> List[str]:
+        """Store several entries in one transaction, with one batched embedding call.
+
+        Same result as calling ``store`` for each entry, but a session save no
+        longer pays a connection, a commit and an embed call per row.
+        """
+        if not entries:
+            return []
+        embeddings: List[Optional[str]] = [None] * len(entries)
+        if self.provider:
+            vecs = self.provider.embed_batch([e.text or e.action for e in entries])
+            embeddings = [self._embedding_json(v) for v in vecs]
+
+        with self._get_conn() as conn:
+            ids = [self._insert(conn, e, emb) for e, emb in zip(entries, embeddings)]
+        for entry, entry_id in zip(entries, ids):
+            event_bus.publish("on_store", entry=entry, entry_id=entry_id)
+        return ids
+
+    def _insert(self, conn: sqlite3.Connection, entry: MemoryEntry, embedding_json: Optional[str]) -> str:
         metadata_json = json.dumps(entry.metadata) if entry.metadata else None
         timestamp = entry.timestamp or time.time()
         last_accessed = entry.last_accessed or timestamp
 
-        with self._get_conn() as conn:
-            cursor = conn.execute("""
+        cursor = conn.execute("""
                 INSERT INTO memory_entries (
                     text, category, correct, action, scope, scope_id,
                     metadata_json, embedding_json, timestamp, relevance,
@@ -252,11 +301,9 @@ class SQLiteMemoryBackend(MemoryBackend):
                 entry.invalidated_by,
                 entry.invalidated_reason,
             ))
-            entry_id = str(cursor.lastrowid)
-            entry.entry_id = entry_id
-            
-            event_bus.publish("on_store", entry=entry, entry_id=entry_id)
-            return entry_id
+        entry_id = str(cursor.lastrowid)
+        entry.entry_id = entry_id
+        return entry_id
 
     def search(self, query: str, top_k: int = 5,
                category: Optional[str] = None,
@@ -355,8 +402,11 @@ class SQLiteMemoryBackend(MemoryBackend):
             # Lexical / BM25 mode: FTS5 prefix search with full-corpus BM25 fallback
             rows = []
             if query.strip():
-                clean_query = query.replace('"', '').replace("'", '').strip()
-                fts_tokens = ' '.join(f'{w}*' for w in clean_query.split() if w)
+                # Quote each word token (the same split FTS5's unicode61 tokenizer makes), so
+                # "payments-api", paths and FTS keywords (AND/OR/NOT) are not parsed as syntax.
+                fts_tokens = ' '.join(f'"{w}"*' for w in re.findall(r"\w+", query))
+                if not fts_tokens:  # punctuation only: nothing for FTS5 to match
+                    return self._fallback_search(conn, query, top_k, category, scope, scope_id, metadata_filters)
                 
                 fts_sql = """
                     SELECT rowid, rank as bm25_score

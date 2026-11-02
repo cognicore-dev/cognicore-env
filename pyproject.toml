@@ -57,6 +57,7 @@ dev = [
     "pydantic>=2.0",
     "PyJWT>=2.8.0",
     "mcp[cli]>=1.2.0,<2",
+    "anthropic>=1.0",  # tests for optional AI compression (fake client, no network)
 ]
 all = [
     "cognicore-env[rl,rendering,memory,hf,llm,embeddings,server,mcp,langchain,crewai,openai-agents,mem0,memory-providers,extension,dev]",
@@ -73,6 +74,9 @@ Changelog = "https://github.com/cognicore-dev/cognicore-env/blob/main/CHANGELOG.
 cognicore = "cognicore.cli:main"
 cognicore-extension = "cognicore.extension.__main__:main"
 cognicore-code-setup = "cognicore.extension.code_setup:main"
+# Used by the cognicore plugin (plugins/cognicore): the local MCP server and the memory hooks.
+cognicore-mcp = "cognicore.mcp.server:main"
+cognicore-hooks = "cognicore.hooks:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]

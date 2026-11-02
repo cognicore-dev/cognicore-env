@@ -53,6 +53,10 @@ jobs:
           set -o pipefail
           pytest tests/ -n auto -v --tb=short --cov=cognicore --cov-report=json --cov-report=term-missing 2>&1 | tee test_output.txt
 
+      - name: Memory transfer benchmark (offline, no model calls)
+        if: matrix.python-version == '3.12'
+        run: python scripts/bench_transfer.py --out bench_transfer.json
+
       - name: Generate Coverage Report
         if: always() && matrix.python-version == '3.12'
         run: |

@@ -65,5 +65,7 @@ scratch_repo/
 /test_fastmcp.py
 /test_sarvam_tokens.py
 
+# Real-world benchmark work folder (scripts/bench_realworld.py)
+.bench_realworld/
 # Deployment secrets (deploy/.env.example is the template)
 deploy/.env

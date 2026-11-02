@@ -5,8 +5,10 @@
 [deploy]
   # Railway runs Dockerfile start commands in exec form (no variable expansion),
   # so wrap in a shell for $PORT to be substituted.
-  startCommand = '/bin/sh -c "exec uvicorn cognicore.connectors.remote:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*"'
+  startCommand = '/bin/sh -c "exec uvicorn cognicore.connectors.remote:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=* --timeout-keep-alive 120"'
   healthcheckPath = "/health"
-  healthcheckTimeout = 10
+  # Import plus first DB open can exceed 10 s on a small container.
+  healthcheckTimeout = 60
   restartPolicyType = "on_failure"
-  restartPolicyMaxRetries = 3
+  # With 3, one crash loop left the service down (every request a 502) until a redeploy.
+  restartPolicyMaxRetries = 10

@@ -149,6 +149,20 @@ def cmd_webhooks(args):
     start_server(port=port, open_browser=False)
 
 
+def cmd_install(args):
+    """Set up automatic CogniCore memory for the agents on this machine."""
+    from cognicore.installer import install
+
+    return install(args.agent, dry_run=args.dry_run, codex_home=args.codex_home)
+
+
+def cmd_setup(args):
+    """Add the CogniCore memory rule to an agent's instructions."""
+    from cognicore.agent_setup import setup_codex
+
+    print(setup_codex(args.codex_home, remove=args.remove, hooks=not args.no_hooks))
+
+
 def cmd_mcp(args):
     """Start the CogniCore MCP server."""
     action = getattr(args, 'action', 'serve')
@@ -425,16 +439,29 @@ def main():
     
     std_cmd = sub.add_parser("studio", help="Start the Memory Observability Studio")
     std_cmd.add_argument("--port", type=int, default=8060, help="Port to serve on")
-    
+
+    inst = sub.add_parser("install", help="Set up automatic memory for Claude Code and Codex")
+    inst.add_argument("--agent", action="append", choices=["claude", "codex"], help="Only this agent (repeatable)")
+    inst.add_argument("--dry-run", action="store_true", help="Show what would change, change nothing")
+    inst.add_argument("--codex-home", help="Codex home (default: $CODEX_HOME or ~/.codex)")
+
+    setup_cmd = sub.add_parser("setup", help="Teach an agent without CogniCore hooks to use memory")
+    setup_cmd.add_argument("agent", choices=["codex"])
+    setup_cmd.add_argument("--remove", action="store_true", help="Remove CogniCore's hooks and rule again")
+    setup_cmd.add_argument("--no-hooks", action="store_true", help="Only add the AGENTS.md rule")
+    setup_cmd.add_argument("--codex-home", help="Codex home (default: $CODEX_HOME or ~/.codex)")
+
     args = p.parse_args()
     cmds = {"list": cmd_list, "train": cmd_train, "benchmark": cmd_benchmark,
             "arena": cmd_arena, "ui": cmd_ui, "integrations": cmd_integrations,
             "webhooks": cmd_webhooks, "mcp": cmd_mcp,
             "bench": cmd_bench, "doctor": cmd_doctor, "sleep": cmd_sleep,
             "passport": cmd_passport, "civilization": cmd_civilization,
-            "studio": cmd_studio}
+            "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install}
     if args.command in cmds:
-        cmds[args.command](args)
+        result = cmds[args.command](args)
+        if isinstance(result, int) and result:
+            sys.exit(result)
     else:
         p.print_help()
 

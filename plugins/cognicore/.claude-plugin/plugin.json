@@ -1,0 +1,13 @@
+{
+  "name": "cognicore",
+  "displayName": "CogniCore",
+  "version": "0.1.0",
+  "description": "Automatic, local memory that carries your work between sessions and agents (Claude Code, Codex). Saves each session from its transcript with no model calls and resumes it at the next start, in about 450 tokens.",
+  "author": {
+    "name": "CogniCore",
+    "url": "https://github.com/cognicore-dev/cognicore-env"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/cognicore-dev/cognicore-env",
+  "homepage": "https://github.com/cognicore-dev/cognicore-env/tree/main/plugins/cognicore"
+}
