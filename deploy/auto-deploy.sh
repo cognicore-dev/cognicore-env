@@ -24,8 +24,11 @@
 #   sudo install -o root -g root -m 0755 deploy/auto-deploy.sh /usr/local/sbin/cognicore-deploy
 #   sudo cognicore-deploy --dry-run       # report what would happen
 #   sudo cognicore-deploy --allow-infra   # deploy a held deploy/ change after reviewing it
+#   sudo cognicore-deploy --retry         # try again a commit whose deploy failed
 #
-# Exit codes: 0 nothing to do, waiting, held, or deployed; 1 error or rolled back.
+# Exit codes: 0 nothing to do, waiting, held, skipped, or deployed;
+#             1 error, or deploy failed and the previous commit is serving again;
+#             2 deploy and rollback both failed: the server is down.
 set -euo pipefail
 
 REPO_DIR=${COGNICORE_REPO_DIR:-/opt/cognicore-env}
@@ -44,23 +47,31 @@ INFRA_EXEMPT_RE='^deploy/requirements\.(in|txt)$'
 
 DRY_RUN=0
 ALLOW_INFRA=0
+RETRY=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run)     DRY_RUN=1 ;;
         --allow-infra) ALLOW_INFRA=1 ;;
+        --retry)       RETRY=1 ;;
         *) printf 'unknown option: %s\n' "$arg" >&2; exit 2 ;;
     esac
 done
-
-COMPOSE=(docker compose -f "$REPO_DIR/deploy/docker-compose.yml" --env-file "$REPO_DIR/deploy/.env")
-# The checkout belongs to another user. Allow root to read it, but never run
-# hooks or an fsmonitor that the checkout's own config could point at.
-GIT=(git -c "safe.directory=$REPO_DIR" -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$REPO_DIR")
 
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 die() { log "ERROR: $*"; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run as root (it drives Docker)"
+
+COMPOSE=(docker compose -f "$REPO_DIR/deploy/docker-compose.yml" --env-file "$REPO_DIR/deploy/.env")
+# Git runs as the checkout's owner, never as root. Files written by root carry
+# root's umask, and Docker copies their modes into the image, so a source file
+# root wrote as 0600 is unreadable to the container's non-root user: a deploy
+# once crash-looped on "Permission denied" for exactly that reason. Hooks and
+# fsmonitor stay off so the checkout's own config cannot run anything.
+repo_owner=$(stat -c %U "$REPO_DIR") || die "$REPO_DIR does not exist"
+owner_home=$(getent passwd "$repo_owner" | cut -d: -f6)
+GIT=(runuser -u "$repo_owner" -- env HOME="$owner_home"
+     git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$REPO_DIR")
 
 # Only one deploy at a time: a slow build must not race the next timer tick.
 exec 9>"$LOCK_FILE"
@@ -75,6 +86,13 @@ target=$("${GIT[@]}" rev-parse "origin/$BRANCH")
 
 if [[ $current == "$target" ]]; then
     log "up to date at ${current:0:7}"
+    exit 0
+fi
+
+# A commit whose deploy failed is not retried on every tick: each attempt
+# restarts the server. A newer commit, or --retry, tries again.
+if [[ $(cat "$STATE_DIR/failed" 2>/dev/null || true) == "$target" && $RETRY -eq 0 ]]; then
+    log "skipping ${target:0:7}: its deploy failed and was rolled back; merge a fix, or run: sudo cognicore-deploy --retry"
     exit 0
 fi
 
@@ -149,58 +167,66 @@ if (( DRY_RUN )); then
 fi
 
 # ── Deploy ───────────────────────────────────────────────────────────────────
+domain=$(sed -n 's/^COGNICORE_DOMAIN=//p' "$REPO_DIR/deploy/.env" | tr -d "\"' ")
+
+# Is the mcp container healthy by its own check, and (when a domain is set)
+# reachable the way users reach it?
+server_healthy() {
+    local container status=unknown deadline=$(( SECONDS + HEALTH_TIMEOUT ))
+    container=$("${COMPOSE[@]}" ps -q mcp) || container=""
+    [[ -n $container ]] || { log "mcp container not found"; return 1; }
+    while (( SECONDS < deadline )); do
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)
+        case "$status" in
+            healthy)   break ;;
+            unhealthy) log "container reported unhealthy"; return 1 ;;
+        esac
+        sleep 5
+    done
+    if [[ $status != healthy ]]; then
+        log "container did not become healthy within ${HEALTH_TIMEOUT}s (last status: $status)"
+        return 1
+    fi
+    log "container healthy"
+    if [[ -n $domain ]] && ! curl -fsS --max-time 20 "https://$domain/health" >/dev/null; then
+        log "container is healthy but https://$domain/health is not responding"
+        return 1
+    fi
+    [[ -z $domain ]] || log "https://$domain/health responding"
+}
+
+# Restore the previous commit and prove it is serving again. Exits.
+rollback() {
+    printf '%s\n' "$target" > "$STATE_DIR/failed"
+    log "ROLLING BACK to ${current:0:7}"
+    if "${GIT[@]}" reset --hard --quiet "$current" \
+        && "${COMPOSE[@]}" up -d --build >&2 \
+        && server_healthy; then
+        log "rolled back to ${current:0:7}; the server is running it. ${target:0:7} will not be retried automatically."
+        exit 1
+    fi
+    log "ROLLBACK FAILED - THE SERVER IS DOWN. Check: sudo docker compose -f $REPO_DIR/deploy/docker-compose.yml logs mcp"
+    exit 2
+}
+
 # deploy/.env is gitignored, so a hard reset cannot discard the secrets.
 log "deploying ${target:0:7}"
 "${GIT[@]}" reset --hard --quiet "$target" || die "could not check out ${target:0:7}"
 
-rollback() {
-    log "ROLLING BACK to ${current:0:7}"
-    "${GIT[@]}" reset --hard --quiet "$current"
-    if "${COMPOSE[@]}" up -d --build >&2; then
-        log "rolled back to ${current:0:7}"
-    else
-        log "ROLLBACK FAILED - the server may be down, intervene by hand"
-    fi
-}
+# Docker copies file modes into the image and the app runs as a non-root user,
+# so a source file other users cannot read would crash it on start. Check
+# before touching the running container: nothing has restarted yet.
+unreadable=$(find "$REPO_DIR/cognicore" -type f ! -perm -o=r -print -quit)
+if [[ -n $unreadable ]]; then
+    "${GIT[@]}" reset --hard --quiet "$current" || true
+    die "not deploying ${target:0:7}: $unreadable is not readable by the container's user; the running server is untouched"
+fi
 
 if ! "${COMPOSE[@]}" up -d --build >&2; then
     log "build or start failed for ${target:0:7}"
     rollback
-    exit 1
 fi
+server_healthy || rollback
 
-# ── Wait for the container's own health check to pass ────────────────────────
-container=$("${COMPOSE[@]}" ps -q mcp) || container=""
-[[ -n $container ]] || { log "mcp container not found after start"; rollback; exit 1; }
-
-status=unknown
-deadline=$(( SECONDS + HEALTH_TIMEOUT ))
-while (( SECONDS < deadline )); do
-    status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)
-    case "$status" in
-        healthy)   log "container healthy"; break ;;
-        unhealthy) log "container reported unhealthy"; rollback; exit 1 ;;
-    esac
-    sleep 5
-done
-
-if [[ $status != healthy ]]; then
-    log "container did not become healthy within ${HEALTH_TIMEOUT}s (last status: $status)"
-    rollback
-    exit 1
-fi
-
-# ── Confirm it is reachable the way users reach it ───────────────────────────
-domain=$(sed -n 's/^COGNICORE_DOMAIN=//p' "$REPO_DIR/deploy/.env" | tr -d "\"' ")
-if [[ -n $domain ]]; then
-    if curl -fsS --max-time 20 "https://$domain/health" >/dev/null; then
-        log "https://$domain/health responding"
-    else
-        log "container is healthy but https://$domain/health is not responding"
-        rollback
-        exit 1
-    fi
-fi
-
-rm -f "$STATE_DIR/held"
+rm -f "$STATE_DIR/held" "$STATE_DIR/failed"
 log "deployed ${target:0:7} successfully"

@@ -94,8 +94,12 @@ has a new commit, it:
    cannot block a deploy. If CI is still running it waits for the next tick;
 3. checks the exact commit out and runs `docker compose up -d --build`;
 4. waits up to 4 minutes for the container's health check, then requests
-   `https://$COGNICORE_DOMAIN/health`, and restores the previous commit if
-   either fails.
+   `https://$COGNICORE_DOMAIN/health`. If either fails it restores the previous
+   commit, checks that *it* is healthy, and does not try the failed commit
+   again until a newer one lands or someone runs `--retry`.
+
+Git runs as the checkout's owner rather than root, and a deploy stops before
+anything restarts if a source file is unreadable to the container's user.
 
 ### What this does and does not protect
 
@@ -157,6 +161,18 @@ them first with the `git show` lines from "Install it".
 | Deploy now | `sudo systemctl start cognicore-deploy` |
 | Pause deploys | `sudo systemctl stop cognicore-deploy.timer` |
 | Resume deploys | `sudo systemctl start cognicore-deploy.timer` |
+| Retry a commit whose deploy failed | `sudo cognicore-deploy --retry` |
+
+### If a deploy fails
+
+The journal ends with one of:
+
+- `rolled back to <sha>; the server is running it`: users are unaffected. Find
+  the cause with `sudo docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs mcp`
+  and merge a fix; the next commit deploys normally.
+- `ROLLBACK FAILED - THE SERVER IS DOWN`: stop the timer
+  (`sudo systemctl stop cognicore-deploy.timer`), read the same logs, and
+  restore by hand.
 
 To withdraw a bad commit that passed CI, revert it on `main`; the revert
 deploys like any other commit.

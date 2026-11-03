@@ -190,3 +190,53 @@ def test_deploy_and_rollback_use_exact_commits():
     script = _script()
     assert 'reset --hard --quiet "$target"' in script
     assert 'reset --hard --quiet "$current"' in script
+
+
+# ── Regressions from the 2026-11-03 outage ───────────────────────────────────
+# The unit ran the script with UMask=0077, root's git rewrote changed source
+# files as 0600, Docker copied that mode into the image, and the non-root app
+# crash-looped on "Permission denied". The rollback rewrote files the same way,
+# reported success without checking, and the timer retried every 3 minutes.
+
+def _function_body(name):
+    script = _script()
+    match = re.search(rf"^{name}\(\) \{{\n(.*?)\n\}}\n", script, re.MULTILINE | re.DOTALL)
+    assert match, f"{name}() not found in auto-deploy.sh"
+    return match.group(1)
+
+
+def test_unit_umask_cannot_hide_files_from_other_users():
+    service = SERVICE.read_text(encoding="utf-8")
+    umask = re.search(r"^UMask=([0-7]+)", service, re.MULTILINE)
+    if umask:
+        assert not int(umask.group(1), 8) & 0o004, f"UMask={umask.group(1)} strips read for others"
+
+
+def test_git_runs_as_the_checkout_owner_not_root():
+    script = _script()
+    assert re.search(r'^GIT=\(runuser -u "\$repo_owner"', script, re.MULTILINE)
+    assert 'repo_owner=$(stat -c %U "$REPO_DIR")' in script
+    # Every git call goes through the wrapper.
+    bare = [line for line in script.splitlines()
+            if re.match(r"\s*git\s", line) and "-c core.hooksPath" not in line]
+    assert not bare, f"git called without the owner wrapper: {bare}"
+
+
+def test_unreadable_source_stops_the_deploy_before_anything_restarts():
+    script = _script()
+    guard = script.index("! -perm -o=r")
+    first_restart = script.index('"${COMPOSE[@]}" up -d --build >&2; then')
+    assert guard < first_restart
+
+
+def test_rollback_must_prove_the_server_is_healthy():
+    body = _function_body("rollback")
+    assert "server_healthy" in body
+    assert "exit 2" in body, "a rollback that does not come back must say the server is down"
+
+
+def test_a_failed_commit_is_not_retried_every_tick():
+    script = _script()
+    assert '"$STATE_DIR/failed"' in _function_body("rollback")
+    assert re.search(r'cat "\$STATE_DIR/failed".*== "\$target" && \$RETRY -eq 0', script)
+    assert "--retry)" in script
