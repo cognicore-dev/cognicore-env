@@ -589,3 +589,28 @@ def test_a_saved_handoff_at_the_end_of_the_session_still_wins(tmp_path):
     h = build_handoff(conversation, "s", "n", 0.0, supplied=supplied)
     assert h["current_state"] == "Deployed; live test passed"
     assert h["open_tasks"][0]["task"] == "Announce it"
+
+
+def test_quoted_phrases_do_not_classify_a_sentence():
+    h = build_handoff([{"role": "assistant", "content":
+        'Now only actual attempts count: "it didn\'t work", "we tried X but it doesn\'t work".'}], "s", "n", 0.0)
+    assert not any(d["status"] == "rejected" for d in h["decisions"])
+
+
+def test_follow_up_is_a_task_only_in_task_form():
+    def tasks(text):
+        return [t["task"] for t in build_handoff([{"role": "user", "content": text}], "s", "n", 0.0)["open_tasks"]]
+
+    assert tasks("Benchmark against claude-mem 15.7.0: both completed every follow-up.") == []
+    assert tasks("Follow-up: format_eur must return '12,34 €'.") == ["Follow-up: format_eur must return '12,34 €'."]
+    assert tasks("As a follow-up, add a regression test for BILL-311.") != []
+
+
+def test_state_reads_as_a_status_line_from_the_newest_statements():
+    from cognicore.memory.handoff import MAX_STATE_CHARS
+
+    long = [f"Step {i} is deployed and the health check on node{i}.example.dev is passing now." for i in range(8)]
+    h = build_handoff([{"role": "assistant", "content": " ".join(long)}], "s", "n", 0.0)
+    assert h["current_state"].endswith(long[-1])
+    assert len(h["current_state"]) <= MAX_STATE_CHARS + len(long[-1])
+    assert long[0] in h["key_facts"]  # older status moves to facts, it isn't lost

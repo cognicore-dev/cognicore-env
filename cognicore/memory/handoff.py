@@ -169,9 +169,14 @@ _REJECTED = re.compile(
     r"\b(?:did not help|didn'?t help|did not work|didn'?t work|no luck|ruled out|we rejected|"
     r"rejected (?:the|this|that) (?:idea|approach|option|proposal)|made it worse|gave up on)\b"
     r"|\b(?:tried|trying|attempted)\b.*\b(?:doesn'?t|does not)\s+(?:work|help)\b", re.I)
+# "follow-up" is a task only in task form ("Follow-up: ...", "as a follow-up"), not
+# in reports like "both completed every follow-up".
 _TASK = re.compile(
-    r"(?:^|\b)(?:todo|to-do|next step|action item|need(?:s)? to|must|pending|follow[- ]up|remaining|"
-    r"still have to|blocked on|we should|don'?t forget)\b|- \[[ x]\]", re.I)
+    r"(?:^|\b)(?:todo|to-do|next step|action item|need(?:s)? to|must|pending|remaining|"
+    r"still have to|blocked on|we should|don'?t forget)\b|- \[[ x]\]"
+    r"|\bfollow[- ]up\s*[:\-]|\b(?:as a|a quick|one more|next)\s+follow[- ]up\b|^follow[- ]up\b", re.I)
+# Quoted text is mentioned, not meant: 'only "it didn't work" counts' rejects nothing.
+_QUOTED = re.compile(r'"[^"\n]{1,300}"|“[^”\n]{1,300}”|`[^`\n]{1,200}`')
 # Phrases that contain a task keyword without stating a task:
 # "messier than it needs to be", "the remaining cost is tokens".
 _NOT_TASK = re.compile(
@@ -232,6 +237,7 @@ def _is_task(sentence: str) -> bool:
 MAX_DECISIONS = 25
 MAX_TASKS = 25
 MAX_FACTS = 40
+MAX_STATE_CHARS = 300
 
 
 def _cap_facts(facts: List[str], limit: int = MAX_FACTS) -> List[str]:
@@ -349,20 +355,21 @@ def build_handoff(
 
     found_goal, states, decisions, tasks, facts = "", [], [], [], []
     for role, s in kept:
+        u = _QUOTED.sub(" ", s)  # classify by what the sentence says, not what it quotes
         if s.endswith("?"):
             # A question is not a task, decision or state; keep it only for its values.
             if extract_exact_values(s):
                 facts.append(s)
-        elif _is_task(s):
-            tasks.append({"task": s, "status": "done" if _DONE.search(s) else "open"})
-        elif _REJECTED.search(s):
+        elif _is_task(u):
+            tasks.append({"task": s, "status": "done" if _DONE.search(u) else "open"})
+        elif _REJECTED.search(u):
             decisions.append({"what": s, "why": "", "status": "rejected"})
-        elif _DECISION.search(s):
+        elif _DECISION.search(u):
             what, why = _split_why(s)
             decisions.append({"what": what, "why": why, "status": "made"})
-        elif not found_goal and _GOAL.search(s) and not s.endswith("?"):
+        elif not found_goal and _GOAL.search(u) and not s.endswith("?"):
             found_goal = s
-        elif _STATE.search(s):
+        elif _STATE.search(u):
             states.append(s)
         else:
             facts.append(s)
@@ -423,8 +430,15 @@ def build_handoff(
     if current_state:
         state_text, older_states = redact_secrets(current_state)[0].strip(), states
     else:
-        # The latest few status statements describe where the work stands now.
-        state_text, older_states = " ".join(states[-3:]), states[:-3]
+        # The latest few status statements describe where the work stands now:
+        # newest first back to at most 3 sentences / ~300 characters, so it
+        # reads as a status line, not a paragraph. Earlier ones become facts.
+        picked: List[str] = []
+        for s in reversed(states):
+            if len(picked) == 3 or (picked and sum(map(len, picked)) + len(s) > MAX_STATE_CHARS):
+                break
+            picked.insert(0, s)
+        state_text, older_states = " ".join(picked), states[:len(states) - len(picked)]
     # Facts with exact values first, then plain statements.
     facts.sort(key=lambda s: 0 if extract_exact_values(s) else 1)
     facts = older_states + facts
