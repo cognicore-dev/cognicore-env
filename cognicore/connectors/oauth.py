@@ -1,18 +1,23 @@
-"""OAuth 2.1 authorization server for the remote MCP server, with GitHub sign-in.
+"""OAuth 2.1 authorization server for the remote MCP server, with Google and GitHub sign-in.
 
 Claude (claude.ai, Desktop, mobile, Claude Code) connects to a remote MCP server
 through OAuth: it reads protected-resource metadata, registers itself with
 Dynamic Client Registration, sends the user to ``/authorize`` with PKCE, and
 exchanges the code at ``/token``. This module implements that server side and
-delegates the actual sign-in to GitHub, so every user gets a stable, distinct
-identity (``github:<numeric id>``) without running a user database.
+delegates the actual sign-in to Google or GitHub, so every user gets a stable,
+distinct identity (``google:<sub>`` or ``github:<numeric id>``) without running a
+user database. The two are never linked: the same person signing in with each
+gets two separate accounts.
 
 Everything is stateless except a small in-memory set of consumed code and
 refresh-token IDs. Requests, codes and tokens are JWTs signed with the server's
 ``COGNICORE_JWT_SECRET`` and told apart by their ``typ`` claim. The GitHub
-access token is used once to read the user's ID and is never stored.
+access token is used once to read the user's ID and is never stored. Google
+sign-in is OpenID Connect with only the ``openid`` scope: the ID token is
+verified, its ``sub`` read, and nothing from Google is stored.
 
-Enabled when ``GITHUB_CLIENT_ID`` and ``GITHUB_CLIENT_SECRET`` are set.
+Each provider is enabled by its ``<PROVIDER>_CLIENT_ID`` and
+``<PROVIDER>_CLIENT_SECRET``; the server is enabled when at least one is.
 ``COGNICORE_PUBLIC_URL`` should be set to the server's public origin
 (e.g. ``https://mcp.example.com``) so the issuer is stable behind proxies.
 """
@@ -21,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import html
 import json
 import os
@@ -44,6 +50,11 @@ REQUEST_TTL = 600
 SCOPES = ["mcp", "offline_access"]
 NONCE_COOKIE = "cognicore_oauth_nonce"
 CALLBACK_PATH = "/oauth/github/callback"
+GITHUB_CALLBACK_PATH = CALLBACK_PATH
+GOOGLE_CALLBACK_PATH = "/oauth/google/callback"
+GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+# Clock skew allowed when checking a Google ID token's exp and iat.
+GOOGLE_LEEWAY = 60
 
 # Redirect URIs Claude uses. Claude Code uses an RFC 8252 loopback redirect on
 # an ephemeral port, accepted separately below.
@@ -67,12 +78,34 @@ def github_enabled() -> bool:
     return bool(os.environ.get("GITHUB_CLIENT_ID") and os.environ.get("GITHUB_CLIENT_SECRET"))
 
 
+def google_enabled() -> bool:
+    return bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
+
+
+def oauth_enabled() -> bool:
+    """The authorization server runs when at least one sign-in provider is configured."""
+    return github_enabled() or google_enabled()
+
+
 def _github_oauth_base() -> str:
     return os.environ.get("COGNICORE_GITHUB_OAUTH_BASE", "https://github.com").rstrip("/")
 
 
 def _github_api_base() -> str:
     return os.environ.get("COGNICORE_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
+
+
+# Google's endpoints, overridable so tests (and staging) can point them elsewhere.
+def _google_authorize_url() -> str:
+    return os.environ.get("COGNICORE_GOOGLE_AUTHORIZE_URL", "https://accounts.google.com/o/oauth2/v2/auth")
+
+
+def _google_token_url() -> str:
+    return os.environ.get("COGNICORE_GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token")
+
+
+def _google_jwks_url() -> str:
+    return os.environ.get("COGNICORE_GOOGLE_JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")
 
 
 def base_url_from_headers(headers: dict[str, str], scheme: str, host: str) -> str:
@@ -200,7 +233,14 @@ border-radius:10px;padding:12px;font-size:14px;margin-top:16px}
 font-size:15px;text-decoration:none;transition:background .15s,border-color .15s}
 .btn.primary{background:var(--btn);color:var(--btn-text)}.btn.primary:hover{background:var(--btn-hover)}
 .btn.secondary{color:var(--text);border:1px solid var(--line)}.btn.secondary:hover{background:var(--soft)}
+.btn.google{background:#fff;color:#1f1f1f;border:1px solid #747775;
+font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-weight:500}
+.btn.google:hover{background:#f2f2f2}
+@media (prefers-color-scheme:dark){.btn.google{background:#131314;color:#e3e3e3;border-color:#8e918f}
+.btn.google:hover{background:#1e1f20}}
 .btn:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.provider{font-weight:600;margin:0 0 6px}.provider+ul{margin-bottom:14px}
+.note{color:var(--muted);font-size:14px;margin:12px 0 0}
 .foot{text-align:center;color:var(--muted);font-size:13px;margin-top:16px}
 """
 
@@ -234,6 +274,18 @@ _ICON_GITHUB = (
     "-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2"
     " .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73"
     '.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>'
+)
+# Google's standard multicolour "G", as used on its sign-in buttons. Kept unaltered.
+_ICON_GOOGLE = (
+    '<svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">'
+    '<path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 '
+    '2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>'
+    '<path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 '
+    '6c4.51-4.18 7.09-10.36 7.09-17.65z"/>'
+    '<path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 '
+    '0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>'
+    '<path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57'
+    '-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>'
 )
 
 
@@ -279,13 +331,72 @@ def _http_json(url: str, data: dict[str, str] | None = None, token: str | None =
         return json.loads(resp.read().decode("utf-8"))
 
 
-class GitHubOAuthServer:
-    """Stateless OAuth 2.1 authorization server backed by GitHub sign-in."""
+class GoogleSignInError(Exception):
+    """A Google sign-in step failed. The message is a fixed reason, safe to log:
+    it never contains a code, a token or the user's ID."""
+
+
+def validate_google_id_token(id_token: str, *, client_id: str, nonce: str, jwks: jwt.PyJWKClient) -> str:
+    """Verify a Google ID token completely and return its ``sub``.
+
+    Raises GoogleSignInError on any failure. Only RS256 signatures from Google's
+    published keys are accepted, so ``alg=none`` or a token signed with a shared
+    secret cannot pass.
+    """
+    try:
+        header = jwt.get_unverified_header(id_token)
+    except jwt.PyJWTError:
+        raise GoogleSignInError("ID token is malformed") from None
+    if header.get("alg") != "RS256":
+        raise GoogleSignInError("ID token is not RS256-signed")
+    try:
+        key = jwks.get_signing_key_from_jwt(id_token).key
+    except jwt.PyJWTError:
+        raise GoogleSignInError("ID token signing key not found") from None
+    try:
+        claims = jwt.decode(
+            id_token, key, algorithms=["RS256"], audience=client_id, issuer=GOOGLE_ISSUERS,
+            leeway=GOOGLE_LEEWAY, options={"require": ["iss", "aud", "exp", "iat", "sub"]},
+        )
+    except jwt.PyJWTError:
+        raise GoogleSignInError("ID token failed verification") from None
+    # PyJWT accepts a list audience containing ours; Google issues a single one.
+    if claims.get("aud") != client_id:
+        raise GoogleSignInError("ID token audience mismatch")
+    if "azp" in claims and claims["azp"] != client_id:
+        raise GoogleSignInError("ID token authorized party mismatch")
+    token_nonce = claims.get("nonce")
+    if not isinstance(token_nonce, str) or not secrets.compare_digest(token_nonce, nonce):
+        raise GoogleSignInError("ID token nonce mismatch")
+    sub = claims.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise GoogleSignInError("ID token has no subject")
+    return sub
+
+
+class OAuthServer:
+    """Stateless OAuth 2.1 authorization server backed by Google and GitHub sign-in."""
 
     def __init__(self, secret: str, algorithm: str = "HS256"):
         self._secret = secret
         self._algorithm = algorithm
         self._consumed: dict[str, float] = {}
+        self._jwks_clients: dict[str, jwt.PyJWKClient] = {}
+
+    def _google_jwks(self) -> jwt.PyJWKClient:
+        """One cached key-set client per JWKS URL; it refetches when Google rotates keys."""
+        url = _google_jwks_url()
+        if url not in self._jwks_clients:
+            self._jwks_clients[url] = jwt.PyJWKClient(
+                url, cache_keys=True, lifespan=3600, timeout=8, headers={"User-Agent": "CogniCore-MCP"},
+            )
+        return self._jwks_clients[url]
+
+    def _google_pkce_verifier(self, nonce: str) -> str:
+        """PKCE verifier for a Google sign-in, derived on the server so it never
+        appears in a URL. Only its S256 challenge is sent to the browser."""
+        digest = hmac.new(self._secret.encode(), f"google-pkce:{nonce}".encode(), hashlib.sha256)
+        return base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
 
     # -- signing ---------------------------------------------------------------
 
@@ -394,37 +505,73 @@ class GitHubOAuthServer:
         loopback = urllib.parse.urlparse(redirect_uri).hostname in LOOPBACK_HOSTS
         warning = f"""<div class="warn" role="note">{_ICON_WARN}<div>Only continue if you just started this
 connection from {html.escape(app_name)}. Any program on this computer can request a local sign-in.</div></div>""" if loopback else ""
-        continue_url = f"/authorize/github?{urllib.parse.urlencode({'request': auth_request})}"
+        query = urllib.parse.urlencode({"request": auth_request})
         cancel_url = _with_query(redirect_uri, {
             "error": "access_denied", "error_description": "The user cancelled sign-in", "state": state,
         })
         name = html.escape(app_name)
+
+        # (provider, what we receive, what we never receive, button). Google first:
+        # it is the account most people already have.
+        providers = []
+        if google_enabled():
+            google_url = html.escape(f"/authorize/google?{query}")
+            providers.append((
+                "Google",
+                "Only your Google account ID, used to keep your memories separate.",
+                "No access to your email, contacts, Drive or any other Google data.",
+                f'<a class="btn google" href="{google_url}">{_ICON_GOOGLE}Continue with Google</a>',
+            ))
+        if github_enabled():
+            github_url = html.escape(f"/authorize/github?{query}")
+            providers.append((
+                "GitHub",
+                "Your public GitHub username and account ID, used only to keep your memories separate",
+                "No access to your repositories, email or private data",
+                f'<a class="btn primary" href="{github_url}">{_ICON_GITHUB}Continue with GitHub</a>',
+            ))
+        if len(providers) == 1:
+            provider, gets, never, _ = providers[0]
+            received = f"""<p class="label">CogniCore receives from {provider}</p>
+<ul><li>{_ICON_CHECK}<span>{gets}</span></li>
+<li>{_ICON_CROSS}<span>{never}</span></li></ul>"""
+        else:
+            received = '<p class="label">What CogniCore receives</p>' + "".join(
+                f"""<p class="provider">If you continue with {provider}</p>
+<ul><li>{_ICON_CHECK}<span>{gets}</span></li>
+<li>{_ICON_CROSS}<span>{never}</span></li></ul>""" for provider, gets, never, _ in providers
+            ) + """<p class="note">Each sign-in option keeps its own memories. Choose the same one every time
+to see the same memories.</p>"""
+        no_new_account = (
+            " Use the Google account you already have. You do not need to create a new account."
+            if google_enabled() else ""
+        )
+        buttons = "\n".join(provider[3] for provider in providers)
         return _render_page(f"Connect {app_name}", f"""
 <div class="marks"><div class="mark app" title="{name}">{_ICON_APP}</div>
 <div class="link" aria-hidden="true"><i></i><i></i><i></i></div>
 <div class="mark brand" title="CogniCore">{_ICON_BRAND}</div></div>
 <h1>Connect {name} to CogniCore Memory</h1>
-<p class="lede">{name} will be able to save and recall memories in your private CogniCore account.</p>
-<div class="section"><p class="label">CogniCore receives from GitHub</p>
-<ul><li>{_ICON_CHECK}<span>Your public GitHub username and account ID, used only to keep your memories separate</span></li>
-<li>{_ICON_CROSS}<span>No access to your repositories, email or private data</span></li></ul></div>
+<p class="lede">{name} will be able to save and recall memories in your private CogniCore account.{no_new_account}</p>
+<div class="section">{received}</div>
 <div class="section"><div class="return"><span>After sign-in you return to</span><strong>{html.escape(return_to)}</strong></div>
 {warning}</div>
-<div class="actions"><a class="btn primary" href="{html.escape(continue_url)}">{_ICON_GITHUB}Continue with GitHub</a>
+<div class="actions">{buttons}
 <a class="btn secondary" href="{html.escape(cancel_url)}">Cancel</a></div>""")
 
-    def authorize_github(self, request: Request):
+    # -- shared by both providers ----------------------------------------------
+
+    def _start_provider(self, request: Request):
+        """Check the consent page's link. Returns (authreq, fresh nonce, None),
+        or ("", "", error page) when the link is invalid or expired."""
         auth_request = request.query_params.get("request", "")
         if not self._verify(auth_request, "authreq"):
-            return _error_page("This sign-in link has expired. Start the connection again from Claude.")
-        nonce = secrets.token_urlsafe(16)
-        state = self._sign("ghstate", REQUEST_TTL, req=auth_request, nonce=nonce)
-        url = f"{_github_oauth_base()}/login/oauth/authorize?" + urllib.parse.urlencode({
-            "client_id": os.environ["GITHUB_CLIENT_ID"],
-            "redirect_uri": f"{base_url(request)}{CALLBACK_PATH}",
-            "state": state,
-            "allow_signup": "true",
-        })
+            return "", "", _error_page("This sign-in link has expired. Start the connection again from Claude.")
+        return auth_request, secrets.token_urlsafe(16), None
+
+    @staticmethod
+    def _redirect_with_nonce(request: Request, url: str, nonce: str) -> RedirectResponse:
+        """Send the browser to the provider, binding the sign-in to it with a cookie."""
         resp = RedirectResponse(url, 302)
         resp.set_cookie(
             NONCE_COOKIE, nonce, max_age=REQUEST_TTL, httponly=True, samesite="lax",
@@ -432,24 +579,73 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
         )
         return resp
 
+    def _check_callback(self, request: Request, state_typ: str):
+        """Verify a provider callback's state and its typ, the browser's nonce cookie,
+        and the original authorization request, in that order.
+
+        Returns (state claims, authreq claims, None) or (None, None, error page).
+        Failures here show our own page and never redirect: until the authreq is
+        verified there is no validated redirect URI to send them to.
+        """
+        provider_state = self._verify(request.query_params.get("state", ""), state_typ)
+        if not provider_state:
+            return None, None, _error_page(
+                "This sign-in has expired or was not started here. Start the connection again from Claude.")
+        cookie = request.cookies.get(NONCE_COOKIE, "")
+        if not cookie or not secrets.compare_digest(cookie, str(provider_state.get("nonce", ""))):
+            return None, None, _error_page(
+                "This sign-in was started in a different browser. Start the connection again from Claude.")
+        auth_request = self._verify(provider_state.get("req", ""), "authreq")
+        if not auth_request:
+            return None, None, _error_page("This sign-in has expired. Start the connection again from Claude.")
+        return provider_state, auth_request, None
+
+    @staticmethod
+    def _client_error(auth_request: dict[str, Any], error: str, description: str) -> RedirectResponse:
+        """Report an error to the client's already-validated redirect URI, with its own state."""
+        return RedirectResponse(_with_query(auth_request["redirect_uri"], {
+            "error": error, "error_description": description, "state": auth_request.get("state"),
+        }), 302)
+
+    def _issue_code(self, request: Request, auth_request: dict[str, Any], sub: str, login: str) -> RedirectResponse:
+        """Send the client back with our own single-use, PKCE-bound authorization code."""
+        redirect_uri = auth_request["redirect_uri"]
+        code = self._sign(
+            "code", CODE_TTL, jti=secrets.token_urlsafe(16),
+            sub=sub, login=login,
+            client_id=auth_request["client_id"], redirect_uri=redirect_uri,
+            code_challenge=auth_request["code_challenge"], scope=auth_request.get("scope", ""),
+        )
+        resp = RedirectResponse(_with_query(redirect_uri, {
+            "code": code, "state": auth_request.get("state"), "iss": base_url(request),
+        }), 302)
+        resp.delete_cookie(NONCE_COOKIE, path="/oauth")
+        return resp
+
+    # -- GitHub ----------------------------------------------------------------
+
+    def authorize_github(self, request: Request):
+        auth_request, nonce, error = self._start_provider(request)
+        if error:
+            return error
+        state = self._sign("ghstate", REQUEST_TTL, req=auth_request, nonce=nonce)
+        url = f"{_github_oauth_base()}/login/oauth/authorize?" + urllib.parse.urlencode({
+            "client_id": os.environ["GITHUB_CLIENT_ID"],
+            "redirect_uri": f"{base_url(request)}{CALLBACK_PATH}",
+            "state": state,
+            "allow_signup": "true",
+        })
+        return self._redirect_with_nonce(request, url, nonce)
+
     async def github_callback(self, request: Request):
         q = request.query_params
-        gh_state = self._verify(q.get("state", ""), "ghstate")
-        if not gh_state:
-            return _error_page("This sign-in has expired or was not started here. Start the connection again from Claude.")
-        cookie = request.cookies.get(NONCE_COOKIE, "")
-        if not cookie or not secrets.compare_digest(cookie, gh_state.get("nonce", "")):
-            return _error_page("This sign-in was started in a different browser. Start the connection again from Claude.")
-        auth_request = self._verify(gh_state.get("req", ""), "authreq")
-        if not auth_request:
-            return _error_page("This sign-in has expired. Start the connection again from Claude.")
-        redirect_uri, client_state = auth_request["redirect_uri"], auth_request.get("state")
+        _, auth_request, error = self._check_callback(request, "ghstate")
+        if error:
+            return error
 
         if q.get("error") or not q.get("code"):
-            return RedirectResponse(_with_query(redirect_uri, {
-                "error": "access_denied", "error_description": q.get("error_description", "GitHub sign-in was cancelled"),
-                "state": client_state,
-            }), 302)
+            return self._client_error(
+                auth_request, "access_denied", q.get("error_description", "GitHub sign-in was cancelled"))
 
         try:
             token = await asyncio.to_thread(_http_json, f"{_github_oauth_base()}/login/oauth/access_token", {
@@ -465,21 +661,66 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
             github_id = user["id"]
         except (OSError, ValueError, KeyError) as exc:  # network, bad JSON, or unexpected GitHub response
             print(f"[OAUTH] GitHub sign-in failed: {exc}")
-            return RedirectResponse(_with_query(redirect_uri, {
-                "error": "server_error", "error_description": "GitHub sign-in failed", "state": client_state,
-            }), 302)
+            return self._client_error(auth_request, "server_error", "GitHub sign-in failed")
 
-        code = self._sign(
-            "code", CODE_TTL, jti=secrets.token_urlsafe(16),
-            sub=f"github:{github_id}", login=user.get("login", ""),
-            client_id=auth_request["client_id"], redirect_uri=redirect_uri,
-            code_challenge=auth_request["code_challenge"], scope=auth_request.get("scope", ""),
-        )
-        resp = RedirectResponse(_with_query(redirect_uri, {
-            "code": code, "state": client_state, "iss": base_url(request),
-        }), 302)
-        resp.delete_cookie(NONCE_COOKIE, path="/oauth")
-        return resp
+        return self._issue_code(request, auth_request, f"github:{github_id}", user.get("login", ""))
+
+    # -- Google (OpenID Connect, scope openid only) ----------------------------
+
+    def authorize_google(self, request: Request):
+        auth_request, nonce, error = self._start_provider(request)
+        if error:
+            return error
+        # A typ of its own, so a GitHub state cannot be replayed here, or the reverse.
+        state = self._sign("googlestate", REQUEST_TTL, req=auth_request, nonce=nonce)
+        url = f"{_google_authorize_url()}?" + urllib.parse.urlencode({
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "redirect_uri": f"{base_url(request)}{GOOGLE_CALLBACK_PATH}",
+            "response_type": "code",
+            "scope": "openid",
+            "prompt": "select_account",
+            "state": state,
+            "nonce": nonce,
+            "code_challenge": _pkce_s256(self._google_pkce_verifier(nonce)),
+            "code_challenge_method": "S256",
+        })
+        return self._redirect_with_nonce(request, url, nonce)
+
+    async def google_callback(self, request: Request):
+        q = request.query_params
+        google_state, auth_request, error = self._check_callback(request, "googlestate")
+        if error:
+            return error
+
+        if q.get("error") or not q.get("code"):
+            return self._client_error(auth_request, "access_denied", "Google sign-in was cancelled")
+
+        nonce = google_state["nonce"]
+        client_id = os.environ["GOOGLE_CLIENT_ID"]
+        try:
+            token = await asyncio.to_thread(_http_json, _google_token_url(), {
+                "grant_type": "authorization_code",
+                "code": q["code"],
+                "client_id": client_id,
+                "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+                "redirect_uri": f"{base_url(request)}{GOOGLE_CALLBACK_PATH}",
+                "code_verifier": self._google_pkce_verifier(nonce),
+            })
+            id_token = token.get("id_token") if isinstance(token, dict) else None
+            if not isinstance(id_token, str) or not id_token:
+                raise GoogleSignInError("token response has no ID token")
+            # Fetching Google's signing keys can block, so this runs off the event loop too.
+            google_sub = await asyncio.to_thread(
+                validate_google_id_token, id_token, client_id=client_id, nonce=nonce, jwks=self._google_jwks(),
+            )
+        except GoogleSignInError as exc:  # a fixed reason, safe to log
+            print(f"[OAUTH] Google sign-in failed: {exc}")
+            return self._client_error(auth_request, "server_error", "Google sign-in failed")
+        except (OSError, ValueError) as exc:  # network or bad JSON; the message may echo request data
+            print(f"[OAUTH] Google sign-in failed: {type(exc).__name__} at the token endpoint")
+            return self._client_error(auth_request, "server_error", "Google sign-in failed")
+        # Google's access and ID tokens go out of scope here; nothing from them is stored.
+        return self._issue_code(request, auth_request, f"google:{google_sub}", "")
 
     # -- token endpoint --------------------------------------------------------
 
@@ -534,3 +775,7 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
             return self._issue_tokens(refresh["sub"], refresh.get("login", ""), refresh["client_id"], refresh.get("scope", ""))
 
         return _oauth_error("unsupported_grant_type", f"grant_type {grant_type!r} is not supported")
+
+
+# Backwards-compatible name from when GitHub was the only sign-in provider.
+GitHubOAuthServer = OAuthServer
