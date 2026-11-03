@@ -30,8 +30,17 @@ _INJECTED = [
     re.compile(r"<system-reminder>.*?</system-reminder>", re.S),
     re.compile(r"<(command-[a-z]+|local-command-[a-z]+)>.*?</\1>", re.S),
     re.compile(r"=== COGNICORE CONTEXT RESUME ===.*?=== END CONTEXT[^\n]*", re.S),
+    # Background-task events (task and tool-use ids, output paths) and IDE notices.
+    re.compile(r"<(task-notification|ide_opened_file|ide_selection|ide_diagnostics)\b[^>]*>.*?</\1>", re.S),
+    re.compile(r"\[SYSTEM NOTIFICATION - NOT USER INPUT\][^\n]*"),
+    # Keep pasted text, drop only the wrapper tags around it.
+    re.compile(r"</?pasted_content\b[^>]*>"),
 ]
-_SKIP_PREFIXES = ("[Request interrupted", "Caveat: The messages below", "SessionStart hook additional context")
+_SKIP_PREFIXES = (
+    "[Request interrupted", "Caveat: The messages below", "SessionStart hook additional context",
+    # Claude Code's summary after compacting: it restates the transcript, which is read anyway.
+    "This session is being continued from a previous conversation",
+)
 
 
 def _clean(text: str) -> str:

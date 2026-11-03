@@ -614,3 +614,24 @@ def test_state_reads_as_a_status_line_from_the_newest_statements():
     assert h["current_state"].endswith(long[-1])
     assert len(h["current_state"]) <= MAX_STATE_CHARS + len(long[-1])
     assert long[0] in h["key_facts"]  # older status moves to facts, it isn't lost
+
+
+def test_harness_events_are_not_saved_as_conversation(tmp_path):
+    from cognicore.memory.transcript import read_transcript
+
+    t = tmp_path / "t.jsonl"
+    _write_transcript(t, [
+        ("user", "This session is being continued from a previous conversation that ran out of context. "
+                 "Pending Tasks: old stuff."),
+        ("user", "<task-notification>\n<task-id>bjd3y7vcy</task-id>\n<tool-use-id>toolu_013JQEv2</tool-use-id>\n"
+                 "<output-file>C:\Temp\tasks\bjd3y7vcy.output</output-file>\n<status>completed</status>\n"
+                 "</task-notification>"),
+        ("user", "<ide_opened_file>The user opened plugins/cognicore/README.md in the IDE.</ide_opened_file>"
+                 "Fix the BILL-311 rounding."),
+        ("user", '<pasted_content id="b457">claude.ai says the server is back up.</pasted_content id="b457">'),
+    ])
+    conversation, _ = read_transcript(str(t))
+    text = " ".join(m["content"] for m in conversation)
+    for leaked in ("bjd3y7vcy", "toolu_", "output-file", "ide_opened_file", "Pending Tasks", "pasted_content"):
+        assert leaked not in text, leaked
+    assert "Fix the BILL-311 rounding." in text and "claude.ai says the server is back up." in text
