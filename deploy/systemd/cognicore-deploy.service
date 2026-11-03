@@ -27,6 +27,5 @@ TimeoutStartSec=1800
 # from what the script agrees to deploy, not from sandboxing this unit.
 User=root
 Nice=10
-UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes

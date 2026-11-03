@@ -16,6 +16,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   `deploy/` are held for a person, root runs an installed copy of the script rather than the
   checkout, and the VM pulls, so no inbound access or stored credential is needed.
 - `.gitattributes` keeps shell scripts and systemd units LF, so a Windows checkout cannot break them.
+
+### Changed
+- The resume brief is leaner and fits a token budget. Save replies are compact, and agents can write their own handoff.
+- Tool definitions cost about 30% fewer tokens per turn.
+
+### Fixed
+- **An automatic deploy took the hosted server down** (2026-11-03). The deploy unit set
+  `UMask=0077`, so files root's `git` rewrote became readable by root only; Docker copied that mode
+  into the image and the non-root server crash-looped on `Permission denied`. The rollback rewrote
+  files the same way, reported success without checking, and the timer retried every 3 minutes.
+  Git now runs as the checkout's owner, the umask is gone, a deploy stops before restarting anything
+  if a source file is unreadable, a rollback must pass the health check or it reports the server
+  down, and a failed commit is not retried until a newer one lands or `--retry` is given.
 - **Cross-agent session handoff.** The new `plugins/cognicore` plugin uses hooks to save each Claude Code or Codex session from its transcript, with no model calls. At the next start it resumes the project's latest work as a brief of about 450 tokens. `cognicore install` sets up both agents, and `cognicore setup codex` sets up Codex only.
 - **Optional sync with the hosted account.** `cognicore login` signs in through the hosted server's OAuth flow (loopback redirect, PKCE). The hooks then upload each saved session's redacted handoff in the background, and download sessions saved through the connector (claude.ai, Claude Desktop, mobile) at session start, with a 3-second timeout. New ones show as a one-line pointer in the brief. The hosted server adds `PUT/GET /sync/sessions`; a newer revision always wins, so syncs can repeat or arrive out of order. Also adds `cognicore sync`, `cognicore sync status`, `cognicore logout` and `COGNICORE_SYNC=0`.
 - **Console scripts** `cognicore-mcp` and `cognicore-hooks`.
@@ -24,12 +37,6 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Optional AI compression** of long sessions through the Claude API (`COGNICORE_AI_COMPRESS`). It checks the summary against the session, so it can't add facts that weren't there.
 - **Benchmarks:** `scripts/bench_transfer.py` runs offline in CI. `scripts/bench_realworld.py` runs head to head against claude-mem; see `docs/transfer-audit.md`.
 - **Launch kit and 30-second demo** in `docs/launch/kit/`, with the Remotion source in `docs/launch/kit/video/`.
-
-### Changed
-- The resume brief is leaner and fits a token budget. Save replies are compact, and agents can write their own handoff.
-- Tool definitions cost about 30% fewer tokens per turn.
-
-### Fixed
 - FTS5 search quotes tokens, so hyphens, paths and keywords match.
 - Merging near-duplicate sentences no longer drops ones that carry new values.
 - A handoff the agent saved partway through a session no longer freezes the session's state. Once the conversation continues past it, the state comes from the newer work and newer tasks are listed first; the saved goal, decisions and facts still count.
