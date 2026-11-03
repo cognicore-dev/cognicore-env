@@ -11,9 +11,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **Automatic deploys of the hosted server** (`deploy/auto-deploy.sh`, `deploy/systemd/`). A timer
-  on the VM deploys each new commit on `main` once its test matrix has passed, health-checks it, and
-  restores the previous commit if the new one does not come up. The VM pulls, so no inbound access
-  or stored credential is needed.
+  on the VM deploys each new commit on `main` once `.github/workflows/ci.yml` has passed on it,
+  health-checks it, and restores the previous commit if the new one does not come up. Changes under
+  `deploy/` are held for a person, root runs an installed copy of the script rather than the
+  checkout, and the VM pulls, so no inbound access or stored credential is needed.
 - `.gitattributes` keeps shell scripts and systemd units LF, so a Windows checkout cannot break them.
 - **Cross-agent session handoff.** The new `plugins/cognicore` plugin uses hooks to save each Claude Code or Codex session from its transcript, with no model calls. At the next start it resumes the project's latest work as a brief of about 450 tokens. `cognicore install` sets up both agents, and `cognicore setup codex` sets up Codex only.
 - **Optional sync with the hosted account.** `cognicore login` signs in through the hosted server's OAuth flow (loopback redirect, PKCE). The hooks then upload each saved session's redacted handoff in the background, and download sessions saved through the connector (claude.ai, Claude Desktop, mobile) at session start, with a 3-second timeout. New ones show as a one-line pointer in the brief. The hosted server adds `PUT/GET /sync/sessions`; a newer revision always wins, so syncs can repeat or arrive out of order. Also adds `cognicore sync`, `cognicore sync status`, `cognicore logout` and `COGNICORE_SYNC=0`.

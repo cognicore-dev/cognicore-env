@@ -68,8 +68,10 @@ reformat or mass-fix unrelated files in the same change.
 ## Pull requests
 
 **Merging to `main` deploys the hosted server** within a few minutes, once the
-`test (3.x)` jobs pass on the merged commit (see "Automatic deploys" in
+CI workflow passes on the merged commit (see "Automatic deploys" in
 `docs/remote-mcp-server.md`). Treat a merge as a release of the server.
+Changes under `deploy/` (other than `requirements.*`) are held for a person to
+deploy, because they can reach the host.
 
 - Branch from `main`; one topic per PR.
 - CI must pass on Python 3.10, 3.11 and 3.12.
