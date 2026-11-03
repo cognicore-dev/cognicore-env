@@ -72,6 +72,7 @@ def _exchange(client, code, verifier, client_id, **overrides):
 
 def test_oauth_routes_404_when_github_not_configured(monkeypatch):
     monkeypatch.delenv("GITHUB_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.setattr(remote, "INSECURE_AUTH_ENABLED", False)
     client = TestClient(remote.app)
     for path in ("/.well-known/oauth-protected-resource", "/authorize/github", oauth.CALLBACK_PATH):

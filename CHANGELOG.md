@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Sign in with Google** on the hosted server, so people without a GitHub account can connect
+  CogniCore. It is OpenID Connect with only the `openid` scope: no email, profile or other Google
+  data is requested, and no Google token is stored. The ID token is fully verified (Google's keys,
+  RS256 only, issuer, audience, authorized party, expiry, nonce) and the account is
+  `google:<sub>`, never linked to a GitHub account. Enabled by the optional `GOOGLE_CLIENT_ID` and
+  `GOOGLE_CLIENT_SECRET`; the consent page offers Google first, in plain language. See
+  "Google OAuth client" in `docs/remote-mcp-server.md`.
 - **Automatic deploys of the hosted server** (`deploy/auto-deploy.sh`, `deploy/systemd/`). A timer
   on the VM deploys each new commit on `main` once `.github/workflows/ci.yml` has passed on it,
   health-checks it, and restores the previous commit if the new one does not come up. Changes under
@@ -23,6 +30,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   server reports a different commit than the one just deployed.
 
 ### Changed
+- `cognicore.connectors.oauth.GitHubOAuthServer` is now `OAuthServer`; the old name still works.
 - CI on `main` no longer cancels a run when the next merge lands, so every merged commit gets a
   result rather than a "cancelled" failure. Pull requests still cancel superseded runs.
 - The resume brief is leaner and fits a token budget. Save replies are compact, and agents can write their own handoff.

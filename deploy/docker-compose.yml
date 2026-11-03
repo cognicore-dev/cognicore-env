@@ -41,6 +41,9 @@ services:
       COGNICORE_JWT_SECRET: ${COGNICORE_JWT_SECRET:?set it in deploy/.env}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set it in deploy/.env}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set it in deploy/.env}
+      # Optional: Google sign-in is offered only when both are set.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       COGNICORE_PUBLIC_URL: ${COGNICORE_PUBLIC_URL:?set it in deploy/.env}
       COGNICORE_DATA_DIR: /data/cognicore
       COGNICORE_EXTRA_REDIRECT_URIS: ${COGNICORE_EXTRA_REDIRECT_URIS:-}

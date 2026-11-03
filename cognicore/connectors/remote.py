@@ -111,9 +111,10 @@ JWT_ALGORITHM = "HS256"
 
 from cognicore.connectors import oauth as _oauth
 
-# Real per-user sign-in for Claude connectors (GitHub). Active when
-# GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set; see cognicore/connectors/oauth.py.
-oauth_server = _oauth.GitHubOAuthServer(JWT_SECRET, JWT_ALGORITHM)
+# Real per-user sign-in for Claude and ChatGPT connectors, with Google and/or
+# GitHub. Active when GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or
+# GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are set; see cognicore/connectors/oauth.py.
+oauth_server = _oauth.OAuthServer(JWT_SECRET, JWT_ALGORITHM)
 
 
 def _data_dir() -> Path:
@@ -1614,27 +1615,28 @@ def sync_pull(request: Request, since: float = 0.0, limit: int = 50):
 from fastapi import status
 
 # ── OAuth for Claude connectors ──────────────────────────────────────────────
-# With GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET set, these routes are a real OAuth
-# 2.1 server (DCR + PKCE) that signs users in with GitHub; see oauth.py.
+# With Google and/or GitHub client credentials set, these routes are a real
+# OAuth 2.1 server (DCR + PKCE) that signs users in with those providers; see
+# oauth.py. Each provider's own routes 404 when that provider is not configured.
 # Otherwise the legacy mock flow below is available only when
 # COGNICORE_ALLOW_INSECURE_AUTH is set, and every route returns 404 by default.
 
 @app.get("/.well-known/oauth-protected-resource")
 @app.get("/.well-known/oauth-protected-resource/mcp/sse")
 def oauth_protected_resource_sse(request: Request):
-    if not _oauth.github_enabled():
+    if not _oauth.oauth_enabled():
         raise HTTPException(status_code=404)
     return oauth_server.protected_resource_metadata(request, _oauth.SSE_RESOURCE_PATH)
 
 @app.get("/.well-known/oauth-protected-resource/mcp/stream")
 def oauth_protected_resource_stream(request: Request):
-    if not _oauth.github_enabled():
+    if not _oauth.oauth_enabled():
         raise HTTPException(status_code=404)
     return oauth_server.protected_resource_metadata(request, _oauth.STREAM_RESOURCE_PATH)
 
 @app.get("/.well-known/oauth-authorization-server")
 def oauth_metadata(request: Request):
-    if _oauth.github_enabled():
+    if _oauth.oauth_enabled():
         return oauth_server.authorization_server_metadata(request)
     # These endpoints implement a mock OAuth flow, not a real identity-provider
     # exchange. Hide the entire flow unless a developer explicitly enables it.
@@ -1652,7 +1654,7 @@ def oauth_metadata(request: Request):
 
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_client(request: Request):
-    if _oauth.github_enabled():
+    if _oauth.oauth_enabled():
         return await oauth_server.register(request)
     if not INSECURE_AUTH_ENABLED:
         raise HTTPException(status_code=404)
@@ -1673,7 +1675,7 @@ async def register_client(request: Request):
 
 @app.get("/authorize")
 def authorize(request: Request):
-    if _oauth.github_enabled():
+    if _oauth.oauth_enabled():
         return oauth_server.authorize(request)
     if not INSECURE_AUTH_ENABLED:
         raise HTTPException(status_code=404)
@@ -1695,9 +1697,21 @@ async def github_oauth_callback(request: Request):
         raise HTTPException(status_code=404)
     return await oauth_server.github_callback(request)
 
+@app.get("/authorize/google")
+def authorize_google(request: Request):
+    if not _oauth.google_enabled():
+        raise HTTPException(status_code=404)
+    return oauth_server.authorize_google(request)
+
+@app.get(_oauth.GOOGLE_CALLBACK_PATH)
+async def google_oauth_callback(request: Request):
+    if not _oauth.google_enabled():
+        raise HTTPException(status_code=404)
+    return await oauth_server.google_callback(request)
+
 @app.post("/token")
 async def token(request: Request):
-    if _oauth.github_enabled():
+    if _oauth.oauth_enabled():
         return await oauth_server.token(request)
     if not INSECURE_AUTH_ENABLED:
         raise HTTPException(status_code=404)

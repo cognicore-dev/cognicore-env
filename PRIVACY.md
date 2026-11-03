@@ -1,6 +1,6 @@
 # CogniCore Privacy Policy
 
-**Effective date:** 21 October 2026
+**Effective date:** 3 November 2026
 
 This policy explains what data the hosted CogniCore service collects, how it is used, and the choices you have. It covers the hosted MCP server at `https://mcp.cognicoree.tech`, which is what you use when you connect CogniCore to Claude, ChatGPT or another AI app.
 
@@ -8,14 +8,18 @@ It does **not** cover the open-source `cognicore-env` Python package when you ru
 
 ## In short
 
-- You sign in with GitHub. We receive your **GitHub user ID and username** only, not your email, repositories or private data.
+- You sign in with Google or GitHub. With Google we receive **your Google account ID only**, not your name, email, contacts, Drive or any other Google data. With GitHub we receive your **GitHub user ID and username** only, not your email, repositories or private data.
 - We store **what you ask CogniCore to remember**, in a database that belongs to your account alone.
 - We **do not sell** your data, show ads, use analytics trackers, or use your data to train AI models.
 - You can delete individual memories at any time, and ask us to delete everything.
 
 ## What we collect
 
-**1. Your GitHub identity.** When you connect, you sign in through GitHub. We request no GitHub permissions beyond your public profile, and we read two things: your numeric GitHub user ID and your username. Your account inside CogniCore is identified as `github:<your user ID>`. GitHub gives us a temporary access token during sign-in; we use it once to read your ID and username, and do not store it.
+**1. Your sign-in identity.** When you connect, you sign in with Google or with GitHub. The two are kept apart: signing in with each gives you two separate CogniCore accounts, and we never link them, including by email address.
+
+*If you sign in with Google:* we ask Google only to confirm who you are (the `openid` permission), not for your name, email address, profile picture, contacts, Drive or any other data. Google tells us one thing: the numeric ID of your Google account, which does not reveal your name or email address. Your account inside CogniCore is identified as `google:<that ID>`. Google also gives us temporary tokens during sign-in; we use them once to confirm the ID and do not store them.
+
+*If you sign in with GitHub:* We request no GitHub permissions beyond your public profile, and we read two things: your numeric GitHub user ID and your username. Your account inside CogniCore is identified as `github:<your user ID>`. GitHub gives us a temporary access token during sign-in; we use it once to read your ID and username, and do not store it.
 
 **2. What you store through CogniCore's tools.** This is the content the service exists to keep for you, for example:
 
@@ -52,7 +56,7 @@ We share data only in these cases:
 - **Marketplace, when you choose.** If you use the tool that lists your memories for sale, other signed-in users can discover those listed memories and copy them into their own memory. Your account ID and marketplace reputation are visible to them, and the transfer is recorded. Nothing is listed unless you do it, and no real money is involved.
 - **The AI app you use.** Results of the tools you call are returned to the app you connected (such as Claude or ChatGPT), and that app's own privacy policy applies to them.
 - **Services that run CogniCore:**
-  - GitHub, for sign-in
+  - Google and GitHub, for sign-in, depending on which you choose
   - our hosting provider (currently Microsoft Azure), which stores the data and runs the server
   - Cloudflare, which provides the domain name service for `cognicoree.tech`
 - **Figma, when you ask.** If you sync a Figma file, the Figma access token you provide is sent to Figma for that request only. We do not store it.
@@ -70,8 +74,8 @@ If we shut the service down, we will delete the stored data.
 ## Your choices
 
 - **Delete a memory:** ask your AI app to forget it (this uses the `cognicore_forget` tool).
-- **Delete or export everything:** email us at the address below from, or mentioning, the GitHub account you signed in with. We will act on the request within 30 days.
-- **Disconnect:** remove CogniCore in your AI app's connector settings, and revoke its access on GitHub under *Settings → Applications → Authorized OAuth Apps*. Disconnecting stops access but does not delete stored memories; ask us if you want them deleted.
+- **Delete or export everything:** email us at the address below. If you signed in with GitHub, write from, or mention, that GitHub account. If you signed in with Google, we do not receive your email address and cannot look your account up by it, so tell us and we will work with you to identify the account. We will act on the request within 30 days.
+- **Disconnect:** remove CogniCore in your AI app's connector settings. You can also remove its access in your Google Account under *Security → Your connections to third-party apps & services*, or on GitHub under *Settings → Applications → Authorized OAuth Apps*. Disconnecting stops access but does not delete stored memories; ask us if you want them deleted.
 
 Depending on where you live, you may have further rights over your data, such as access or correction. Contact us to use them.
 
@@ -81,7 +85,7 @@ Connections use HTTPS. Sign-in uses OAuth 2.1 with PKCE, and access is granted t
 
 ## Children
 
-CogniCore is not intended for children under 13, and GitHub accounts require users to be at least 13.
+CogniCore is not intended for children under 13.
 
 ## Changes
 
