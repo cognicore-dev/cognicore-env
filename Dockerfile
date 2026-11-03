@@ -30,6 +30,12 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin cogn
     && chown -R cognicore /data
 USER 10001
 
+# The commit this image was built from, reported by /health so a deploy can be
+# confirmed from outside. deploy/auto-deploy.sh passes it; other builds say
+# "unknown". Declared last so a new commit does not invalidate earlier layers.
+ARG COGNICORE_COMMIT=unknown
+ENV COGNICORE_COMMIT=$COGNICORE_COMMIT
+
 EXPOSE 8000
 
 # The hosted server: Streamable HTTP at /mcp/stream, SSE at /mcp/sse, so standard

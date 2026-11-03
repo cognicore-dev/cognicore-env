@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Union
 import os
+import re
 import hashlib
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends
@@ -1532,9 +1533,20 @@ if hasattr(mcp, "streamable_http_app"):
 
     app.router.lifespan_context = _lifespan_with_mcp_sessions
 
+_COMMIT_RE = re.compile(r"[0-9a-f]{7,40}")
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "version": "1.0"}
+    # The commit the image was built from (deploy/auto-deploy.sh passes it), so
+    # anyone can confirm what is live. Anything that is not a hex SHA, such as a
+    # local build, reports "unknown".
+    commit = os.environ.get("COGNICORE_COMMIT", "")
+    return {
+        "status": "ok",
+        "version": "1.0",
+        "commit": commit if _COMMIT_RE.fullmatch(commit) else "unknown",
+    }
 
 
 # ── Session sync for local agents (cognicore.sync) ───────────────────────────

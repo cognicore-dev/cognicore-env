@@ -116,6 +116,21 @@ anything restarts if a source file is unreadable to the container's user.
   security: require two-factor authentication for the organization, and protect
   `main` so it accepts only reviewed pull requests whose CI passed.
 
+### Is my merge live?
+
+Every commit on `main` gets a **deploy/live** status, set by the *Deployed*
+workflow (`.github/workflows/deployed.yml`). After CI passes it reads
+`https://mcp.cognicoree.tech/health`, which reports the running commit, for up
+to 15 minutes:
+
+- **success**: that commit, or a later one containing it, is live;
+- **failure**: it is not, with the likely reason: held because it changes
+  `deploy/`, rolled back, or the server did not answer. GitHub notifies whoever
+  merged it;
+- **error**: CI failed, so it was never deployed.
+
+Nobody needs VM access to answer "is it live?".
+
 ### Install it (once)
 
 The first deploy runs through the script too, so it gets the same health check

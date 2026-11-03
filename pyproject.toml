@@ -50,6 +50,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.0",
+    "pyyaml>=6.0",  # tests that read the GitHub workflows
     "httpx>=0.27",
     "requests>=2.31.0",
     "fastapi>=0.110",

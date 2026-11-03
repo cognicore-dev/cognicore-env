@@ -1,0 +1,103 @@
+name: Deployed
+
+# After CI passes on a push to main, wait until the hosted server reports that
+# commit (or a later one that contains it) in /health, and record the result
+# as a "deploy/live" status on the commit. The VM deploys by itself (see
+# deploy/auto-deploy.sh); this only watches, so it needs no secret and no
+# access to the server. A failed run notifies the person whose merge it was.
+on:
+  workflow_run:
+    workflows: ["CogniCore CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: deployed-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live on mcp.cognicoree.tech
+    # Only CI for a push to main of this repository: never a fork or a pull
+    # request. Nothing from the triggering run is checked out or executed.
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      HEALTH_URL: https://mcp.cognicoree.tech/health
+      WAIT_MINUTES: "15"
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 200
+          persist-credentials: false
+
+      - name: Wait for the server to run this commit
+        run: |
+          set -uo pipefail
+          short=${SHA:0:7}
+
+          set_status() {  # state description
+            gh api --silent -X POST "repos/$REPO/statuses/$SHA" \
+              -f context=deploy/live -f state="$1" -f description="${2:0:140}" \
+              -f target_url="$HEALTH_URL" || echo "could not set the commit status"
+          }
+
+          if [ "$CI_CONCLUSION" != success ]; then
+            set_status error "Not deployed: CI concluded $CI_CONCLUSION"
+            echo "CI concluded $CI_CONCLUSION, so the VM will not deploy $short."
+            exit 0
+          fi
+
+          set_status pending "Waiting for mcp.cognicoree.tech to run $short"
+          live=unreachable
+          deadline=$(( SECONDS + WAIT_MINUTES * 60 ))
+          while :; do
+            live=$(curl -fsS --max-time 15 "$HEALTH_URL" \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", "unknown"))' 2>/dev/null) \
+              || live=unreachable
+            # Only a hex SHA reaches git: the response is not trusted input.
+            if [[ $live =~ ^[0-9a-f]{7,40}$ ]]; then
+              if [ "$live" = "$SHA" ]; then
+                set_status success "Live on mcp.cognicoree.tech"
+                echo "$short is live."
+                exit 0
+              fi
+              git fetch -q origin main 2>/dev/null || true
+              if git merge-base --is-ancestor "$SHA" "$live" 2>/dev/null; then
+                set_status success "Live as part of ${live:0:7}"
+                echo "$short is live, included in ${live:0:7}."
+                exit 0
+              fi
+            fi
+            [ $SECONDS -lt $deadline ] || break
+            sleep 20
+          done
+
+          # Explain the most likely reason, so nobody has to log in to find out.
+          reason="the server still runs ${live:0:7}"
+          if [[ $live =~ ^[0-9a-f]{7,40}$ ]] && git cat-file -e "$live^{commit}" 2>/dev/null; then
+            held=$(git diff --name-only "$live" "$SHA" -- deploy/ | grep -Ev '^deploy/requirements\.(in|txt)$' || true)
+            if [ -n "$held" ]; then
+              reason="held: it changes deploy/, which needs sudo cognicore-deploy --allow-infra on the VM"
+            else
+              reason="the server still runs ${live:0:7}; the deploy may have failed and rolled back"
+            fi
+          elif [ "$live" = unreachable ]; then
+            reason="mcp.cognicoree.tech/health did not answer"
+          fi
+          set_status failure "Not live after $WAIT_MINUTES min: $reason"
+          echo "::error::$short is not live after $WAIT_MINUTES minutes: $reason"
+          exit 1
