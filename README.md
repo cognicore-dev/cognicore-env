@@ -219,7 +219,8 @@ A hosted instance is live — no install, no local process to manage:
 https://mcp.cognicoree.tech/mcp/stream
 ```
 
-Health check: `https://mcp.cognicoree.tech/health` returns `{"status":"ok","version":"1.0"}`.
+Health check: `https://mcp.cognicoree.tech/health` returns `{"status":"ok","version":"1.0","commit":"<sha>"}`,
+where `commit` is the commit the server is running.
 
 Add it as a custom connector in any MCP-compatible client (Claude, Claude Code, Cursor, Sarvam
 Cowork) and sign in with GitHub. The server is its own OAuth 2.1 authorization server, and each

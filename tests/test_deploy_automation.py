@@ -225,7 +225,7 @@ def test_git_runs_as_the_checkout_owner_not_root():
 def test_unreadable_source_stops_the_deploy_before_anything_restarts():
     script = _script()
     guard = script.index("! -perm -o=r")
-    first_restart = script.index('"${COMPOSE[@]}" up -d --build >&2; then')
+    first_restart = script.index('if ! build_and_start "$target"; then')
     assert guard < first_restart
 
 
@@ -240,3 +240,26 @@ def test_a_failed_commit_is_not_retried_every_tick():
     assert '"$STATE_DIR/failed"' in _function_body("rollback")
     assert re.search(r'cat "\$STATE_DIR/failed".*== "\$target" && \$RETRY -eq 0', script)
     assert "--retry)" in script
+
+
+# ── The running commit ───────────────────────────────────────────────────────
+
+def test_image_is_built_with_the_commit_it_deploys():
+    """/health reports this, and the Deployed workflow trusts it to say what is live."""
+    script = _script()
+    assert '--build-arg "COGNICORE_COMMIT=$1"' in _function_body("build_and_start")
+    assert 'build_and_start "$target"' in script
+    assert 'build_and_start "$current"' in _function_body("rollback")
+
+
+def test_deploy_fails_if_the_server_reports_another_commit():
+    body = _function_body("server_healthy")
+    assert '$reported != "$expected"' in body
+    assert 'server_healthy "$target"' in _script()
+    assert 'server_healthy "$current"' in _function_body("rollback")
+
+
+def test_dockerfile_bakes_in_the_commit():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG COGNICORE_COMMIT=unknown" in dockerfile
+    assert "ENV COGNICORE_COMMIT=$COGNICORE_COMMIT" in dockerfile

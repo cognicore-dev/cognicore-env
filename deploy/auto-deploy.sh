@@ -169,9 +169,17 @@ fi
 # ── Deploy ───────────────────────────────────────────────────────────────────
 domain=$(sed -n 's/^COGNICORE_DOMAIN=//p' "$REPO_DIR/deploy/.env" | tr -d "\"' ")
 
+# Build the image with the commit baked in, so /health reports what is running,
+# then start it.
+build_and_start() {
+    "${COMPOSE[@]}" build --build-arg "COGNICORE_COMMIT=$1" mcp >&2 \
+        && "${COMPOSE[@]}" up -d >&2
+}
+
 # Is the mcp container healthy by its own check, and (when a domain is set)
-# reachable the way users reach it?
+# reachable the way users reach it, reporting commit $1?
 server_healthy() {
+    local expected=$1 reported body
     local container status=unknown deadline=$(( SECONDS + HEALTH_TIMEOUT ))
     container=$("${COMPOSE[@]}" ps -q mcp) || container=""
     [[ -n $container ]] || { log "mcp container not found"; return 1; }
@@ -188,11 +196,19 @@ server_healthy() {
         return 1
     fi
     log "container healthy"
-    if [[ -n $domain ]] && ! curl -fsS --max-time 20 "https://$domain/health" >/dev/null; then
+    [[ -n $domain ]] || return 0
+    if ! body=$(curl -fsS --max-time 20 "https://$domain/health"); then
         log "container is healthy but https://$domain/health is not responding"
         return 1
     fi
-    [[ -z $domain ]] || log "https://$domain/health responding"
+    # An image built without the commit says "unknown"; only a different commit
+    # means the wrong version is serving.
+    reported=$(printf '%s' "$body" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", "unknown"))' 2>/dev/null || echo unknown)
+    if [[ $reported != unknown && $reported != "$expected" ]]; then
+        log "https://$domain/health reports ${reported:0:7}, expected ${expected:0:7}"
+        return 1
+    fi
+    log "https://$domain/health responding (commit ${reported:0:7})"
 }
 
 # Restore the previous commit and prove it is serving again. Exits.
@@ -200,8 +216,8 @@ rollback() {
     printf '%s\n' "$target" > "$STATE_DIR/failed"
     log "ROLLING BACK to ${current:0:7}"
     if "${GIT[@]}" reset --hard --quiet "$current" \
-        && "${COMPOSE[@]}" up -d --build >&2 \
-        && server_healthy; then
+        && build_and_start "$current" \
+        && server_healthy "$current"; then
         log "rolled back to ${current:0:7}; the server is running it. ${target:0:7} will not be retried automatically."
         exit 1
     fi
@@ -222,11 +238,11 @@ if [[ -n $unreadable ]]; then
     die "not deploying ${target:0:7}: $unreadable is not readable by the container's user; the running server is untouched"
 fi
 
-if ! "${COMPOSE[@]}" up -d --build >&2; then
+if ! build_and_start "$target"; then
     log "build or start failed for ${target:0:7}"
     rollback
 fi
-server_healthy || rollback
+server_healthy "$target" || rollback
 
 rm -f "$STATE_DIR/held" "$STATE_DIR/failed"
 log "deployed ${target:0:7} successfully"

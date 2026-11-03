@@ -9,10 +9,12 @@ permissions:
   contents: read
   pull-requests: write
 
-# A newer push to the same PR or branch cancels the run it replaces.
+# A newer push to a pull request cancels the run it replaces. On main every
+# merge runs to the end: its result decides whether the VM deploys it, and a
+# cancelled run would show as a failure on the commit.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

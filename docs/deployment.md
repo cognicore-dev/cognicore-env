@@ -29,7 +29,7 @@ its account ID, so one user's tools cannot reach another user's data.
 | A persistent volume at `/data` | SQLite databases live in `$COGNICORE_DATA_DIR`; a stateless container loses every memory on restart |
 | A local filesystem for that volume | SQLite locking is unreliable on SMB and NFS |
 | HTTPS with a real certificate | MCP clients refuse plain HTTP, and OAuth redirects must match `COGNICORE_PUBLIC_URL` |
-| `GET /health` reachable | Returns `{"status":"ok","version":"1.0"}` for readiness probes |
+| `GET /health` reachable | Returns `{"status":"ok","version":"1.0","commit":"<sha>"}` for readiness probes; `commit` is the running commit, or `unknown` for an image built without it |
 
 Everything host-specific lives in `deploy/.env` and DNS, so the same compose
 file runs on any Linux host with Docker.

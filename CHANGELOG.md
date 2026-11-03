@@ -16,8 +16,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   `deploy/` are held for a person, root runs an installed copy of the script rather than the
   checkout, and the VM pulls, so no inbound access or stored credential is needed.
 - `.gitattributes` keeps shell scripts and systemd units LF, so a Windows checkout cannot break them.
+- **A deploy/live status on every commit to `main`** (`.github/workflows/deployed.yml`). After CI
+  passes it waits for the hosted server to report that commit and marks it live, or explains why
+  not (held `deploy/` change, rollback, server unreachable) and notifies whoever merged it.
+  `/health` now includes `commit`, built into the image by the deploy, and a deploy fails if the
+  server reports a different commit than the one just deployed.
 
 ### Changed
+- CI on `main` no longer cancels a run when the next merge lands, so every merged commit gets a
+  result rather than a "cancelled" failure. Pull requests still cancel superseded runs.
 - The resume brief is leaner and fits a token budget. Save replies are compact, and agents can write their own handoff.
 - Tool definitions cost about 30% fewer tokens per turn.
 
