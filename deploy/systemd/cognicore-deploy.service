@@ -1,0 +1,25 @@
+# Deploys the newest tested commit on the tracked branch. Triggered by
+# cognicore-deploy.timer; see deploy/auto-deploy.sh for what it does.
+#
+#   sudo cp deploy/systemd/cognicore-deploy.* /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cognicore-deploy.timer
+#
+# Watch it:   journalctl -u cognicore-deploy -f
+# Pause it:   sudo systemctl stop cognicore-deploy.timer
+[Unit]
+Description=Deploy the newest tested commit of the CogniCore server
+Documentation=https://github.com/cognicore-dev/cognicore-env/blob/main/docs/remote-mcp-server.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cognicore-env/deploy/auto-deploy.sh
+# A rebuild can be slow; never leave a half-built deploy behind.
+TimeoutStartSec=1800
+# Root is needed for the Docker socket. The script touches only the repo
+# directory, and refuses to run twice at once.
+User=root
+Nice=10

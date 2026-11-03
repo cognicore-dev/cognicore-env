@@ -1,0 +1,16 @@
+# Checks for a new tested commit a few minutes after boot, then every 3
+# minutes. The check is one HTTP request when nothing has changed.
+[Unit]
+Description=Check for a new tested commit of the CogniCore server
+Documentation=https://github.com/cognicore-dev/cognicore-env/blob/main/docs/remote-mcp-server.md
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+# Spread the load so every VM does not call GitHub on the same second.
+RandomizedDelaySec=30
+AccuracySec=30
+Unit=cognicore-deploy.service
+
+[Install]
+WantedBy=timers.target

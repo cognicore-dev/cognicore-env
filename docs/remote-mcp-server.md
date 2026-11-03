@@ -77,6 +77,49 @@ Production runs on a single Linux VM with `deploy/docker-compose.yml`: the serve
 
 `railway.toml` is kept for platforms that build from the Dockerfile; set the variables and mount a volume at `/data` there instead.
 
+## Automatic deploys
+
+Merging to `main` deploys the server. Nobody needs access to the VM.
+
+A systemd timer on the VM runs `deploy/auto-deploy.sh` every 3 minutes. When
+`main` has a new commit, the script:
+
+1. reads that commit's check runs from GitHub and continues only if every
+   `test (3.x)` job passed. Other workflows (Pages, dashboards, scanners) cannot
+   block or allow a deploy. If the tests are still running, it waits for the next tick;
+2. checks the commit out and runs `docker compose up -d --build`;
+3. waits up to 4 minutes for the container's own health check, then requests
+   `https://$COGNICORE_DOMAIN/health`;
+4. if either fails, restores the previous commit and rebuilds it.
+
+The VM pulls; nothing is pushed to it. No port is opened for GitHub and no
+credential is stored in GitHub or on the VM, because the repository is public.
+
+### Install it (once)
+
+```bash
+cd /opt/cognicore-env && git pull --ff-only origin main
+sudo cp deploy/systemd/cognicore-deploy.service deploy/systemd/cognicore-deploy.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo /opt/cognicore-env/deploy/auto-deploy.sh --dry-run   # reports what it would do
+sudo systemctl enable --now cognicore-deploy.timer
+```
+
+### Operate it
+
+| Task | Command |
+|---|---|
+| Watch deploys | `journalctl -u cognicore-deploy -f` |
+| Last result | `systemctl status cognicore-deploy` |
+| Next check | `systemctl list-timers cognicore-deploy.timer` |
+| Deploy now | `sudo systemctl start cognicore-deploy` |
+| Pause deploys | `sudo systemctl stop cognicore-deploy.timer` |
+| Resume deploys | `sudo systemctl start cognicore-deploy.timer` |
+
+To hold back a bad commit that passed its tests, revert it on `main`; the revert
+deploys like any other commit. Pausing the timer stops all deploys until it is
+started again.
+
 ## Testing locally
 
 `tests/test_remote_oauth.py` covers the OAuth flow with GitHub stubbed out. To run the server locally:
