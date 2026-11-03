@@ -177,6 +177,7 @@ def _with_ai_summary(backend, conversation, supplied: dict, session_key: str):
               for key in ("decisions", "open_tasks", "key_facts", "files")}
     for key in ("goal", "current_state"):  # the agent's own handoff, if any, wins
         merged[key] = supplied.get(key) or summary.get(key) or ""
+    merged["superseded"] = bool(supplied.get("superseded"))
     return merged, info
 
 

@@ -77,6 +77,7 @@ def _read_claude(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str
     conversation: List[Dict[str, str]] = []
     supplied: Dict[str, Any] = {}
     files: List[str] = []
+    saved_at = -1  # conversation length when the agent last saved a handoff
 
     for entry in entries:
         kind = entry.get("type")
@@ -102,11 +103,12 @@ def _read_claude(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str
                             files.append(rel)
                 elif _SAVE_TOOL.search(name) and isinstance(args, dict):
                     _merge_supplied(supplied, args.get("handoff_json"))
+                    saved_at = len(conversation)
             # tool_result, thinking and image blocks are deliberately ignored
         if texts:
             conversation.append({"role": kind, "content": "\n".join(texts)})
 
-    return conversation, _with_files(supplied, files)
+    return conversation, _with_files(_mark_superseded(supplied, conversation, saved_at), files)
 
 
 # Codex session logs ("rollouts"): one {"type", "payload"} object per line.
@@ -122,6 +124,7 @@ def _read_codex(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str,
     conversation: List[Dict[str, str]] = []
     supplied: Dict[str, Any] = {}
     files: List[str] = []
+    saved_at = -1
     for entry in entries:
         if entry.get("type") == "session_meta" and not cwd:
             cwd = (entry.get("payload") or {}).get("cwd") or ""
@@ -152,6 +155,7 @@ def _read_codex(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str,
                 body = "\n".join(str(v) for v in args.values() if isinstance(v, str))
                 if _SAVE_TOOL.search(name):
                     _merge_supplied(supplied, args.get("handoff_json"))
+                    saved_at = len(conversation)
             else:
                 body = args if isinstance(args, str) else json.dumps(args or item.get("action") or "")
             # Edited paths only; tool output (custom_tool_call_output etc.) is never read.
@@ -159,7 +163,21 @@ def _read_codex(entries: List[Dict[str, Any]], cwd: str) -> Tuple[List[Dict[str,
                 rel = _relative(target, cwd) if cwd else target
                 if rel not in files:
                     files.append(rel)
-    return conversation, _with_files(supplied, files)
+    return conversation, _with_files(_mark_superseded(supplied, conversation, saved_at), files)
+
+
+def _mark_superseded(supplied: Dict[str, Any], conversation: List[Dict[str, str]], saved_at: int) -> Dict[str, Any]:
+    """If the user spoke again after the agent's last saved handoff, the work moved on.
+
+    The saved state then describes an earlier moment, so it is dropped (the state
+    is extracted from the newer conversation instead), and ``superseded`` tells
+    build_handoff to list newer extracted tasks before the saved ones. The saved
+    goal, decisions and facts still hold.
+    """
+    if supplied and saved_at >= 0 and any(m["role"] == "user" for m in conversation[saved_at:]):
+        supplied.pop("current_state", None)
+        supplied["superseded"] = True
+    return supplied
 
 
 def _with_files(supplied: Dict[str, Any], files: List[str]) -> Dict[str, Any]:

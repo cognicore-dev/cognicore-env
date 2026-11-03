@@ -162,10 +162,13 @@ _GOAL = re.compile(
 _DECISION = re.compile(
     r"\b(?:decided|decide to|decision|agreed to|we agreed|chose|opted|selected|will use|let'?s use|going with|"
     r"settled on|switch(?:ed)? (?:from|to)|we picked|went with)\b", re.I)
+# Something that was tried and dropped. Past tense marks an attempt ("it didn't
+# work"); present tense ("X doesn't work there") usually describes a limitation,
+# so it only counts when the sentence says it was tried.
 _REJECTED = re.compile(
     r"\b(?:did not help|didn'?t help|did not work|didn'?t work|no luck|ruled out|we rejected|"
-    r"rejected (?:the|this|that) (?:idea|approach|option|proposal)|made it worse|"
-    r"doesn'?t work|does not work|gave up on)\b", re.I)
+    r"rejected (?:the|this|that) (?:idea|approach|option|proposal)|made it worse|gave up on)\b"
+    r"|\b(?:tried|trying|attempted)\b.*\b(?:doesn'?t|does not)\s+(?:work|help)\b", re.I)
 _TASK = re.compile(
     r"(?:^|\b)(?:todo|to-do|next step|action item|need(?:s)? to|must|pending|follow[- ]up|remaining|"
     r"still have to|blocked on|we should|don'?t forget)\b|- \[[ x]\]", re.I)
@@ -392,7 +395,11 @@ def build_handoff(
             found_goal = ""
     if supplied:
         decisions = _merge_unique(supplied["decisions"], decisions, lambda d: d["what"])
-        tasks = _merge_unique(supplied["open_tasks"], tasks, lambda t: t["task"])
+        if supplied.get("superseded"):
+            # The work moved on after the saved handoff: newest extracted tasks first, then the saved ones.
+            tasks = _merge_unique(tasks[::-1], supplied["open_tasks"], lambda t: t["task"])
+        else:
+            tasks = _merge_unique(supplied["open_tasks"], tasks, lambda t: t["task"])
         facts = _merge_unique(supplied["key_facts"], facts, lambda f: f)
         found_goal = supplied.get("goal") or found_goal
         if supplied.get("current_state") and not current_state:
@@ -514,6 +521,9 @@ def parse_supplied_handoff(raw: Any) -> Tuple[Dict[str, Any], int]:
     out["open_tasks"] = [t for t in tasks if t["task"]]
     out["key_facts"] = [clean(f) for f in as_list("key_facts") if str(f).strip()]
     out["files"] = [clean(f) for f in as_list("files") if str(f).strip()]
+    # Set by the transcript reader when the conversation went on after this
+    # handoff was saved: newer extracted tasks then come first.
+    out["superseded"] = bool(raw.get("superseded"))
     return out, count
 
 

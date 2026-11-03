@@ -522,3 +522,70 @@ def test_supplied_facts_survive_the_cap():
                       supplied={"key_facts": ["Finance requires commercial rounding."]})
     assert "Finance requires commercial rounding." in h["key_facts"]
     assert len(h["key_facts"]) == MAX_FACTS + 1
+
+
+# --- What reaches other apps reflects the latest work ------------------------
+
+def _decisions(text):
+    return build_handoff([{"role": "assistant", "content": text}], "s", "n", 0.0)["decisions"]
+
+
+def test_describing_a_limitation_is_not_a_rejected_decision():
+    assert not any(d["status"] == "rejected" for d in _decisions(
+        "No memory tool does better on claude.ai, and claude-mem doesn't work there at all."))
+
+
+def test_attempts_that_failed_are_still_rejected():
+    for text in ("We tried Redis caching, but it doesn't work behind our proxy.",
+                 "Raising the TTL to 24h did not help.",
+                 "Switching to python-jose didn't work."):
+        assert [d["status"] for d in _decisions(text)] == ["rejected"], text
+
+
+def _write_transcript(path, turns):
+    lines = []
+    for role, content in turns:
+        if role == "save":
+            content = [{"type": "tool_use", "name": "mcp__cognicore__cognicore_save_session",
+                        "input": {"handoff_json": json.dumps(content)}}]
+            role = "assistant"
+        lines.append(json.dumps({"type": role, "message": {"role": role, "content": content}}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_a_saved_handoff_stops_describing_the_state_once_the_work_moves_on(tmp_path):
+    from cognicore.memory.transcript import read_transcript
+
+    t = tmp_path / "t.jsonl"
+    _write_transcript(t, [
+        ("user", "Our goal is to ship sync for CogniCore."),
+        ("save", {"goal": "Ship sync for CogniCore", "current_state": "OLD: sync built, not deployed",
+                  "open_tasks": ["Deploy the hosted server"], "decisions": ["Use a REST sync API"]}),
+        ("user", "The server is deployed. Now fix the plugin MCP server."),
+        ("assistant", "The plugin MCP server is fixed: cognicore-mcp is installed and on PATH. "
+                      "We still need to reload the window."),
+    ])
+    conversation, supplied = read_transcript(str(t))
+    assert supplied["superseded"] and "current_state" not in supplied
+    h = build_handoff(conversation, "s", "n", 0.0, supplied=supplied)
+    assert "OLD" not in h["current_state"] and "cognicore-mcp" in h["current_state"]
+    assert h["goal"] == "Ship sync for CogniCore"
+    assert [d["what"] for d in h["decisions"]] == ["Use a REST sync API"]
+    tasks = [t["task"] for t in h["open_tasks"]]
+    assert tasks.index("We still need to reload the window.") < tasks.index("Deploy the hosted server")
+
+
+def test_a_saved_handoff_at_the_end_of_the_session_still_wins(tmp_path):
+    from cognicore.memory.transcript import read_transcript
+
+    t = tmp_path / "t.jsonl"
+    _write_transcript(t, [
+        ("user", "Our goal is to ship sync for CogniCore. The server is deployed."),
+        ("assistant", "Deployed and verified."),
+        ("save", {"current_state": "Deployed; live test passed", "open_tasks": ["Announce it"]}),
+    ])
+    conversation, supplied = read_transcript(str(t))
+    assert not supplied.get("superseded")
+    h = build_handoff(conversation, "s", "n", 0.0, supplied=supplied)
+    assert h["current_state"] == "Deployed; live test passed"
+    assert h["open_tasks"][0]["task"] == "Announce it"
