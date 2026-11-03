@@ -1,0 +1,32 @@
+# Deploys the newest tested commit on the tracked branch. Triggered by
+# cognicore-deploy.timer. It runs the root-owned installed copy of
+# deploy/auto-deploy.sh, not the one in the checkout, so a commit cannot change
+# what root runs.
+#
+#   sudo install -o root -g root -m 0755 deploy/auto-deploy.sh /usr/local/sbin/cognicore-deploy
+#   sudo cp deploy/systemd/cognicore-deploy.service deploy/systemd/cognicore-deploy.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cognicore-deploy.timer
+#
+# Watch it:   journalctl -u cognicore-deploy -f
+# Pause it:   sudo systemctl stop cognicore-deploy.timer
+[Unit]
+Description=Deploy the newest tested commit of the CogniCore server
+Documentation=https://github.com/cognicore-dev/cognicore-env/blob/main/docs/remote-mcp-server.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cognicore-deploy
+# A rebuild can be slow; never leave a half-built deploy behind.
+TimeoutStartSec=1800
+# Root is needed for the Docker socket. The script refuses to run twice at
+# once. Access to the Docker socket is root-equivalent, so the safety comes
+# from what the script agrees to deploy, not from sandboxing this unit.
+User=root
+Nice=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes

@@ -77,6 +77,90 @@ Production runs on a single Linux VM with `deploy/docker-compose.yml`: the serve
 
 `railway.toml` is kept for platforms that build from the Dockerfile; set the variables and mount a volume at `/data` there instead.
 
+## Automatic deploys
+
+Merging to `main` deploys the server. Nobody needs access to the VM.
+
+A systemd timer on the VM runs the deploy script every 3 minutes. When `main`
+has a new commit, it:
+
+1. **holds** the commit if it changes anything under `deploy/` other than
+   `requirements.in` / `requirements.txt`. Those files set the container's
+   confinement and the host's configuration, so a person deploys them (below);
+2. reads the workflow runs for that exact commit and continues only if
+   `.github/workflows/ci.yml`, run by the push to `main` of this repository,
+   **succeeded**. A result from any other workflow, a fork, a pull request or a
+   manual run does not count, and other workflows (Pages, dashboards, scanners)
+   cannot block a deploy. If CI is still running it waits for the next tick;
+3. checks the exact commit out and runs `docker compose up -d --build`;
+4. waits up to 4 minutes for the container's health check, then requests
+   `https://$COGNICORE_DOMAIN/health`, and restores the previous commit if
+   either fails.
+
+### What this does and does not protect
+
+- The VM pulls. No port is opened for GitHub and no credential is stored in
+  GitHub or on the VM; the CI lookup is unauthenticated because the repository
+  is public.
+- Root runs a copy of the script installed in `/usr/local/sbin`, not the one in
+  the checkout, so a commit cannot change what root executes.
+- Git runs with hooks and fsmonitor disabled, so the checkout's own config
+  cannot make root run anything.
+- **Anyone who can merge to `main` can change the code running in the
+  container**, which holds every user's memories and the server's secrets. That
+  is the remaining trust boundary, and it is protected only by GitHub account
+  security: require two-factor authentication for the organization, and protect
+  `main` so it accepts only reviewed pull requests whose CI passed.
+
+### Install it (once)
+
+The first deploy runs through the script too, so it gets the same health check
+and rollback. Do not `git pull` first: the script would see the checkout at
+`main` and report it as already deployed.
+
+```bash
+cd /opt/cognicore-env && git fetch origin main
+git show origin/main:deploy/auto-deploy.sh > /tmp/cognicore-deploy
+sudo install -o root -g root -m 0755 /tmp/cognicore-deploy /usr/local/sbin/cognicore-deploy
+for unit in cognicore-deploy.service cognicore-deploy.timer; do
+    git show "origin/main:deploy/systemd/$unit" | sudo tee "/etc/systemd/system/$unit" >/dev/null
+done
+sudo systemctl daemon-reload
+sudo cognicore-deploy --dry-run --allow-infra   # what it would deploy
+sudo cognicore-deploy --allow-infra             # the first deploy
+sudo systemctl enable --now cognicore-deploy.timer
+```
+
+`--allow-infra` is needed here because the commits being deployed add the
+deploy files themselves.
+
+### Deploy a held change
+
+The journal shows which files caused the hold. Read the diff, then deploy it:
+
+```bash
+cd /opt/cognicore-env && git fetch origin main
+git diff HEAD origin/main -- deploy/
+sudo cognicore-deploy --allow-infra
+```
+
+If the change is to `deploy/auto-deploy.sh` or `deploy/systemd/`, reinstall
+them first with the `git show` lines from "Install it".
+
+### Operate it
+
+| Task | Command |
+|---|---|
+| Watch deploys | `journalctl -u cognicore-deploy -f` |
+| Last result | `systemctl status cognicore-deploy` |
+| Next check | `systemctl list-timers cognicore-deploy.timer` |
+| Deploy now | `sudo systemctl start cognicore-deploy` |
+| Pause deploys | `sudo systemctl stop cognicore-deploy.timer` |
+| Resume deploys | `sudo systemctl start cognicore-deploy.timer` |
+
+To withdraw a bad commit that passed CI, revert it on `main`; the revert
+deploys like any other commit.
+
 ## Testing locally
 
 `tests/test_remote_oauth.py` covers the OAuth flow with GitHub stubbed out. To run the server locally:

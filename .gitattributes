@@ -1,0 +1,5 @@
+# Shell scripts and systemd units run on Linux hosts; a CRLF line ending breaks
+# them ("\r: command not found"), and a broken deploy/auto-deploy.sh would stop
+# automatic deploys without any visible error. Keep them LF on every checkout.
+*.sh            text eol=lf
+deploy/systemd/* text eol=lf
