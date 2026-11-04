@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "cognicore-mcp",
       "env": {
-        "COGNICORE_TOOLSETS": "memory,session"
+        "COGNICORE_TOOLSETS": "search"
       }
     }
   }

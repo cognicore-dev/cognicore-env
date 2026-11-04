@@ -281,3 +281,72 @@ def test_save_hook_does_not_push_when_signed_out(monkeypatch, tmp_path):
         "role": "user", "content": "Our goal is to fix BILL-311 today."}}) + "\n", encoding="utf-8")
     hooks.save({"session_id": "s1", "transcript_path": str(transcript), "cwd": str(tmp_path)})
     assert pushed == []
+
+
+def test_sessions_saved_with_the_local_tool_are_pushed_when_syncing(signed_in, monkeypatch):
+    pytest.importorskip("mcp")
+    from cognicore.mcp import server
+
+    pushed = []
+    monkeypatch.setattr(sync, "push_in_background", pushed.append)
+    import asyncio
+
+    app = server.create_mcp_server()
+    handoff = json.dumps({"goal": "Recall test", "key_facts": ["The code word is BLUE-HERON-4417"]})
+    args = {"handoff_json": handoff, "agent": "claude-code"}
+    asyncio.run(app.call_tool("cognicore_save_session", args))
+    assert len(pushed) == 1 and pushed[0].startswith("mcp:")
+    asyncio.run(app.call_tool("cognicore_save_session", args))  # same content: deduplicated, nothing to push
+    assert len(pushed) == 1
+
+
+# --- Lean plugin, long-session detail, and search over saved sessions -------
+
+def test_search_toolset_loads_only_recall_with_hook_instructions(monkeypatch):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from cognicore.mcp import server
+
+    monkeypatch.setenv("COGNICORE_TOOLSETS", "search")
+    app = server.create_mcp_server()
+    assert [t.name for t in asyncio.run(app.list_tools())] == ["cognicore_recall"]
+    assert app.instructions == server.HOOKS_INSTRUCTIONS
+    monkeypatch.setenv("COGNICORE_TOOLSETS", "search,session")  # overlapping groups keep recall
+    names = {t.name for t in asyncio.run(server.create_mcp_server().list_tools())}
+    assert {"cognicore_recall", "cognicore_save_session"} <= names
+
+
+def test_long_session_detail_stays_searchable_but_out_of_the_handoff(local):
+    from cognicore.memory.handoff import MAX_FACTS
+
+    facts = [f"Garden{i}a borders lake{i}b near forest{i}c and meadow{i}d." for i in range(MAX_FACTS + 20)]
+    save_session(local, [{"role": "user", "content": " ".join(facts)}], session_key="k", project="/p")
+    with local._get_conn() as conn:
+        handoff = json.loads(conn.execute("SELECT handoff_json FROM sessions").fetchone()[0])
+    assert len(handoff["key_facts"]) == MAX_FACTS
+    dropped = next(f for f in facts if f not in handoff["key_facts"])
+    hits = [r.entry.text for r in local.search(dropped.split()[0], top_k=3)]
+    assert any(dropped.split()[0] in h for h in hits)
+
+
+def test_hosted_recall_finds_facts_from_saved_sessions():
+    remote.cognicore_save_session(_ctx(ALICE), handoff_json=json.dumps(
+        {"goal": "Recall test", "key_facts": ["The recall test code word is BLUE-HERON-4417"]}))
+    assert "BLUE-HERON-4417" in remote.cognicore_recall("recall test code word", _ctx(ALICE))
+    assert "BLUE-HERON-4417" in remote.cognicore_recall("BLUE-HERON-4417", _ctx(ALICE))
+    assert "BLUE-HERON-4417" not in remote.cognicore_recall("recall test code word", _ctx(BOB))
+
+
+def test_local_recall_does_not_label_session_facts_as_failures(monkeypatch):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from cognicore.mcp import server
+
+    monkeypatch.setenv("COGNICORE_TOOLSETS", "memory,session")
+    app = server.create_mcp_server()
+    asyncio.run(app.call_tool("cognicore_save_session", {"handoff_json": json.dumps(
+        {"goal": "Recall test", "key_facts": ["The recall test code word is BLUE-HERON-4417"]})}))
+    out = str(asyncio.run(app.call_tool("cognicore_recall", {"query": "recall test code word"})))
+    assert "BLUE-HERON-4417" in out and "FAILURE" not in out
