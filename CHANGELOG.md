@@ -30,6 +30,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   server reports a different commit than the one just deployed.
 
 ### Changed
+- **Container logs are deleted after 14 days** (`deploy/logrotate-docker.conf`, installed by
+  `deploy/setup-host.sh`). Caddy's access log records visitor IP addresses, and the host kept it
+  forever; `PRIVACY.md` now states the 14-day window, and `tests/test_log_retention.py` fails if the
+  configuration and the policy drift apart. The compose file also caps each container's live log, so
+  a burst cannot fill the disk between daily runs. An existing host needs the file installed once:
+  see "Deploying on a VM" in `docs/remote-mcp-server.md`.
+- **The privacy policy describes the marketplace accurately.** Using any marketplace tool, including
+  read-only ones, creates a profile other users can see, and those profiles, transfer records and
+  reputation scores live in one shared database rather than a per-account one. The policy also says
+  prices are estimates with no payment taken, that stopping a listing is a request by email, and
+  that copies other users already hold are unaffected by deleting your own.
 - `cognicore.connectors.oauth.GitHubOAuthServer` is now `OAuthServer`; the old name still works.
 - CI on `main` no longer cancels a run when the next merge lands, so every merged commit gets a
   result rather than a "cancelled" failure. Pull requests still cancel superseded runs.

@@ -97,6 +97,12 @@ Production runs on a single Linux VM with `deploy/docker-compose.yml`: the serve
    ```
 
    SQLite needs a local filesystem; do not put the data directory on SMB or NFS, and turn off host disk caching.
+
+   This step also installs `deploy/logrotate-docker.conf` as `/etc/logrotate.d/cognicore-docker`, which deletes container logs after 14 days. Caddy's access log records visitor IP addresses, and `PRIVACY.md` promises that window, so an existing host needs the same file installed:
+
+   ```bash
+   sudo install -m 644 deploy/logrotate-docker.conf /etc/logrotate.d/cognicore-docker
+   ```
 2. Copy `deploy/.env.example` to `deploy/.env`, fill in the variables above, and `chmod 600` it.
 3. Point an `A` record for `mcp` at the VM's public IP. Keep the Cloudflare proxy off (DNS only); if you turn it on, Caddy must forward `CF-Connecting-IP` instead, or the rate limiter sees Cloudflare's address.
 4. Start it:
