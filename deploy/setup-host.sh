@@ -101,6 +101,13 @@ JAIL
 systemctl enable --now fail2ban >/dev/null
 systemctl restart fail2ban
 
+echo "==> Log retention"
+# Container logs hold IP addresses, so they are deleted after 14 days to match
+# the privacy policy. The compose file caps each container's live log size;
+# this drops them by age.
+install -m 644 "$(dirname "$0")/logrotate-docker.conf" /etc/logrotate.d/cognicore-docker
+logrotate --debug /etc/logrotate.d/cognicore-docker >/dev/null
+
 echo "==> Firewall"
 ufw allow 22/tcp >/dev/null
 ufw allow 80/tcp >/dev/null

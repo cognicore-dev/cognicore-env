@@ -134,6 +134,7 @@ def _held(path):
     "deploy/systemd/cognicore-deploy.service",
     "deploy/setup-host.sh",
     "deploy/backup-to-blob.sh",
+    "deploy/logrotate-docker.conf",  # installed into /etc on the host
 ])
 def test_host_level_changes_are_held(path):
     assert _held(path)
