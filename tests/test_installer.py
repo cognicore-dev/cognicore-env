@@ -84,7 +84,7 @@ def test_local_plugin_manifest():
     meta = json.loads((plugin / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert meta["name"] == "cognicore"
     server = json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["cognicore"]
-    assert server["command"] == "cognicore-mcp" and server["env"]["COGNICORE_TOOLSETS"] == "memory,session"
+    assert server["command"] == "cognicore-mcp" and server["env"]["COGNICORE_TOOLSETS"] == "search"
     hooks = json.loads((plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     assert set(hooks) == {"SessionStart", "Stop", "PreCompact", "SessionEnd"}
     for groups in hooks.values():

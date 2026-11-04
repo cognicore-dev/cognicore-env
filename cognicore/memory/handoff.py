@@ -311,6 +311,7 @@ def build_handoff(
     project: str = "",
     compact: bool = False,
     compression: Optional[Dict[str, Any]] = None,
+    overflow: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Build a ``cognicore.handoff/v1`` document from a conversation and/or an
     agent-written partial handoff (``supplied``, see :func:`parse_supplied_handoff`).
@@ -383,6 +384,11 @@ def build_handoff(
                 break
 
     # Long sessions: keep the latest decisions and tasks. Facts are capped below.
+    # What a cap drops goes to ``overflow`` (if given) so the caller can keep it
+    # searchable without putting it in the handoff.
+    if overflow is not None:
+        overflow.extend(d["what"] + (f" (why: {d['why']})" if d["why"] else "") for d in decisions[:-MAX_DECISIONS])
+        overflow.extend(t["task"] for t in tasks[:-MAX_TASKS])
     decisions, tasks = decisions[-MAX_DECISIONS:], tasks[-MAX_TASKS:]
 
     if supplied and compact:
@@ -445,6 +451,8 @@ def build_handoff(
     # Agent-supplied facts are always kept; only the extracted ones are capped.
     own = set((supplied or {}).get("key_facts", []))
     keep = set(_cap_facts([f for f in facts if f not in own]))
+    if overflow is not None:
+        overflow.extend(f for f in facts if not (f in own or f in keep))
     facts = [f for f in facts if f in own or f in keep]
 
     doc = {

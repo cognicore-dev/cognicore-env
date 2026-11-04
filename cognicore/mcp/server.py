@@ -12,6 +12,7 @@ Usage::
 """
 
 import json
+import uuid
 import os
 import sys
 import logging
@@ -140,7 +141,16 @@ MEMORY_INSTRUCTIONS = (
 )
 
 
+# With hooks, saving and resuming happen automatically, so the only tool an
+# agent needs is search: details the brief leaves out stay one call away.
+HOOKS_INSTRUCTIONS = (
+    "CogniCore's hooks save each session and put a brief of earlier work at the start of new "
+    "sessions. For a detail the brief leaves out (an exact value, an earlier decision, a path), "
+    "call cognicore_recall with a few keywords."
+)
+
 LOCAL_TOOLSETS: Dict[str, List[str]] = {
+    "search": ["cognicore_recall"],  # for agents with CogniCore hooks (the cognicore plugin)
     "memory": ["cognicore_remember", "cognicore_recall", "cognicore_stats"],
     "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
     "reflection": ["cognicore_recall_failures", "cognicore_recall_successes", "cognicore_reflect"],
@@ -185,12 +195,27 @@ def limit_toolsets(server: Any, spec: str, groups: Dict[str, List[str]]) -> List
     unknown = wanted - set(groups)
     if unknown:
         logger.warning("Unknown COGNICORE_TOOLSETS entries ignored: %s", ", ".join(sorted(unknown)))
-    drop = {name for group, names in groups.items() if group not in wanted for name in names}
+    keep = {name for group in wanted & set(groups) for name in groups[group]}
+    drop = {name for names in groups.values() for name in names} - keep  # a tool may be in several groups
     tools = getattr(getattr(server, "_tool_manager", None), "_tools", {})
     removed = [name for name in list(tools) if name in drop]
     for name in removed:
         del tools[name]
     return removed
+
+
+def _push_if_syncing(save_result: str, session_key: str) -> None:
+    """Upload a newly saved session in the background when `cognicore login` sync is on."""
+    try:
+        res = json.loads(save_result)
+        if res.get("deduplicated") or res.get("error"):
+            return
+        from cognicore import sync
+
+        if sync.enabled():
+            sync.push_in_background(session_key)
+    except Exception as e:  # never fail a save over sync
+        logger.debug("sync push not started: %s", e)
 
 
 def _with_local_os(environment_json: str) -> Dict[str, Any]:
@@ -240,7 +265,9 @@ def create_mcp_server() -> "FastMCP":
             "Install it with:  pip install mcp"
         )
 
-    mcp = FastMCP("cognicore", instructions=MEMORY_INSTRUCTIONS)
+    wanted = {s.strip().lower() for s in os.environ.get("COGNICORE_TOOLSETS", "").split(",") if s.strip()}
+    hooks_only = bool(wanted) and wanted <= {"search"}
+    mcp = FastMCP("cognicore", instructions=HOOKS_INSTRUCTIONS if hooks_only else MEMORY_INSTRUCTIONS)
 
     # ------------------------------------------------------------------
     # Tool 1: cognicore_remember
@@ -357,7 +384,14 @@ def create_mcp_server() -> "FastMCP":
 
         lines = [f"Found {len(results)} relevant memories:\n"]
         for idx, (score, doc) in enumerate(results, 1):
-            if hasattr(doc, "correct"):
+            metadata = getattr(doc, "metadata", None) or {}
+            # Only experiences record an outcome. A fact from a saved session or a
+            # remembered note has none, so labelling it FAILURE would mislead.
+            is_experience = bool(getattr(doc, "action", None) or metadata.get("task") or metadata.get("error"))
+            if hasattr(doc, "correct") and not is_experience:
+                where = f"  [{doc.category}]" if getattr(doc, "category", None) else ""
+                lines.append(f"  {idx}. (relevance {score:.2f}) {doc.text}{where}")
+            elif hasattr(doc, "correct"):
                 outcome = "SUCCESS" if doc.correct else "FAILURE"
                 lines.append(f"  {idx}. [{outcome}] (relevance {score:.2f})")
                 lines.append(f"     Task    : {doc.metadata.get('task', doc.text)}")
@@ -644,11 +678,17 @@ def create_mcp_server() -> "FastMCP":
         environment_json: {"os","python_version","framework","framework_version","dependencies":{"name":"ver"}}.
         agent: e.g. "claude-code". Secrets are redacted; saving the same content twice is a no-op."""
         _ensure_initialized()
-        return save_session(
+        # A sync id lets `cognicore login` users see agent-saved sessions in their
+        # other apps too, not only the ones the hooks save.
+        session_key = f"mcp:{uuid.uuid4().hex}"
+        res = save_session(
             _runtime.backend, conversation, session_name=session_name if session_name else None,
             agent=agent, goal=goal, current_state=current_state,
             environment=_with_local_os(environment_json), supplied_handoff=handoff_json or None,
+            session_key=session_key,
         )
+        _push_if_syncing(res, session_key)
+        return res
 
     # ------------------------------------------------------------------
     # Tool 10: cognicore_resume_session

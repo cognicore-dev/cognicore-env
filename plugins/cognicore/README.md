@@ -48,7 +48,9 @@ After you sign in, a session saved in Claude Code or Codex is also uploaded to y
 
 ## What it adds to each turn
 
-The plugin's MCP server runs in lean mode, with 6 tools at about 1,000 tokens per turn. Its hooks inject nothing in a project with no history.
+The hooks save and resume on their own, so the plugin's MCP server loads one tool, `cognicore_recall`, for looking up details the brief leaves out. That's about 230 tokens per turn, including its instructions (6 tools used about 1,240). Set `COGNICORE_TOOLSETS=memory,session` to get the save, resume and remember tools as well. The hooks inject nothing in a project with no history.
+
+Long sessions keep everything searchable: the brief and what syncs stay short, while statements the brief leaves out are stored on your machine and found with `cognicore_recall`.
 
 ## Options
 
@@ -59,7 +61,7 @@ The plugin's MCP server runs in lean mode, with 6 tools at about 1,000 tokens pe
 | `COGNICORE_AUTO_CAPTURE=0` / `COGNICORE_AUTO_RESUME=0` | Turn saving / resuming off |
 | `COGNICORE_AI_COMPRESS=auto` | Summarize long sessions with Claude. Needs `pip install anthropic` and Anthropic credentials. `COGNICORE_AI_MODEL` picks the model. |
 | `COGNICORE_SYNC=0` | Pause sync with your hosted account (after `cognicore login`) |
-| `COGNICORE_TOOLSETS` | Which MCP tool groups load (`memory,session` here; `all` for every tool) |
+| `COGNICORE_TOOLSETS` | Which MCP tool groups load (`search` here; `memory,session` adds save, resume and remember; `all` for every tool) |
 
 ## See what's stored
 

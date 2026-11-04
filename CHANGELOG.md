@@ -57,6 +57,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - A handoff the agent saved partway through a session no longer freezes the session's state. Once the conversation continues past it, the state comes from the newer work and newer tasks are listed first; the saved goal, decisions and facts still count.
 - "Doesn't work" describing a limitation ("X doesn't work there") is no longer saved as a rejected approach. Failed attempts still are ("it didn't work", "we tried X but it doesn't work").
 - Quoted text no longer decides how a sentence is filed (a sentence quoting "it didn't work" isn't a rejected approach). "Follow-up" marks a task only in task form ("Follow-up: ..."), not in reports like "completed every follow-up". The state is the newest status sentences, up to about 300 characters, with older ones kept as facts.
+- The plugin loads only `cognicore_recall` (`COGNICORE_TOOLSETS=search`), since its hooks save and resume: about 230 tokens per turn instead of about 1,240. A new `search` toolset and shorter instructions for hook users make this possible, and a tool listed in several groups is now kept when any of them is requested.
+- Statements a long session's caps leave out of the handoff are stored locally as searchable rows, so `cognicore_recall` finds them while briefs and sync stay short.
+- The hosted `cognicore_recall` searches all of your memories by default (`scope="all"`). Before, it searched only `user` scope, so facts from saved or synced sessions were never found.
+- The local `cognicore_recall` no longer labels saved facts and notes `[FAILURE]`; success and failure are shown only for experiences, which record an outcome.
+- Sessions saved with the local `cognicore_save_session` tool get a sync id and upload in the background when sync is on.
 - Long sessions no longer flood the handoff. Table rows, list lead-ins ("Next steps:") and questions are no longer saved as tasks or decisions. A session keeps at most 25 decisions, 25 tasks and 40 key facts, preferring recent ones and those with exact values; exact values and files are never capped.
 - Deploy configs are hardened against common 502 causes, such as keep-alive and health-check timeouts.
 

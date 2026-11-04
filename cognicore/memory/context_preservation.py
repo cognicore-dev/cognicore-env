@@ -532,11 +532,13 @@ def save_session(
         date_pretty = datetime.fromtimestamp(timestamp).strftime("%b %d, %Y")
         session_name = f"Session {date_pretty}"
 
+    overflow: List[str] = []  # statements the handoff's caps left out: stored, searchable, not briefed
     try:
         handoff = build_handoff(
             conversation, session_id, session_name, timestamp,
             agent=agent, client=client, goal=goal, current_state=current_state, environment=environment,
             supplied=supplied_handoff, project=project, compact=compact, compression=compression,
+            overflow=overflow,
         )
     except HandoffInputError as e:
         return _compact_json({"error": str(e)})
@@ -544,7 +546,7 @@ def save_session(
         backend, handoff, session_id, session_name, timestamp, previous,
         message_count=len(conversation), tokens=TokenBudget.estimate_tokens(conversation),
         conv_hash=conv_hash if hashed else None, agent=agent, client=client,
-        external_id=session_key, project=project,
+        external_id=session_key, project=project, detail=overflow,
     )
 
     def _count(category: str) -> int:
@@ -571,13 +573,22 @@ def save_session(
 def _store_session(backend: Any, handoff: Dict[str, Any], session_id: str, session_name: str,
                    timestamp: float, previous: Any, message_count: int, tokens: int,
                    conv_hash: Optional[str], agent: str, client: str, external_id: str,
-                   project: str) -> Tuple[List[Tuple[str, str, str]], Dict[str, str]]:
+                   project: str, detail: Optional[List[str]] = None) -> Tuple[List[Tuple[str, str, str]], Dict[str, str]]:
     """Write a handoff's searchable rows, its summary and its session row (insert or update).
 
     Returns ``(new_rows, existing_ids)``: rows stored now, and statements already
     in memory that were linked instead of copied.
     """
     rows = _memory_rows(handoff)
+    # Long sessions: what the handoff's caps left out stays searchable with
+    # cognicore_recall. It is not in handoff_json, so briefs and sync stay small.
+    seen = {_normalize_sentence(text) for text, _, _ in rows}
+    for statement in detail or []:
+        for atom in decompose(statement):
+            key = _normalize_sentence(atom)
+            if key and key not in seen:
+                seen.add(key)
+                rows.append((atom, auto_categorize(atom)[0], "session_detail"))
     with backend._get_conn() as conn:
         existing_ids = _existing_ids_by_text(conn, [text for text, _, _ in rows])
     new_rows = [r for r in rows if r[0] not in existing_ids]
