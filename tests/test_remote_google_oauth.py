@@ -513,13 +513,38 @@ def test_consent_page_offers_google_first_with_plain_language(both):
     assert text.index("Continue with Google") < text.index("Continue with GitHub")
     assert "Only your Google account ID, used to keep your memories separate." in text
     assert "No access to your email, contacts, Drive or any other Google data." in text
-    assert "You do not need to create a new account." in text
+    # Reassurance that applies to both providers, not only Google.
+    assert "No new account or password needed." in text
     assert "keeps its own memories" in text
+    assert "Google and GitHub are separate accounts." in text
     for jargon in ("OAuth", "token", "scope", "OIDC", "PKCE"):
         assert jargon not in re.sub(r"<[^>]+>", " ", text.split("<body>")[1])
     # The official multicolour G.
     for colour in ("#EA4335", "#4285F4", "#FBBC05", "#34A853"):
         assert colour in text
+
+
+def test_each_disclosure_sits_under_its_own_button(both):
+    """What a provider shares is read at the moment of choosing it, not in a list elsewhere."""
+    text, _, _ = _consent(TestClient(remote.app))
+    text = text.text
+    google_btn, github_btn = text.index("Continue with Google"), text.index("Continue with GitHub")
+    google_says = text.index("Only your Google account ID")
+    github_says = text.index("Your public GitHub username and account ID")
+    assert google_btn < google_says < github_btn < github_says
+
+
+def test_buttons_come_before_the_fine_print(both):
+    """The page must not need a scroll to reach the choice."""
+    text = _consent(TestClient(remote.app))[0].text
+    assert text.index("Continue with Google") < text.index("separate accounts") < text.index(">Cancel<")
+
+
+def test_motion_is_css_only_and_respects_reduced_motion(both):
+    text = _consent(TestClient(remote.app))[0].text
+    assert "<script" not in text.lower()
+    assert "prefers-reduced-motion:reduce" in text
+    assert "@keyframes" in text
 
 
 def test_loopback_warning_still_shown(both):
