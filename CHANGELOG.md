@@ -30,6 +30,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   server reports a different commit than the one just deployed.
 
 ### Changed
+- **A cleaner sign-in page.** The Continue buttons now come straight after the headline, so they
+  no longer sit below the fold, and what each provider shares is written under its own button.
+  Google and GitHub carry equal visual weight. The page uses quieter styling and a short CSS-only
+  entrance animation (no scripts, so the strict CSP holds), and the motion turns off under
+  `prefers-reduced-motion`. The lead line now reads "No new account or password needed", which
+  holds for both providers, replacing a Google-only sentence.
+- **An empty account says which sign-in it belongs to.** Google and GitHub sign-ins are separate
+  accounts, so reconnecting with the other provider opens an empty one that looks like lost
+  memories. When an account holds nothing at all, `cognicore_recall`, `cognicore_list`,
+  `cognicore_stats` and `cognicore_resume_session` (text format) now say which provider it
+  belongs to and that the other provider's memories are in a separate account. The note names
+  providers only, never an account id, and is not added to JSON output.
 - **Container logs are deleted after 14 days** (`deploy/logrotate-docker.conf`, installed by
   `deploy/setup-host.sh`). Caddy's access log records visitor IP addresses, and the host kept it
   forever; `PRIVACY.md` now states the 14-day window, and `tests/test_log_retention.py` fails if the

@@ -196,71 +196,84 @@ _PAGE_HEADERS = {
 }
 
 _PAGE_CSS = """
-:root{--bg:#f6f7f9;--card:#fff;--text:#14161a;--muted:#5b616e;--line:#e4e6eb;--soft:#f3f4f6;
---brand:#4f46e5;--brand2:#7c3aed;--btn:#1f2328;--btn-text:#fff;--btn-hover:#32383f;
---ok:#16a34a;--no:#9ca3af;--warn-bg:#fff7e6;--warn-line:#f5d08a;--warn-text:#7a4b00;--shadow:0 1px 2px rgba(16,24,40,.04),0 12px 32px rgba(16,24,40,.08)}
-@media (prefers-color-scheme:dark){:root{--bg:#0d0f13;--card:#16191f;--text:#eceef2;--muted:#9aa1ad;--line:#2a2f38;
---soft:#1d2129;--btn:#f0f2f5;--btn-text:#14161a;--btn-hover:#d9dde3;--ok:#4ade80;--no:#6b7280;
---warn-bg:#2a2112;--warn-line:#5c4415;--warn-text:#f3c97a;--shadow:0 12px 32px rgba(0,0,0,.45)}}
+:root{--bg:#fafaf9;--card:#fff;--text:#0c0c0d;--muted:#6b6b70;--faint:#8e8e93;--line:#e8e7e4;--line-strong:#dadce0;--soft:#f5f5f3;--focus:#4f46e5;
+--warn-bg:#fff8eb;--warn-line:#f1d9a6;--warn-text:#7a4b00;
+--shadow:0 1px 1px rgba(0,0,0,.02),0 2px 4px rgba(0,0,0,.03),0 16px 40px -12px rgba(0,0,0,.12)}
+@media (prefers-color-scheme:dark){:root{--bg:#09090a;--card:#121214;--text:#ededef;--muted:#9a9aa2;--faint:#6e6e76;
+--line:#232327;--line-strong:#3c4043;--soft:#19191c;--focus:#a5b4fc;
+--warn-bg:#211a0d;--warn-line:#4a3a17;--warn-text:#f1c878;
+--shadow:0 0 0 1px rgba(255,255,255,.02),0 24px 48px -16px rgba(0,0,0,.6)}}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;
-background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
-"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
-main{width:100%;max-width:440px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:32px 28px 24px;box-shadow:var(--shadow)}
-.marks{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:20px}
-.mark{width:52px;height:52px;border-radius:14px;display:grid;place-items:center}
-.mark.brand{background:linear-gradient(135deg,var(--brand),var(--brand2))}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 16px;
+background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+main{width:100%;max-width:400px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px;box-shadow:var(--shadow)}
+.marks{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+.mark{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;flex:none}
+.mark.brand{background:var(--text);color:var(--card)}
 .mark.app{background:var(--soft);border:1px solid var(--line);color:var(--muted)}
 .mark.alert{background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-text)}
-.link{display:flex;gap:4px}.link i{width:5px;height:5px;border-radius:50%;background:var(--line)}
-h1{font-size:20px;line-height:1.3;font-weight:650;letter-spacing:-.01em;text-align:center;margin:0 0 6px}
-.lede{color:var(--muted);text-align:center;margin:0 0 22px}
-.section{border-top:1px solid var(--line);padding-top:16px;margin-top:16px}
-.label{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
-ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
-li{display:flex;gap:10px;align-items:flex-start}
-li svg{flex:none;margin-top:3px}
-.ok{color:var(--ok)}.no{color:var(--no)}
-.return{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--soft);
-border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px}
-.return span{color:var(--muted)}.return strong{font-weight:600;overflow-wrap:anywhere;text-align:right}
-.warn{display:flex;gap:10px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-text);
-border-radius:10px;padding:12px;font-size:14px;margin-top:16px}
-.warn svg{flex:none;margin-top:2px}
-.actions{display:grid;gap:10px;margin-top:22px}
-.btn{display:flex;align-items:center;justify-content:center;gap:10px;height:46px;border-radius:10px;font-weight:600;
-font-size:15px;text-decoration:none;transition:background .15s,border-color .15s}
-.btn.primary{background:var(--btn);color:var(--btn-text)}.btn.primary:hover{background:var(--btn-hover)}
-.btn.secondary{color:var(--text);border:1px solid var(--line)}.btn.secondary:hover{background:var(--soft)}
-.btn.google{background:#fff;color:#1f1f1f;border:1px solid #747775;
+.link{position:relative;width:40px;height:1.5px;border-radius:2px;background:var(--line);overflow:hidden}
+.link::after{content:"";position:absolute;inset:0 auto 0 0;width:14px;border-radius:2px;
+background:linear-gradient(90deg,transparent,var(--text));animation:flow 2.6s cubic-bezier(.65,0,.35,1) infinite}
+h1{font-size:19px;line-height:1.3;font-weight:620;letter-spacing:-.015em;margin:0 0 6px}
+.lede{color:var(--muted);margin:0 0 22px;font-size:14.5px}
+.actions{display:grid;gap:14px}
+.option{display:grid;gap:7px}
+.btn{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;height:44px;padding:0 16px;
+border-radius:10px;font-weight:560;font-size:14.5px;text-decoration:none;
+transition:background-color .15s ease,border-color .15s ease,transform .12s ease}
+.btn:active{transform:scale(.985)}
+.btn svg{flex:none}
+.btn.outline{background:var(--card);color:var(--text);border:1px solid var(--line-strong)}
+.btn.outline:hover{background:var(--soft)}
+.btn.google{background:#fff;color:#1f1f1f;border:1px solid #dadce0;
 font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-weight:500}
-.btn.google:hover{background:#f2f2f2}
-@media (prefers-color-scheme:dark){.btn.google{background:#131314;color:#e3e3e3;border-color:#8e918f}
-.btn.google:hover{background:#1e1f20}}
-.btn:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
-.provider{font-weight:600;margin:0 0 6px}.provider+ul{margin-bottom:14px}
-.note{color:var(--muted);font-size:14px;margin:12px 0 0}
-.foot{text-align:center;color:var(--muted);font-size:13px;margin-top:16px}
+.btn.google:hover{background:#f8f9fa;border-color:#c6c9cd}
+@media (prefers-color-scheme:dark){.btn.google{background:#131314;color:#e3e3e3;border-color:#3c4043}
+.btn.google:hover{background:#1c1c1e;border-color:#5f6368}}
+.btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.caption{margin:0;padding:0 2px;font-size:12.5px;line-height:1.5;color:var(--faint)}
+.caption-lead{display:block;color:var(--muted);font-weight:560;margin-bottom:2px}
+.note{display:flex;gap:9px;margin:18px 0 0;padding:11px 12px;border-radius:10px;background:var(--soft);
+font-size:13px;line-height:1.5;color:var(--muted)}
+.note svg{flex:none;margin-top:2px;color:var(--faint)}
+.warn{display:flex;gap:10px;background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-text);
+border-radius:10px;padding:11px 12px;font-size:13px;line-height:1.5;margin:0 0 16px}
+.warn svg{flex:none;margin-top:1px}
+.footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:22px;padding-top:18px;
+border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+.footer strong{color:var(--text);font-weight:560;overflow-wrap:anywhere}
+.btn.secondary{height:32px;padding:0 12px;font-size:13px;font-weight:520;color:var(--text);
+border:1px solid var(--line);border-radius:8px}
+.btn.secondary:hover{background:var(--soft)}
+.foot{text-align:center;color:var(--faint);font-size:12px;margin-top:18px;letter-spacing:.01em}
+.card{animation:rise .5s cubic-bezier(.16,1,.3,1) both}
+.card>*{animation:rise .55s cubic-bezier(.16,1,.3,1) both}
+.card>:nth-child(2){animation-delay:.04s}.card>:nth-child(3){animation-delay:.08s}
+.card>:nth-child(4){animation-delay:.12s}.card>:nth-child(5){animation-delay:.16s}
+.card>:nth-child(6){animation-delay:.2s}.card>:nth-child(7){animation-delay:.24s}
+.foot{animation:fade .6s .3s ease both}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes flow{0%{transform:translateX(-14px);opacity:0}20%{opacity:1}80%{opacity:1}100%{transform:translateX(40px);opacity:0}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 """
 
 _ICON_BRAND = (
-    '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" '
+    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" '
     'stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="7" r="2.3"/><circle cx="18" cy="7" r="2.3"/>'
     '<circle cx="12" cy="17.5" r="2.3"/><path d="M8.2 7.6 15.8 7.6M7.2 9 10.8 15.5M16.8 9 13.2 15.5"/></svg>'
 )
 _ICON_APP = (
-    '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
     'stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6l-4 3v-3H5a2 2 0 0 '
     '1-2-2V7a2 2 0 0 1 2-2Z"/><path d="M8 10.5h8M8 13h5" stroke-linecap="round"/></svg>'
 )
-_ICON_CHECK = (
-    '<svg class="ok" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3.2 3L13 4.5"/></svg>'
-)
-_ICON_CROSS = (
-    '<svg class="no" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>'
+_ICON_INFO = (
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/></svg>'
 )
 _ICON_WARN = (
     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -301,10 +314,10 @@ def _render_page(title: str, card_html: str, status: int = 200) -> HTMLResponse:
 
 def _error_page(message: str, status: int = 400) -> HTMLResponse:
     return _render_page("Sign-in could not continue", f"""
-<div class="marks"><div class="mark alert">{_ICON_WARN.replace('width="18" height="18"', 'width="26" height="26"')}</div></div>
+<div class="marks"><div class="mark alert">{_ICON_WARN.replace('width="18" height="18"', 'width="20" height="20"')}</div></div>
 <h1>Sign-in could not continue</h1>
 <p class="lede">{html.escape(message)}</p>
-<p class="foot" style="margin:0">You can close this window.</p>""", status)
+<p class="caption">You can close this window.</p>""", status)
 
 
 def _client_label(redirect_uri: str) -> tuple[str, str]:
@@ -512,7 +525,8 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
         name = html.escape(app_name)
 
         # (provider, what we receive, what we never receive, button). Google first:
-        # it is the account most people already have.
+        # it is the account most people already have. Each disclosure sits under
+        # its own button, so it is read at the moment of choosing.
         providers = []
         if google_enabled():
             google_url = html.escape(f"/authorize/google?{query}")
@@ -526,37 +540,31 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
             github_url = html.escape(f"/authorize/github?{query}")
             providers.append((
                 "GitHub",
-                "Your public GitHub username and account ID, used only to keep your memories separate",
-                "No access to your repositories, email or private data",
-                f'<a class="btn primary" href="{github_url}">{_ICON_GITHUB}Continue with GitHub</a>',
+                "Your public GitHub username and account ID, used only to keep your memories separate.",
+                "No access to your repositories, email or private data.",
+                f'<a class="btn outline" href="{github_url}">{_ICON_GITHUB}Continue with GitHub</a>',
             ))
-        if len(providers) == 1:
-            provider, gets, never, _ = providers[0]
-            received = f"""<p class="label">CogniCore receives from {provider}</p>
-<ul><li>{_ICON_CHECK}<span>{gets}</span></li>
-<li>{_ICON_CROSS}<span>{never}</span></li></ul>"""
-        else:
-            received = '<p class="label">What CogniCore receives</p>' + "".join(
-                f"""<p class="provider">If you continue with {provider}</p>
-<ul><li>{_ICON_CHECK}<span>{gets}</span></li>
-<li>{_ICON_CROSS}<span>{never}</span></li></ul>""" for provider, gets, never, _ in providers
-            ) + """<p class="note">Each sign-in option keeps its own memories. Choose the same one every time
-to see the same memories.</p>"""
-        no_new_account = (
-            " Use the Google account you already have. You do not need to create a new account."
-            if google_enabled() else ""
+        # With one provider there is no button to pair the text with by eye, so name it.
+        single = len(providers) == 1
+        options = "\n".join(
+            f"""<div class="option">{button}
+<p class="caption">{f'<span class="caption-lead">CogniCore receives from {provider}</span>' if single else ""}{gets} {never}</p></div>"""
+            for provider, gets, never, button in providers
         )
-        buttons = "\n".join(provider[3] for provider in providers)
+        # Signing in with the other provider opens an empty account, which looks like
+        # lost memories. Say so where the choice is made.
+        separate = "" if single else f"""<p class="note">{_ICON_INFO}<span>Google and GitHub are separate accounts.
+Each sign-in option keeps its own memories, so choose the same one every time.</span></p>"""
         return _render_page(f"Connect {app_name}", f"""
 <div class="marks"><div class="mark app" title="{name}">{_ICON_APP}</div>
-<div class="link" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="link" aria-hidden="true"></div>
 <div class="mark brand" title="CogniCore">{_ICON_BRAND}</div></div>
 <h1>Connect {name} to CogniCore Memory</h1>
-<p class="lede">{name} will be able to save and recall memories in your private CogniCore account.{no_new_account}</p>
-<div class="section">{received}</div>
-<div class="section"><div class="return"><span>After sign-in you return to</span><strong>{html.escape(return_to)}</strong></div>
-{warning}</div>
-<div class="actions">{buttons}
+<p class="lede">{name} will be able to save and recall memories in your private CogniCore account.
+No new account or password needed.</p>
+{warning}<div class="actions">{options}</div>
+{separate}
+<div class="footer"><span>You&rsquo;ll return to <strong>{html.escape(return_to)}</strong></span>
 <a class="btn secondary" href="{html.escape(cancel_url)}">Cancel</a></div>""")
 
     # -- shared by both providers ----------------------------------------------

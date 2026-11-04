@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any, Union
 import os
 import re
 import hashlib
+import sqlite3
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -328,6 +329,39 @@ def _authenticated_user(ctx: Optional[Context] = None) -> Optional[str]:
         return None
 
 
+_PROVIDER_NAMES = {"google": "Google", "github": "GitHub"}
+
+
+def _empty_account_note(ctx: Context | None, backend) -> str:
+    """A note for an empty account that names which sign-in it belongs to.
+
+    Google and GitHub sign-ins are separate accounts that are never linked, so
+    someone who reconnects with the other provider finds an empty one, which
+    looks exactly like lost memories. Shown only on the hosted server, only when
+    the account holds nothing at all, and only when the other provider is
+    actually offered.
+    """
+    user = _authenticated_user(ctx)
+    if not user or ":" not in user:
+        return ""
+    here = user.split(":", 1)[0]
+    others = [name for key, name in _PROVIDER_NAMES.items()
+              if key != here and getattr(_oauth, f"{key}_enabled")()]
+    if here not in _PROVIDER_NAMES or not others:
+        return ""
+    try:
+        if backend.count():
+            return ""
+    except (sqlite3.Error, OSError):  # a note is never worth failing the tool call over
+        return ""
+    other = others[0]
+    return (
+        f"\n\nThis CogniCore account has no memories yet. It belongs to your {_PROVIDER_NAMES[here]} sign-in. "
+        f"Memories saved while signed in with {other} are kept in a separate account; to reach them, "
+        f"reconnect CogniCore and choose {other}."
+    )
+
+
 def apply_auto_compression(ctx: Context, conversation: Optional[list], current_response: str) -> str:
     """Check token count and automatically compress if over 150,000 tokens."""
     if not conversation or not isinstance(conversation, list):
@@ -431,7 +465,7 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         scope=mem_scope
     )
     if not results:
-        return apply_auto_compression(ctx, conversation, "(none)")
+        return apply_auto_compression(ctx, conversation, "(none)" + _empty_account_note(ctx, backend))
 
     # Normalize scores to 0.0-1.0
     max_score = max(r.score for r in results) if results else 1.0
@@ -470,7 +504,7 @@ def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str
         scope=mem_scope
     )
     if not results:
-        return apply_auto_compression(ctx, conversation, "(empty)")
+        return apply_auto_compression(ctx, conversation, "(empty)" + _empty_account_note(ctx, backend))
     lines = []
     for r in results:
         lines.append(f"#{r.entry.entry_id}: {r.entry.text} ({r.entry.category})")
@@ -506,8 +540,8 @@ def cognicore_stats(ctx: Context, conversation: Optional[list] = None) -> str:
     ]
     for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1]):
         lines.append(f"  {cat}: {count}")
-    
-    res = "\n".join(lines)
+
+    res = "\n".join(lines) + (_empty_account_note(ctx, backend) if not total else "")
     return apply_auto_compression(ctx, conversation, res)
 
 
@@ -565,6 +599,9 @@ def cognicore_resume_session(
         include_action_items=include_action_items, max_tokens=max_tokens or None, format=format,
         session_id=session_id or None, section=section or None, environment=environment_json or None,
     )
+    # Not appended to JSON output, which a caller may parse.
+    if format != "json":
+        res += _empty_account_note(ctx, backend)
     return apply_auto_compression(ctx, conversation, res)
 
 
