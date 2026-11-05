@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/cognicore-env)](https://pypi.org/project/cognicore-env/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/cognicore-env/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Downloads](https://img.shields.io/pypi/dm/cognicore-env)](https://pypi.org/project/cognicore-env/)
 
 ![Claude Code hands its work to Codex through CogniCore memory](https://raw.githubusercontent.com/cognicore-dev/cognicore-env/main/docs/launch/kit/cognicore-demo.gif)
@@ -359,6 +359,6 @@ Python 3.10, 3.11 or 3.12 · Windows, macOS or Linux · no mandatory dependencie
 
 ## License
 
-MIT © [cognicore-dev](https://github.com/cognicore-dev) — built by
+Licensed under the [Apache License 2.0](LICENSE). © [cognicore-dev](https://github.com/cognicore-dev), built by
 [Kaushal Trivedi](https://www.linkedin.com/in/kaushal-trivedi-4450a8265),
 [Durvesh Bhadgaonkar](https://www.linkedin.com/in/durvesh-bhadgaonkar) and Hassaan Tole.

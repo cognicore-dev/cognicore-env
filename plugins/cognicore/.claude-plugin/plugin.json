@@ -7,7 +7,7 @@
     "name": "CogniCore",
     "url": "https://github.com/cognicore-dev/cognicore-env"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": "https://github.com/cognicore-dev/cognicore-env",
   "homepage": "https://github.com/cognicore-dev/cognicore-env/tree/main/plugins/cognicore"
 }

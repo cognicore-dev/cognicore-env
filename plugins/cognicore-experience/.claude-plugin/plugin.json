@@ -7,7 +7,7 @@
     "email": "cognicore.dev@github.com"
   },
   "homepage": "https://github.com/Kaushalt2004/cognicore-my-openenv/tree/main/plugins/cognicore-experience",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "memory",
     "experience",

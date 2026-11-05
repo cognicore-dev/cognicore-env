@@ -13,7 +13,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cognicore-env?color=orange)](https://pypi.org/project/cognicore-env/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![Tests](https://img.shields.io/badge/tests-470%20passing-brightgreen)]()
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Environments](https://img.shields.io/badge/environments-60%2B-purple)]()
 [![GitHub stars](https://img.shields.io/github/stars/Kaushalt2004/cognicore-my-openenv?style=social)](https://github.com/Kaushalt2004/cognicore-my-openenv)
 
@@ -82,6 +82,6 @@ Episode 20: 95%   ← same model, smarter runtime
 
 ---
 
-**60+ environments** · **Works with any LLM** (OpenAI, Gemini, Claude, Ollama, HuggingFace, OpenRouter) · **470 tests passing** · **Gymnasium-compatible** · **MIT License**
+**60+ environments** · **Works with any LLM** (OpenAI, Gemini, Claude, Ollama, HuggingFace, OpenRouter) · **470 tests passing** · **Gymnasium-compatible** · **Apache 2.0 License**
 
 <!-- END HERO SECTION -->

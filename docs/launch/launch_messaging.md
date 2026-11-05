@@ -35,7 +35,7 @@ More agents ≠ better. Runtime cognition > agent count.
 - Works with any LLM (OpenAI, Gemini, Claude, Ollama, HuggingFace, OpenRouter)
 - 470+ tests passing
 - Full trajectory store for offline RL training on coordination policies
-- MIT license
+- Apache 2.0 license
 
 Install: `pip install cognicore-env`
 
@@ -164,7 +164,7 @@ What CogniCore actually ships:
 📊 60+ Gymnasium environments
 🔌 Any LLM: OpenAI, Gemini, Claude, Ollama
 
-470+ tests. MIT license.
+470+ tests. Apache 2.0 license.
 
 ---
 
@@ -226,7 +226,7 @@ Here's the problem I kept hitting: every AI agent framework treats each executio
 • 60+ Gymnasium-compatible environments
 • Works with any LLM provider (OpenAI, Gemini, Claude, Ollama, HuggingFace)
 • 470+ tests passing
-• MIT license
+• Apache 2.0 license
 
 The core message: **the model stays the same — the runtime gets smarter.**
 

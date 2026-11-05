@@ -116,4 +116,4 @@ see the [README](https://github.com/cognicore-dev/cognicore-env#mcp-server).
 
 ## License
 
-MIT © CogniCore
+Apache License 2.0 © CogniCore
