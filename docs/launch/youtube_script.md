@@ -184,7 +184,7 @@ for ep in range(20):
 [SCREEN]: Clean slide with install command and GitHub link.
 
 [NARRATION]:
-"CogniCore is open source, MIT license, and it works with any LLM — OpenAI, Gemini, Claude, Ollama, HuggingFace, OpenRouter. You're not locked in."
+"CogniCore is open source, Apache 2.0 license, and it works with any LLM — OpenAI, Gemini, Claude, Ollama, HuggingFace, OpenRouter. You're not locked in."
 
 [SCREEN]:
 

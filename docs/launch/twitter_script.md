@@ -91,7 +91,7 @@ review_first    18/20    45,591  ✗ (has reviewer)
 [SCREEN]: Clean slide. GitHub link. Star button.
 
 [NARRATION]:
-"Open source. MIT license. Benchmarks are reproducible — run them yourself. Link in the thread."
+"Open source. Apache 2.0 license. Benchmarks are reproducible — run them yourself. Link in the thread."
 
 [SCREEN]:
 
