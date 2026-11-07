@@ -74,7 +74,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Read-only memory viewer:** `python -m cognicore.memory.viewer`.
 - **Optional AI compression** of long sessions through the Claude API (`COGNICORE_AI_COMPRESS`). It checks the summary against the session, so it can't add facts that weren't there.
 - **Benchmarks:** `scripts/bench_transfer.py` runs offline in CI. `scripts/bench_realworld.py` runs head to head against claude-mem; see `docs/transfer-audit.md`.
-- **Launch kit and 30-second demo** in `docs/launch/kit/`, with the Remotion source in `docs/launch/kit/video/`.
+- **Launch kit and 48-second demo** (Claude Code → claude.ai → Codex, plus measured numbers) in `docs/launch/kit/`, with the Remotion source in `docs/launch/kit/video/`.
 - FTS5 search quotes tokens, so hyphens, paths and keywords match.
 - Merging near-duplicate sentences no longer drops ones that carry new values.
 - A handoff the agent saved partway through a session no longer freezes the session's state. Once the conversation continues past it, the state comes from the newer work and newer tasks are listed first; the saved goal, decisions and facts still count.

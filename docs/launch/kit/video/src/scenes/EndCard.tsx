@@ -1,6 +1,6 @@
 import React from "react";
 import { Easing, Interactive, interpolate, useCurrentFrame } from "remotion";
-import { INSTALL, REPO } from "../data";
+import { INSTALL, LOGIN, REPO } from "../data";
 import { Background, COLORS, MONO } from "../ui";
 
 export const EndCard: React.FC = () => {
@@ -12,12 +12,12 @@ export const EndCard: React.FC = () => {
     }),
   });
   return (
-    <Background>
+    <Background note="Open source · runs locally · sync is opt-in">
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", gap: 34, color: COLORS.text, paddingBottom: 60 }}>
-        <Interactive.Div name="Name" style={{ fontSize: 150, fontWeight: 800, ...rise(0) }}>CogniCore</Interactive.Div>
-        <Interactive.Div name="Tagline" style={{ fontSize: 64, color: COLORS.muted, ...rise(8) }}>
-          Memory that moves between your agents
+        <Interactive.Div name="Name" style={{ fontSize: 140, fontWeight: 800, ...rise(0) }}>CogniCore</Interactive.Div>
+        <Interactive.Div name="Tagline" style={{ fontSize: 54, color: COLORS.muted, ...rise(8) }}>
+          Memory that moves between Claude Code, Codex and claude.ai
         </Interactive.Div>
         <Interactive.Div
           name="Install"
@@ -26,8 +26,14 @@ export const EndCard: React.FC = () => {
         >
           {INSTALL}
         </Interactive.Div>
-        <Interactive.Div name="Repo" style={{ fontSize: 40, ...rise(24) }}>
-          {REPO} · open source · local · ~450-token briefs
+        <Interactive.Div
+          name="Login"
+          style={{ fontFamily: MONO, fontSize: 34, color: COLORS.web, ...rise(20) }}
+        >
+          {LOGIN}
+        </Interactive.Div>
+        <Interactive.Div name="Repo" style={{ fontSize: 40, ...rise(28) }}>
+          {REPO} · open source · Apache 2.0
         </Interactive.Div>
       </div>
     </Background>
