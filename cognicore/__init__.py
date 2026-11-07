@@ -22,7 +22,7 @@ Quick start::
     print(env.episode_stats())
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 # Old module paths (e.g. cognicore.advanced_memory) keep working after the
 # restructure; importing _compat installs them. See cognicore/_compat.py.

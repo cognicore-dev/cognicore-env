@@ -14,7 +14,8 @@ Then restart Claude Code. In Codex, run `/hooks` once and trust the three CogniC
 Claude Code only? After the `pipx` line, install the plugin from inside Claude Code:
 
 ```
-/plugin install cognicore --marketplace cognicore-dev/cognicore-env
+/plugin marketplace add cognicore-dev/cognicore-env
+/plugin install cognicore@cognicore-beta-marketplace
 ```
 
 ## Why CogniCore
