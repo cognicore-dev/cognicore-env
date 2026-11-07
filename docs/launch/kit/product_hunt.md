@@ -10,7 +10,7 @@ Your coding agent forgets everything between sessions. CogniCore saves each sess
 **Topics:** Developer Tools, Artificial Intelligence, Open Source, Productivity
 
 **Gallery** (in order):
-1. The 30-second Claude Code → Codex demo (`cognicore-demo.mp4`)
+1. The 48-second Claude Code → claude.ai → Codex demo (`cognicore-demo.mp4`)
 2. The benchmark table (CogniCore vs claude-mem)
 3. The resume brief as an agent sees it
 4. The memory viewer page

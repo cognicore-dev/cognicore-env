@@ -16,6 +16,7 @@ export const COLORS = {
   claude: "#d97757",
   codex: "#7ee787",
   accent: "#f2cc60",
+  web: "#c4a7ff",
 };
 
 const EASE = Easing.bezier(0.16, 1, 0.3, 1);
@@ -26,10 +27,10 @@ export const typed = (text: string, frame: number, from: number, to: number) =>
     extrapolateLeft: "clamp", extrapolateRight: "clamp",
   })));
 
-export const Background: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+export const Background: React.FC<{ children: React.ReactNode; note?: string }> = ({ children, note }) => (
   <AbsoluteFill name="Background" style={{ backgroundColor: COLORS.bg, fontFamily: SANS }}>
     {children}
-    <Footer />
+    <Footer text={note} />
   </AbsoluteFill>
 );
 
@@ -85,9 +86,9 @@ export const Caption: React.FC<{ text: string; from?: number; to?: number }> = (
   );
 };
 
-const Footer: React.FC = () => (
+const Footer: React.FC<{ text?: string }> = ({ text = "Recreated from a real benchmark run · scripts/bench_realworld.py" }) => (
   <div style={{ position: "absolute", bottom: 34, width: "100%", textAlign: "center", color: COLORS.muted,
     fontSize: 24 }}>
-    Recreated from a real benchmark run · scripts/bench_realworld.py
+    {text}
   </div>
 );

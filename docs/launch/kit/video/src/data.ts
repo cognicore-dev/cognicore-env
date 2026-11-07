@@ -34,3 +34,25 @@ export const RECALLED = ["BILL-311", "ROUND_HALF_UP", "12,34 €", "Anika", "Thu
 
 export const INSTALL = 'pipx install "cognicore-env[mcp]" && cognicore install';
 export const REPO = "github.com/cognicore-dev/cognicore-env";
+
+// claude.ai picking the work up through the CogniCore connector. In a real test
+// (2026-11-03) claude.ai called "Resume from past sessions" on its own when asked
+// what happened in Claude Code. The answer below is built only from the brief above.
+export const WEB_PROMPT = "What did I do in my last Claude Code session?";
+export const WEB_TOOL = "Used CogniCore: Resume from past sessions";
+export const WEB_ANSWER = [
+  "You worked on ticket BILL-311: German invoice totals were off by one cent.",
+  "Totals now use Decimal with ROUND_HALF_UP, because finance requires commercial rounding.",
+  "Still open: format_eur must produce German formatting, like '12,34 €'.",
+  "Staging deploy is on Thursday; the reviewer is Anika.",
+];
+
+// Measured numbers (docs/transfer-audit.md and real Claude Code transcripts on one machine).
+export const STATS = [
+  { value: "~1,000", unit: "tokens", label: "brief instead of 1.36M tokens of history", note: "largest real session: 996 vs 1,361,772" },
+  { value: "228", unit: "tokens/turn", label: "plugin overhead, down from 1,240", note: "one search tool; hooks save and resume" },
+  { value: "2.4–4.1×", unit: "fewer tokens", label: "than claude-mem, same follow-through", note: "Claude Code → Claude Code and → Codex" },
+  { value: "0", unit: "model calls", label: "to save a session", note: "rule-based; ready in ~1 second" },
+];
+
+export const LOGIN = "cognicore login   # sync with claude.ai, Desktop and mobile";

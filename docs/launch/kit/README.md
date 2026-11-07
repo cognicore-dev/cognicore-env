@@ -9,7 +9,7 @@ Drafts for launching the `cognicore` plugin. Numbers are from [docs/transfer-aud
 | [x_thread.md](x_thread.md) | X / LinkedIn thread |
 | [product_hunt.md](product_hunt.md) | Product Hunt listing |
 | [comparison_article.md](comparison_article.md) | "claude-mem vs CogniCore, measured" (DEV / Medium / blog) |
-| [cognicore-demo.gif](cognicore-demo.gif) / [cognicore-demo.mp4](cognicore-demo.mp4) | The 30-second Claude Code → Codex demo (GIF 960×540 for posts, MP4 1080p) |
+| [cognicore-demo.gif](cognicore-demo.gif) / [cognicore-demo.mp4](cognicore-demo.mp4) | The 48-second demo: Claude Code → claude.ai → Codex, plus the measured numbers (GIF 960×540 for posts, MP4 1080p) |
 | [demo_storyboard.md](demo_storyboard.md) | Shot list the demo follows |
 | [video/](video/) | Remotion source for the demo; edit `src/data.ts` and re-render |
 | [registry_submissions.md](registry_submissions.md) | MCP registry, Smithery, Glama, awesome-list entries |
