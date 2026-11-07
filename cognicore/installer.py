@@ -45,6 +45,33 @@ def _mcp_command() -> List[str]:
     return [script] if script else [sys.executable, "-m", "cognicore.mcp.server"]
 
 
+# Editors whose Claude Code extension bundles the CLI. Many people use Claude
+# Code only through an editor, so `claude` is not on their PATH.
+_EDITOR_EXTENSION_DIRS = (".vscode", ".vscode-insiders", ".cursor", ".windsurf", ".antigravity-ide", ".antigravity")
+
+
+def _version_key(path: Path) -> Tuple[int, ...]:
+    """Sort key from the version in an extension folder name, e.g. anthropic.claude-code-2.1.316-win32-x64."""
+    digits = path.parts[-4].split("claude-code-")[-1].split("-")[0] if "claude-code-" in str(path) else ""
+    return tuple(int(p) for p in digits.split(".") if p.isdigit())
+
+
+def find_claude(home: Optional[Path] = None) -> Optional[str]:
+    """The Claude Code CLI: on PATH, else Claude Code's own local install, else the newest copy an editor bundles."""
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = home or Path.home()
+    exe = "claude.exe" if os.name == "nt" else "claude"
+    for local in (home / ".claude" / "local" / exe, home / ".local" / "bin" / exe):
+        if local.is_file():
+            return str(local)
+    bundled = [p for d in _EDITOR_EXTENSION_DIRS
+               for p in (home / d / "extensions").glob(f"anthropic.claude-code-*/resources/native-binary/{exe}")
+               if p.is_file()]
+    return str(max(bundled, key=_version_key)) if bundled else None
+
+
 def _codex_has_server(home: Path) -> bool:
     config = home / "config.toml"
     return config.exists() and "[mcp_servers.cognicore]" in config.read_text(encoding="utf-8")
@@ -66,15 +93,17 @@ def plan(agents: Optional[Sequence[str]] = None, codex_home: Optional[str] = Non
         notes.append("cognicore-hooks is not on PATH; hooks will fall back to `python -m cognicore.hooks`, "
                      "which needs cognicore in that Python. Installing with pipx or uv tool avoids this.")
 
-    claude = shutil.which("claude")
+    claude = find_claude()
     if "claude" in wanted:
+        if claude and not shutil.which("claude"):
+            notes.append(f"Using the Claude Code CLI bundled with your editor: {claude}")
         if claude:
             steps.append((f"Claude Code: add the {MARKETPLACE_SOURCE} marketplace",
                           lambda: _run([claude, "plugin", "marketplace", "add", MARKETPLACE_SOURCE])))
             steps.append((f"Claude Code: install the {PLUGIN} plugin",
                           lambda: _run([claude, "plugin", "install", f"{PLUGIN}@{MARKETPLACE_NAME}"])))
         else:
-            notes.append("Claude Code not found on PATH: skipped. In Claude Code, run "
+            notes.append("Claude Code not found (not on PATH or in an editor extension): skipped. In Claude Code, run "
                          f"/plugin marketplace add {MARKETPLACE_SOURCE}, then /plugin install {PLUGIN}@{MARKETPLACE_NAME}")
 
     codex = shutil.which("codex")
@@ -115,7 +144,10 @@ def install(agents: Optional[Sequence[str]] = None, dry_run: bool = False,
     for note in notes:
         out(f"  note:  {note}")
     if steps and not dry_run:
-        out("\nNext: restart Claude Code. In Codex, run /hooks once and trust the three CogniCore hooks.\n"
+        out("\nNext:\n"
+            "  1. Restart Claude Code (or run /reload-plugins). New sessions start with a brief of earlier work.\n"
+            "  2. In Codex, run /hooks once and trust the three CogniCore hooks.\n"
+            "  3. Optional: cognicore login  to share memory with claude.ai, Claude Desktop and mobile.\n"
             f"Memory lives in {os.environ.get('COGNICORE_DATA_DIR') or Path.home() / '.cognicore' / 'mcp'}; "
             "browse it with  python -m cognicore.memory.viewer")
     return 1 if failures else 0

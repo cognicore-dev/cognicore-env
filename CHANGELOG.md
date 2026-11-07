@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-07
+
 ### Added
 - **Sign in with Google** on the hosted server, so people without a GitHub account can connect
   CogniCore. It is OpenID Connect with only the `openid` scope: no email, profile or other Google

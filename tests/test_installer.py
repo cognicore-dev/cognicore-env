@@ -61,6 +61,7 @@ def test_existing_codex_server_is_kept_and_single_agent(fake_agents):
 
 def test_missing_agents_are_explained(fake_agents, monkeypatch, tmp_path):
     monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    monkeypatch.setattr(installer, "find_claude", lambda home=None: None)  # no editor-bundled CLI either
     out = []
     installer.install(codex_home=str(tmp_path / "no-codex"), out=out.append)
     text = "\n".join(out)
@@ -98,3 +99,18 @@ def test_local_plugin_manifest():
 def test_console_scripts_declared():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'cognicore-mcp = "cognicore.mcp.server:main"' in text and 'cognicore-hooks = "cognicore.hooks:main"' in text
+
+
+def test_find_claude_uses_the_newest_editor_bundled_cli(tmp_path, monkeypatch):
+    import os
+
+    from cognicore import installer
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    exe = "claude.exe" if os.name == "nt" else "claude"
+    for editor, version in ((".vscode", "2.1.9"), (".antigravity-ide", "2.1.316")):
+        target = tmp_path / editor / "extensions" / f"anthropic.claude-code-{version}-x64" / "resources" / "native-binary"
+        target.mkdir(parents=True)
+        (target / exe).write_text("")
+    assert "2.1.316" in installer.find_claude(tmp_path)
+    assert installer.find_claude(tmp_path / "empty") is None

@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.cognicore-dev/cognicore-env -->
 
-**Memory that moves between your coding agents.** Work in Claude Code, close it, open Codex, and it carries on with the same ticket, the same decisions and the same open follow-up. There's nothing to re-explain.
+**Memory that moves between your coding agents.** Work in Claude Code, then continue in Codex or claude.ai with the same ticket, the same decisions and the same open follow-up. There's nothing to re-explain.
 
 [![PyPI](https://img.shields.io/pypi/v/cognicore-env)](https://pypi.org/project/cognicore-env/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/cognicore-env/)
@@ -16,7 +16,9 @@ pipx install "cognicore-env[mcp]"   # or: uv tool install "cognicore-env[mcp]"
 cognicore install                   # sets up Claude Code and Codex
 ```
 
-Restart Claude Code. In Codex, run `/hooks` once and trust the three CogniCore hooks. Using Claude Code only? Run `/plugin install cognicore --marketplace cognicore-dev/cognicore-env` inside it.
+Restart Claude Code. In Codex, run `/hooks` once and trust the three CogniCore hooks. To share memory with claude.ai, Claude Desktop and mobile, also run `cognicore login`.
+
+Prefer to install from inside Claude Code? Run `/plugin marketplace add cognicore-dev/cognicore-env`, then `/plugin install cognicore@cognicore-beta-marketplace`.
 
 ---
 
@@ -235,7 +237,8 @@ whether it reads your data, changes it, or calls a third-party service.
 [`plugins/cognicore`](plugins/cognicore/README.md) is the local-first plugin. It saves and resumes sessions automatically through hooks, with memory kept in `~/.cognicore/mcp`. `cognicore install` sets it up for both Claude Code and Codex. Inside Claude Code alone you can also run:
 
 ```
-/plugin install cognicore --marketplace cognicore-dev/cognicore-env
+/plugin marketplace add cognicore-dev/cognicore-env
+/plugin install cognicore@cognicore-beta-marketplace
 ```
 
 For the hosted, GitHub-sign-in variant, see [`plugins/cognicore-memory`](plugins/cognicore-memory/README.md).
