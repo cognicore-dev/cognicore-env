@@ -9,6 +9,8 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Downloads](https://img.shields.io/pypi/dm/cognicore-env)](https://pypi.org/project/cognicore-env/)
 
+**If this saves you a session, [a star](https://github.com/cognicore-dev/cognicore-env) helps other people find it.**
+
 ![Claude Code hands its work to Codex through CogniCore memory](https://raw.githubusercontent.com/cognicore-dev/cognicore-env/main/docs/launch/kit/cognicore-demo.gif)
 
 ```bash
@@ -51,7 +53,7 @@ Plugin details: [`plugins/cognicore/README.md`](plugins/cognicore/README.md) · 
 
 # The CogniCore library
 
-Under the plugin is a Python library for persistent memory, reflection and safety in any agent. It has **zero mandatory dependencies**, and it needs no vector database, embedding server or other infrastructure.
+Under the plugin is a Python library for persistent memory, reflection and safety in any agent. It needs **no vector database, no embedding server and no external service**; the only required dependencies are numpy, jsonschema and requests.
 
 An agent debugs an issue, finds the fix, and the session ends. The next run starts from zero: the same questions, the same dead ends, the same fixes that were already rejected. Conversation history records what was *said*, not what was *tried*, what *failed* and what *worked*. CogniCore keeps that experience.
 
@@ -63,7 +65,7 @@ An agent debugs an issue, finds the fix, and the session ends. The next run star
 pip install cognicore-env
 ```
 
-Python 3.10+. No mandatory dependencies. No API key is needed for memory, reflection or safety.
+Python 3.10+. Three required dependencies (numpy, jsonschema, requests). No API key is needed for memory, reflection or safety.
 
 ## Quickstart
 
@@ -307,7 +309,7 @@ If `cognicore` isn't on your PATH after install, run
 
 ## Optional extras
 
-The base install has **zero required dependencies**. Add only what you need:
+The base install needs only **numpy, jsonschema and requests**. Add only what you need:
 
 ```bash
 pip install cognicore-env[rl]      # RL training (gymnasium, PyTorch)
@@ -358,7 +360,7 @@ The module-by-module map is in [CONTRIBUTING.md](CONTRIBUTING.md#module-map).
 
 ## Requirements
 
-Python 3.10, 3.11 or 3.12 · Windows, macOS or Linux · no mandatory dependencies.
+Python 3.10, 3.11 or 3.12 · Windows, macOS or Linux · three required dependencies.
 
 ## License
 
