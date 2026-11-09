@@ -7,7 +7,7 @@ jsonschema
 requests
 fastapi
 uvicorn
-mcp==1.30.0
+mcp==2.3.0
 PyJWT
 cryptography
 httpx
