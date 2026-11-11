@@ -1,0 +1,4 @@
+# Publish only SKILL.md and README.md.
+*
+!SKILL.md
+!README.md
