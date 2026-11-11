@@ -36,7 +36,7 @@ DB_NAME = "lessons.db"
 CHECK_LIMIT = 3
 CHECK_TOKENS = 200
 MERGE_SIMILARITY = 0.6
-MIN_RELATIVE_SCORE = 0.5  # bm25 scores are negative: keep rank <= best * 0.5
+SEEN_BOOST = 0.15
 MAX_FIELD = 300
 
 _STOPWORDS = {
@@ -104,10 +104,35 @@ _FILLER = {"not", "instead", "here", "there", "repo", "project", "always", "neve
 
 
 def _stem(word: str) -> str:
-    for suffix in ("ing", "ed", "s"):  # not "es": "dates" -> "dat" would match DATABASE_URL
+    """Light stemming so "writing"/"write", "tests"/"testing", "dates"/"date" compare equal."""
+    for suffix in ("ing", "ed", "s"):
         if len(word) > 4 and word.endswith(suffix):
-            return word[: -len(suffix)]
-    return word
+            word = word[: -len(suffix)]
+            break
+    return word[:-1] if len(word) > 3 and word.endswith("e") else word
+
+
+# Verbs that say an action happens, not what it's about. A task and a lesson
+# sharing only "add" or "fix" are not related.
+_GENERIC = {_stem(w) for w in ("add", "fix", "make", "change", "update", "create", "use", "set", "get", "run",
+                               "do", "build", "new", "write", "remove", "check")}
+
+
+def _topic_words(text: str) -> Set[str]:
+    return {_stem(w) for w in _words(text)} - _GENERIC - {_stem(w) for w in _FILLER}
+
+
+def _relevant(task_words: Set[str], row: Any) -> bool:
+    """Two meaningful shared words, or one that is the lesson's core topic (in 2+ of its fields).
+
+    BM25 alone can't decide this: with only a few lessons its scores collapse to
+    about -1e-6, so any lesson sharing one word looked as relevant as the best.
+    """
+    fields = [_topic_words(row[k]) for k in ("mistake", "fix", "why", "situation")]
+    shared = task_words & set().union(*fields)
+    if len(shared) >= 2:
+        return True
+    return any(sum(w in f for f in fields) >= 2 for w in shared)
 
 
 def _key_words(text: str) -> Set[str]:
@@ -161,14 +186,11 @@ def check(task: str, project: Optional[str] = None, limit: int = CHECK_LIMIT, ma
             "SELECT l.*, bm25(lessons_fts) AS rank FROM lessons_fts JOIN lessons l ON l.id = lessons_fts.rowid "
             "WHERE lessons_fts MATCH ? AND l.scope IN (?, ?) ORDER BY rank LIMIT 20",
             (query, *scopes)).fetchall()
-    # bm25() is lower-is-better; lessons seen more often get a small boost.
-    ranked = sorted(rows, key=lambda r: r["rank"] - 0.5 * (r["seen"] - 1))
-    if not ranked:
-        return []
-    # Show only lessons at least half as relevant as the best one: a single shared
-    # word ("package", "format") shouldn't bring an unrelated lesson along.
-    best = ranked[0]["rank"]
-    ranked = [r for r in ranked if r["rank"] <= best * MIN_RELATIVE_SCORE]
+    task_words = _topic_words(task)
+    rows = [r for r in rows if _relevant(task_words, r)]
+    # bm25() is negative, lower is better; scaling it nudges lessons seen more
+    # often up without letting the count outweigh relevance.
+    ranked = sorted(rows, key=lambda r: r["rank"] * (1 + SEEN_BOOST * (r["seen"] - 1)))
     picked, used = [], 0
     for row in ranked:
         line = format_line(row)
