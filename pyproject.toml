@@ -1,6 +1,6 @@
 [project]
 name = "cognicore-env"
-version = "0.12.0"
+version = "0.13.0"
 description = "Runtime cognition layer for AI agents — memory, reflection, replay, and adaptive execution. The model stays the same. The runtime gets smarter."
 readme = "README.md"
 
