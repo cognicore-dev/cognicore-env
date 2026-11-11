@@ -29,6 +29,7 @@ The `cognicore` command is open source (Apache 2.0). The lesson store is one fil
 - **Remembers why.** Each lesson keeps the mistake, the fix and the reason.
 - **No pile-up.** Recording the same lesson again merges it and counts it ("seen 3x").
 - **Ranked search.** Lessons are matched with SQLite full-text search (BM25). A lesson's `--when` words ("installing packages") let it match tasks worded differently ("add axios").
+- **Matched by words.** Occasionally a loosely related lesson appears; the agent ignores it, and it never blocks anything.
 - **Per project or global.** Lessons apply to the folder they were learned in, unless recorded with `--scope global`.
 
 ## Review or delete

@@ -25,6 +25,7 @@ Describe the kind of action in general words as well as the specifics, for examp
 
 If it prints lessons, follow them, and tell the user in one short line which lesson you applied, for example:
 "Using pnpm (lesson: npm breaks this repo's lockfile)." If it prints nothing, carry on; there is nothing to apply.
+If a lesson clearly doesn't apply to this task, ignore it and don't mention it.
 
 ## Record a lesson when
 
