@@ -177,6 +177,13 @@ def cmd_sync(args):
     return sync_main([args.action])
 
 
+def cmd_lesson(args):
+    """Lessons from mistakes: add, check before acting, list, forget."""
+    from cognicore.lessons import main as lesson_main
+
+    return lesson_main(args.rest)
+
+
 def cmd_setup(args):
     """Add the CogniCore memory rule to an agent's instructions."""
     from cognicore.agent_setup import setup_codex
@@ -416,6 +423,10 @@ def cmd_studio(args):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "lesson":  # its own parser, including --help
+        from cognicore.lessons import main as lesson_main
+
+        sys.exit(lesson_main(sys.argv[2:]))
     p = argparse.ArgumentParser(prog="cognicore")
     sub = p.add_subparsers(dest="command")
     sub.add_parser("list", help="List environments")
@@ -478,6 +489,10 @@ def main():
     sync_cmd = sub.add_parser("sync", help="Sync memory with your hosted account now, or show status")
     sync_cmd.add_argument("action", nargs="?", default="now", choices=["now", "status"])
 
+    lesson_cmd = sub.add_parser("lesson", help="Lessons from mistakes, checked before acting (add, check, list, forget)",
+                                add_help=False)
+    lesson_cmd.add_argument("rest", nargs=argparse.REMAINDER)
+
     args = p.parse_args()
     cmds = {"list": cmd_list, "train": cmd_train, "benchmark": cmd_benchmark,
             "arena": cmd_arena, "ui": cmd_ui, "integrations": cmd_integrations,
@@ -485,7 +500,8 @@ def main():
             "bench": cmd_bench, "doctor": cmd_doctor, "sleep": cmd_sleep,
             "passport": cmd_passport, "civilization": cmd_civilization,
             "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install,
-            "login": cmd_login, "logout": cmd_logout, "sync": cmd_sync}
+            "login": cmd_login, "logout": cmd_logout, "sync": cmd_sync,
+            "lesson": cmd_lesson}
     if args.command in cmds:
         result = cmds[args.command](args)
         if isinstance(result, int) and result:
