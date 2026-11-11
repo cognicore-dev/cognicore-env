@@ -9,9 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-11
+
 ### Added
 - **`cognicore lesson`**: lessons from mistakes, checked before acting. `add` records the mistake, the fix, the reason and the situation; `check "<task>"` prints at most 3 relevant lessons within about 200 tokens, and nothing when none match; `list` and `forget` review and delete them. Similar lessons are merged and counted, every field is redacted, and lessons stay local in `lessons.db` (SQLite FTS5, BM25).
 - **`skills/never-twice/`**: an OpenClaw skill that uses `cognicore lesson` so the agent never repeats a mistake.
+
+### Changed
+- The README names the three required dependencies (numpy, jsonschema, requests) instead of claiming none, and asks for a star above the demo.
 
 ## [0.12.0] — 2026-11-07
 
