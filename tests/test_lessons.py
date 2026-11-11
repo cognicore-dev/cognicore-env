@@ -130,3 +130,42 @@ def test_skill_manifest_matches_the_openclaw_format():
     assert re.search(r"^version: \d+\.\d+\.\d+$", front, re.M)
     assert re.search(r"requires:\s*\n\s*bins:\s*\n\s*- cognicore", front)
     assert "cognicore lesson check" in text and "cognicore lesson add" in text
+
+
+# --- Few lessons: BM25 scores collapse to ~-1e-6, so relevance can't rely on them --
+
+@pytest.fixture
+def two_lessons(db):
+    lessons.add("Ran npm install", "Use pnpm, not npm", "npm breaks the pnpm lockfile",
+                "installing or adding packages", project="/work/app")
+    for _ in range(3):
+        lessons.add("Wrote dates as MM/DD/YYYY", "Use ISO dates, YYYY-MM-DD", "the API rejects other formats",
+                    "writing dates in exports", project="/work/app")
+
+
+@pytest.mark.parametrize("task,expected", [
+    ("install a package: add axios", ["Use pnpm, not npm"]),
+    ("add a new export button", []),                    # "add" and "export" alone are not enough
+    ("write the invoice export dates", ["Use ISO dates, YYYY-MM-DD"]),
+    ("rename the header component", []),
+    ("fix the date picker css", ["Use ISO dates, YYYY-MM-DD"]),  # "date" is the dates lesson's core topic
+])
+def test_a_small_store_shows_only_relevant_lessons(two_lessons, task, expected):
+    assert _fixes(task) == expected
+
+
+def test_one_lesson_and_empty_stores(db):
+    assert lessons.check("install a package", project="/work/app") == []
+    lessons.add("Ran npm install", "Use pnpm, not npm", "npm breaks the lockfile", "installing packages",
+                project="/work/app")
+    assert _fixes("install a package: add axios") == ["Use pnpm, not npm"]
+    assert _fixes("add a new export button") == []
+
+
+def test_a_frequent_lesson_does_not_outrank_a_relevant_one(db):
+    for _ in range(9):
+        lessons.add("Pushed to main", "Open a pull request for every change to main", "main is protected",
+                    "pushing or merging code to main", project="/work/app")
+    lessons.add("Ran npm install", "Use pnpm, not npm", "npm breaks the pnpm lockfile",
+                "installing or adding packages", project="/work/app")
+    assert _fixes("install a package: add axios") == ["Use pnpm, not npm"]
