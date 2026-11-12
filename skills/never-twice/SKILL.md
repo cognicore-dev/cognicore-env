@@ -1,7 +1,7 @@
 ---
 name: never-twice
-description: Self-improving agent that never repeats a mistake. Learns from every correction and failure, remembers why, and checks only the relevant lessons before acting. Local-first, open source.
-version: 1.0.1
+description: Use before any task that changes something (writing or editing code or config, installing packages, running tests, builds, migrations, commits or deploys) to check lessons from past mistakes, and whenever the user corrects you or a command fails, to record the lesson so it is never repeated.
+version: 1.0.2
 metadata:
   openclaw:
     requires:
