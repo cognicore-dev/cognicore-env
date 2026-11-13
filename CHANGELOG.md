@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Cursor can sign in to the hosted server.** Cursor registers its desktop callback (`cursor://anysphere.cursor-mcp/oauth/callback`) and its cursor.com callbacks for cloud agents and the bot in one request; the server rejected the whole registration, so Cursor showed "Could not obtain authentication URL". These callbacks are now accepted.
+
 ## [0.13.0] — 2026-11-11
 
 ### Added

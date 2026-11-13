@@ -223,6 +223,34 @@ def test_chatgpt_lookalikes_are_refused(uri):
     assert not oauth.redirect_uri_allowed(uri)
 
 
+CURSOR_REDIRECTS = [
+    "cursor://anysphere.cursor-mcp/oauth/callback",
+    "https://www.cursor.com/agents/mcp/oauth/callback",
+    "https://cursor.com/agents/mcp/oauth/callback",
+    "https://cursor.com/bot/mcp/oauth/callback",
+    "http://localhost:8787/callback",
+]
+
+
+def test_cursor_registers_all_its_callbacks_in_one_request(github):
+    res = TestClient(remote.app).post("/register", json={"client_name": "Cursor", "redirect_uris": CURSOR_REDIRECTS})
+    assert res.status_code == 201, res.text
+    assert res.json()["redirect_uris"] == CURSOR_REDIRECTS
+
+
+@pytest.mark.parametrize("uri", [
+    "cursor://anysphere.cursor-mcp/oauth/callback?next=https://evil.example",
+    "cursor://evil/oauth/callback",
+    "https://cursor.com.evil.example/agents/mcp/oauth/callback",
+    "http://cursor.com/agents/mcp/oauth/callback",
+    "https://cursor.com/agents/mcp/oauth/callback/../../evil",
+    "https://cursor.com/other/mcp/oauth/callback",
+    "https://evil.cursor.com/agents/mcp/oauth/callback",
+])
+def test_cursor_lookalikes_are_refused(uri):
+    assert not oauth.redirect_uri_allowed(uri)
+
+
 def test_consent_page_names_chatgpt(github):
     _, challenge = _pkce()
     page = TestClient(remote.app).get("/authorize", params={

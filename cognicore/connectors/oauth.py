@@ -67,6 +67,11 @@ LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # plus a legacy shared one. chatgpt.com is controlled by OpenAI, so any id is accepted.
 CHATGPT_REDIRECT = re.compile(r"^https://chatgpt\.com/connector/oauth/[A-Za-z0-9_-]{1,128}$")
 CHATGPT_LEGACY_REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect"
+# Cursor registers all its callbacks in one request, so one unknown URI fails the whole
+# registration: the desktop app's custom scheme, plus cursor.com callbacks for cloud
+# agents (/agents/) and the Slack/Grok bot (/bot/). Desktop also uses a loopback callback.
+CURSOR_DESKTOP_REDIRECT = "cursor://anysphere.cursor-mcp/oauth/callback"
+CURSOR_WEB_REDIRECT = re.compile(r"^https://(www\.)?cursor\.com/(agents|bot)/mcp/oauth/callback$")
 
 # MCP endpoints a user can enter as the connector URL. Protected-resource
 # metadata must name the exact URL the user entered.
@@ -152,6 +157,8 @@ def redirect_uri_allowed(uri: str) -> bool:
     if uri in CLAUDE_REDIRECT_URIS or uri in extra:
         return True
     if uri == CHATGPT_LEGACY_REDIRECT or CHATGPT_REDIRECT.match(uri):
+        return True
+    if uri == CURSOR_DESKTOP_REDIRECT or CURSOR_WEB_REDIRECT.match(uri):
         return True
     parsed = urllib.parse.urlparse(uri)
     # RFC 8252 loopback redirect: any port, matched for localhost and 127.0.0.1.
