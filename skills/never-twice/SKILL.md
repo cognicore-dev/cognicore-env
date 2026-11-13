@@ -1,7 +1,7 @@
 ---
 name: never-twice
-description: Self-improving agent that never repeats a mistake. Learns from every correction and failure, remembers why, and checks only the relevant lessons before acting. Local-first, open source.
-version: 1.0.0
+description: Use before any task that changes something (writing or editing code or config, installing packages, running tests, builds, migrations, commits or deploys) to check lessons from past mistakes, and whenever the user corrects you or a command fails, to record the lesson so it is never repeated.
+version: 1.0.2
 metadata:
   openclaw:
     requires:
@@ -14,7 +14,11 @@ metadata:
 
 You learn from mistakes and never repeat them. Lessons are stored by the `cognicore` command and checked before you act.
 
-## Before any non-trivial task
+## Before you act
+
+Check lessons before any task that changes something: installing or removing packages, editing code or config,
+running tests or builds, running migrations, committing, pushing or deploying. Skip the check for questions,
+explanations and reading files.
 
 Run:
 
