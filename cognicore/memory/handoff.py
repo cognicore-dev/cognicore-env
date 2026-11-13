@@ -78,8 +78,10 @@ def is_fragment(sentence: str) -> bool:
     decision or fact on their own.
     """
     s = sentence.strip()
+    # A markdown heading such as "**What changed:**" or "## Next steps:" is a lead-in too.
+    bare = s.strip("*_#` ").strip()
     return (s.startswith("|") or s.count("|") >= 2 or bool(_TABLE_SEPARATOR.match(s))
-            or s.endswith(":"))
+            or bare.endswith(":") or bare == "")
 
 
 # ---------------------------------------------------------------------------
