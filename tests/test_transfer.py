@@ -489,6 +489,15 @@ def test_table_rows_and_list_lead_ins_are_not_tasks_but_keep_their_values():
     assert is_fragment("| a | b |") and is_fragment("Next steps:") and not is_fragment("Use 2.2.1.")
 
 
+@pytest.mark.parametrize("line", ["**What changed:**", "*What changed:", "## Next steps:", "__To do:__", "**"])
+def test_markdown_headings_are_fragments(line):
+    assert is_fragment(line)
+
+
+def test_bold_lead_in_with_a_statement_is_kept():
+    assert not is_fragment("**Fix:** commit 29059d9 on fix/cursor-oauth accepts Cursor's callbacks.")
+
+
 def test_questions_and_comparisons_are_not_tasks():
     conv = [{"role": "assistant", "content": (
         "Should we make the tool groups opt-in by default for everyone? "
