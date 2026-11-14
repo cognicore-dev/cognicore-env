@@ -29,7 +29,7 @@ SCHEMA_VERSION = "cognicore.handoff/v1"
 
 # Resume order: most important first.
 SECTION_PRIORITY = [
-    "goal", "current_state", "environment_warnings", "open_tasks", "decisions",
+    "goal", "current_state", "completed", "environment_warnings", "open_tasks", "decisions",
     "key_facts", "files", "exact_values", "experiences", "code", "other_sessions",
 ]
 SECTIONS = SECTION_PRIORITY + ["provenance", "environment"]
@@ -192,6 +192,33 @@ _STALLING = re.compile(
     r"\b(?:let me (?:think|check|look|see)|get back to you|take your time|wait here|ready to continue|"
     r"one (?:sec|second|moment)|happy to help|let me know|that'?s all|anything else|take a look)\b", re.I)
 _WHY = re.compile(r"\s+(?:because|since|so that|so|as)\s+|,\s+(?:because|since|so)\s+", re.I)
+# Work that was finished: "Committed and pushed 1bab591", "Merged as #212", "I published 0.13.0".
+_COMPLETED = re.compile(
+    r"\b(?:committed|pushed|merged|published|released|deployed|shipped|tagged|fixed|added|created|wrote|"
+    r"implemented|installed|built|bumped|renamed|removed|deleted|updated|rewrote|refactored|migrated|"
+    r"opened|closed|configured|enabled|disabled|upgraded|replaced|moved|is (?:now )?(?:live|merged|published|"
+    r"on main)|went live|passed|now passes?)\b", re.I)
+# ... unless it is a plan, a wish or a negation: "I'll push it", "once it's merged", "wasn't fixed".
+_NOT_DONE = re.compile(  # whole words only: "never-twice" or "fix/not-found" are names
+    r"(?<![\w/-])(?:will|won'?t|would|could|should|shall|can|can'?t|cannot|may|might|must|going to|"
+    r"need(?:s)? to|have to|has to|want(?:s)? to|plan(?:s|ned)? to|let'?s|let me|once|after|before|until|"
+    r"when|if|unless|not|no|never|nothing|none|yet|tbd|todo|to be|next|whether|decide|left to|still)(?![\w/-])"
+    r"|n'?t\b|['’](?:ll|d)\b|^(?:to|please)\b"
+    r"|^(?:use|run|merge|open|click|add|set|make|try|check|install|ask|see|go|delete|remove)\b", re.I)
+# "the published files", "for installed skills": the verb describes a noun, it reports no work.
+_ATTRIBUTIVE = {"the", "a", "an", "its", "your", "our", "their", "this", "that", "these", "those", "each",
+                "every", "any", "some", "for", "of", "with", "by", "all", "already-"}
+
+
+def _is_completed(sentence: str) -> bool:
+    """A statement that work was finished, not planned, conditional, denied or descriptive."""
+    if sentence.endswith("?") or _NOT_DONE.search(sentence):
+        return False
+    for m in _COMPLETED.finditer(sentence):
+        before = re.findall(r"[\w'-]+", sentence[:m.start()].lower())
+        if not before or before[-1] not in _ATTRIBUTIVE:
+            return True
+    return False
 
 
 def is_chatter(sentence: str) -> bool:
@@ -239,7 +266,9 @@ def _is_task(sentence: str) -> bool:
 MAX_DECISIONS = 25
 MAX_TASKS = 25
 MAX_FACTS = 40
-MAX_STATE_CHARS = 300
+MAX_COMPLETED = 30
+MAX_STATE_CHARS = 600
+MAX_STATE_SENTENCES = 5
 
 
 def _cap_facts(facts: List[str], limit: int = MAX_FACTS) -> List[str]:
@@ -356,7 +385,7 @@ def build_handoff(
     fragments = [s for _, s in substantive if is_fragment(s)]
     kept = _dedupe([(r, s) for r, s in substantive if not is_fragment(s)])
 
-    found_goal, states, decisions, tasks, facts = "", [], [], [], []
+    found_goal, states, decisions, tasks, facts, completed = "", [], [], [], [], []
     for role, s in kept:
         u = _QUOTED.sub(" ", s)  # classify by what the sentence says, not what it quotes
         if s.endswith("?"):
@@ -372,6 +401,8 @@ def build_handoff(
             decisions.append({"what": what, "why": why, "status": "made"})
         elif not found_goal and _GOAL.search(u) and not s.endswith("?"):
             found_goal = s
+        elif _is_completed(u):
+            completed.append(s)
         elif _STATE.search(u):
             states.append(s)
         else:
@@ -391,7 +422,8 @@ def build_handoff(
     if overflow is not None:
         overflow.extend(d["what"] + (f" (why: {d['why']})" if d["why"] else "") for d in decisions[:-MAX_DECISIONS])
         overflow.extend(t["task"] for t in tasks[:-MAX_TASKS])
-    decisions, tasks = decisions[-MAX_DECISIONS:], tasks[-MAX_TASKS:]
+        overflow.extend(completed[:-MAX_COMPLETED])
+    decisions, tasks, completed = decisions[-MAX_DECISIONS:], tasks[-MAX_TASKS:], completed[-MAX_COMPLETED:]
 
     if supplied and compact:
         # The supplied handoff is a summary (e.g. AI compression): keep an extracted
@@ -406,6 +438,7 @@ def build_handoff(
         tasks = [t for t in tasks if uncovered(t["task"])]
         facts = [f for f in facts if uncovered(f)]
         states = [s for s in states if uncovered(s)]
+        completed = [c for c in completed if uncovered(c)]
         if supplied.get("goal"):
             found_goal = ""
     if supplied:
@@ -416,12 +449,13 @@ def build_handoff(
         else:
             tasks = _merge_unique(supplied["open_tasks"], tasks, lambda t: t["task"])
         facts = _merge_unique(supplied["key_facts"], facts, lambda f: f)
+        completed = _merge_unique(supplied["completed"], completed, lambda c: c)
         found_goal = supplied.get("goal") or found_goal
         if supplied.get("current_state") and not current_state:
             current_state = supplied["current_state"]
 
     statements = [s for _, s in kept] + fragments + [found_goal, current_state or ""]
-    statements += [d["what"] + " " + d["why"] for d in decisions] + [t["task"] for t in tasks] + facts
+    statements += [d["what"] + " " + d["why"] for d in decisions] + [t["task"] for t in tasks] + facts + completed
     statements += (supplied or {}).get("files", [])
     exact: List[Dict[str, str]] = []
     seen_values = set()
@@ -438,15 +472,20 @@ def build_handoff(
     if current_state:
         state_text, older_states = redact_secrets(current_state)[0].strip(), states
     else:
-        # The latest few status statements describe where the work stands now:
-        # newest first back to at most 3 sentences / ~300 characters, so it
-        # reads as a status line, not a paragraph. Earlier ones become facts.
+        # The latest status statements describe where the work stands now: newest
+        # first back to at most 5 sentences / ~600 characters, a short paragraph
+        # another agent can act on. Earlier ones become facts.
+        # Status statements first; with none, the latest finished work is the status
+        # ("Step 7 is deployed"). What the state line uses is not repeated under "Done".
+        lines = states or completed[-1:]
         picked: List[str] = []
-        for s in reversed(states):
-            if len(picked) == 3 or (picked and sum(map(len, picked)) + len(s) > MAX_STATE_CHARS):
+        for s in reversed(lines):
+            if len(picked) == MAX_STATE_SENTENCES or (picked and sum(map(len, picked)) + len(s) > MAX_STATE_CHARS):
                 break
             picked.insert(0, s)
-        state_text, older_states = " ".join(picked), states[:len(states) - len(picked)]
+        state_text = " ".join(picked)
+        older_states = [s for s in states if s not in picked]
+        completed = [c for c in completed if c not in picked]
     # Facts with exact values first, then plain statements.
     facts.sort(key=lambda s: 0 if extract_exact_values(s) else 1)
     facts = older_states + facts
@@ -471,6 +510,7 @@ def build_handoff(
         },
         "goal": goal_text,
         "current_state": state_text,
+        "completed": completed,
         "decisions": decisions,
         "open_tasks": tasks,
         "key_facts": facts,
@@ -544,6 +584,7 @@ def parse_supplied_handoff(raw: Any) -> Tuple[Dict[str, Any], int]:
             tasks.append({"task": clean(t), "status": "open"})
     out["open_tasks"] = [t for t in tasks if t["task"]]
     out["key_facts"] = [clean(f) for f in as_list("key_facts") if str(f).strip()]
+    out["completed"] = [clean(c) for c in as_list("completed") if str(c).strip()]
     out["files"] = [clean(f) for f in as_list("files") if str(f).strip()]
     # Set by the transcript reader when the conversation went on after this
     # handoff was saved: newer extracted tasks then come first.
@@ -687,6 +728,8 @@ def _line_for(section: str, item: Any) -> str:
         return f"Goal: {_trim('goal', item)}"
     if section == "current_state":
         return f"State: {item}"
+    if section == "completed":
+        return f"- {item}"
     if section == "environment_warnings":
         return f"! {item}"
     if section == "open_tasks":
@@ -705,7 +748,7 @@ def _line_for(section: str, item: Any) -> str:
     if section == "other_sessions":
         parts = [f"- {item['session_name']} ({item['session_id']}, {item['created_at'][:10]}): "
                  f"{_trim('goal', item['goal'])}"]
-        for label, key in (("state", "current_state"), ("open", "open_tasks"),
+        for label, key in (("state", "current_state"), ("done", "completed"), ("open", "open_tasks"),
                            ("decided", "decisions"), ("facts", "key_facts")):
             val = item.get(key)
             if val:
@@ -715,6 +758,7 @@ def _line_for(section: str, item: Any) -> str:
 
 
 _HEADINGS = {
+    "completed": "Done:",
     "environment_warnings": "Environment warnings:",
     "open_tasks": "Open tasks:",
     "decisions": "Decisions:",
@@ -809,6 +853,7 @@ def handoff_text_for_matching(doc: Dict[str, Any]) -> str:
     parts = [doc.get("goal", ""), doc.get("current_state", "")]
     parts += [d.get("what", "") + " " + d.get("why", "") for d in doc.get("decisions") or []]
     parts += [t.get("task", "") for t in doc.get("open_tasks") or []]
+    parts += list(doc.get("completed") or [])
     parts += list(doc.get("key_facts") or [])
     parts += list(doc.get("files") or [])
     parts.append(doc.get("provenance", {}).get("session_name", ""))

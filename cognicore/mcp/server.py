@@ -133,9 +133,10 @@ MEMORY_INSTRUCTIONS = (
     "Persistent memory shared across sessions and agents (Claude, Codex, Cursor, ChatGPT). "
     "At the start of a task, or whenever the user says to continue earlier work, call "
     "cognicore_resume_session with a short query describing the task. It returns the previous "
-    "session's goal, state, open tasks, decisions and exact values. Before you finish, call "
-    "cognicore_save_session with handoff_json (goal, current_state, decisions with why, "
-    "open_tasks, key_facts, files), keeping ids, versions, names and numbers verbatim. "
+    "session's goal, state, what was done, open tasks, decisions and exact values. Before you "
+    "finish, call cognicore_save_session with handoff_json (goal, current_state, completed: each "
+    "thing you finished with its commit, PR, file or version, decisions with why, open_tasks, "
+    "key_facts, files), keeping ids, versions, names and numbers verbatim. "
     "If a brief starting \"=== COGNICORE CONTEXT RESUME ===\" is already in your context, "
     "CogniCore's hooks are active: they resume and save automatically, so skip both calls."
 )
@@ -674,7 +675,7 @@ def create_mcp_server() -> "FastMCP":
     ) -> str:
         """Save work so any agent can resume it later. Cheapest: send handoff_json (written by you) instead of the full conversation.
 
-        handoff_json: {"goal","current_state","decisions":[str|{"what","why"}],"open_tasks":[str],"key_facts":[str],"files":[str]}. Keep ids, versions, paths and numbers verbatim; prefix rejected approaches with "Rejected:".
+        handoff_json: {"goal","current_state","completed":[str],"decisions":[str|{"what","why"}],"open_tasks":[str],"key_facts":[str],"files":[str]}. "completed": each thing finished, with its commit, PR, file or version. Keep ids, versions, paths and numbers verbatim; prefix rejected approaches with "Rejected:".
         environment_json: {"os","python_version","framework","framework_version","dependencies":{"name":"ver"}}.
         agent: e.g. "claude-code". Secrets are redacted; saving the same content twice is a no-op."""
         _ensure_initialized()
