@@ -21,6 +21,7 @@ Environment:
     COGNICORE_AUTO_CAPTURE   "0" disables saving
     COGNICORE_AUTO_RESUME    "0" disables the start-of-session brief
     COGNICORE_RESUME_TOKENS  budget for the brief (default 1000)
+    COGNICORE_CLEAR_AT       context size that triggers the "/clear" tip (default 80000; 0 = off)
     COGNICORE_SYNC           "0" pauses sync with the hosted account (see cognicore.sync)
 """
 
@@ -130,7 +131,65 @@ def save(event: dict, agent: str = "claude-code") -> str:
     ))
     if not res.get("deduplicated") and not res.get("error"):
         _push_in_background(session_key)
-    return ""
+    return clear_hint(transcript, session_key)
+
+
+# A session resends its whole history every turn. Past this size, /clear plus
+# CogniCore's brief (~1k tokens) continues the same work far cheaper.
+DEFAULT_CLEAR_AT = 80_000
+CLEAR_STEP = 1.5  # warn again only after the context grows by half
+
+
+def context_tokens(transcript: str) -> int:
+    """Tokens the model received on the latest turn, from the usage Claude Code records
+    in its transcript (input + cache reads + cache writes). 0 when not recorded."""
+    try:
+        with open(transcript, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 400_000))
+            tail = f.read().decode("utf-8", "ignore").splitlines()
+    except OSError:
+        return 0
+    for line in reversed(tail):
+        if '"usage"' not in line:
+            continue
+        try:
+            usage = (json.loads(line).get("message") or {}).get("usage") or {}
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        total = sum(int(usage.get(k) or 0) for k in
+                    ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        if total:
+            return total
+    return 0
+
+
+def clear_hint(transcript: str, session_key: str) -> str:
+    """Stop-hook output telling the user the session got expensive, at most once per growth step."""
+    raw = os.environ.get("COGNICORE_CLEAR_AT", "")
+    limit = int(raw) if raw.isdigit() else DEFAULT_CLEAR_AT
+    if limit == 0 or not session_key:
+        return ""
+    size = context_tokens(transcript)
+    if size < limit:
+        return ""
+    state_file = data_dir() / "clear_hints.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    last = int(state.get(session_key) or 0)
+    if last and size < last * CLEAR_STEP:
+        return ""
+    state[session_key] = size
+    try:
+        state_file.write_text(json.dumps(dict(list(state.items())[-200:])), encoding="utf-8")
+    except OSError:
+        pass
+    message = (f"CogniCore: this session resends about {size // 1000}k tokens every turn. "
+               f"Run /clear to continue the same work from a ~1k-token CogniCore brief "
+               f"(this session is saved). Set COGNICORE_CLEAR_AT=0 to turn this off.")
+    return json.dumps({"systemMessage": message})
 
 
 AI_MODES = {"auto", "always"}
