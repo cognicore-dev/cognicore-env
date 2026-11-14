@@ -138,7 +138,8 @@ def test_build_handoff_sections_and_schema():
     assert validate_handoff(h) == []
     assert h["schema"] == SCHEMA_VERSION
     assert "/api/v2/orders" in h["goal"]
-    assert "clock skew" in h["current_state"] and "9f3c2ab" in h["current_state"]
+    assert "clock skew" in h["current_state"]
+    assert any("9f3c2ab" in c for c in h["completed"])  # finished work is listed under "Done"
     made = [d for d in h["decisions"] if d["status"] == "made"]
     assert made[0]["what"].endswith("PyJWT 2.8.0") and made[0]["why"] == "python-jose is unmaintained."
     assert any(d["status"] == "rejected" and "24h" in d["what"] for d in h["decisions"])
@@ -622,7 +623,8 @@ def test_state_reads_as_a_status_line_from_the_newest_statements():
     h = build_handoff([{"role": "assistant", "content": " ".join(long)}], "s", "n", 0.0)
     assert h["current_state"].endswith(long[-1])
     assert len(h["current_state"]) <= MAX_STATE_CHARS + len(long[-1])
-    assert long[0] in h["key_facts"]  # older status moves to facts, it isn't lost
+    assert long[0] in h["completed"]  # older finished steps move to "Done", they aren't lost
+    assert long[-1] not in h["completed"]  # what the state line says is not repeated
 
 
 def test_harness_events_are_not_saved_as_conversation(tmp_path):

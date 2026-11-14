@@ -23,6 +23,7 @@ from cognicore.memory.handoff import (
     SECTION_PRIORITY,
     SECTIONS,
     build_handoff,
+    extract_exact_values,
     clean_statement as _clean_statement,
     conversation_hash,
     environment_warnings,
@@ -473,7 +474,7 @@ def save_session(
     searchable memory rows, so another agent can resume the work.
 
     ``supplied_handoff`` lets the agent write the handoff itself (goal,
-    decisions, open_tasks, key_facts, files) instead of, or on top of,
+    completed, decisions, open_tasks, key_facts, files) instead of, or on top of,
     sending the conversation. That is the token-efficient path: its cost
     does not grow with the conversation.
 
@@ -728,6 +729,41 @@ _STOPWORDS = {
 }
 
 
+# "What did we do recently?", "the latest PR": the newest work matters more than the best text match.
+_RECENT = re.compile(r"\b(?:latest|recent|recently|last|newest|just now|today|yesterday|so far)\b", re.I)
+RECENT_WINDOW = 5
+
+
+def _rank_sessions(query: Optional[str], docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Best match first. For a question about recent work, the newest matching session
+    among the latest few wins; with no match there, the newest session."""
+    if not query or not query.strip():
+        return docs
+    if _RECENT.search(query):
+        window = docs[:RECENT_WINDOW]
+        matching = [d for d in window if _query_score(query, d) > 0]
+        first = matching[0] if matching else docs[0]
+        return [first] + [d for d in docs if d is not first]
+    return sorted(docs, key=lambda d: -_query_score(query, d))  # stable: ties keep newest first
+
+
+def _done_text(docs: List[Dict[str, Any]]) -> str:
+    """Everything the given sessions report as finished, lowercased for matching."""
+    parts: List[str] = []
+    for d in docs:
+        parts += list(d.get("completed") or [])
+        parts.append(d.get("current_state") or "")
+        parts += [t["task"] for t in d.get("open_tasks") or [] if t.get("status") == "done"]
+    return " ".join(parts).lower()
+
+
+def _finished_later(task: str, done_text: str) -> bool:
+    """A newer session reports this task's work as done: every exact value the task names
+    (file, path, branch, id, version) appears in that session's finished work."""
+    values = [v["value"].lower() for v in extract_exact_values(task)]
+    return bool(values) and bool(done_text) and all(v in done_text for v in values)
+
+
 def _query_score(query: str, doc: Dict[str, Any]) -> int:
     text = handoff_text_for_matching(doc)
     goal = (doc.get("goal") or "").lower()
@@ -857,19 +893,25 @@ def resume_session(
             return f"Error: no saved session with id {session_id!r}."
         return _resume_without_sessions(backend, query, include_action_items)
 
-    docs = [_load_handoff(backend, row) for row in rows]
-    if query and query.strip() and not session_id:
-        docs.sort(key=lambda d: -_query_score(query, d))  # stable: ties keep newest first
+    by_time = [_load_handoff(backend, row) for row in rows]  # newest first
+    docs = by_time if session_id else _rank_sessions(query, by_time)
     docs = docs[:max(1, last_n_sessions)]
     primary, others = docs[0], docs[1:]
     env_saved = primary.get("environment") or {}
 
+    def still_open(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Open tasks of *doc*, minus those a newer session reports as finished."""
+        newer = by_time[:next((i for i, d in enumerate(by_time) if d is doc), 0)]
+        done = _done_text(newer)
+        return [t for t in doc.get("open_tasks", [])
+                if t.get("status") == "open" and not _finished_later(t["task"], done)]
+
     sections: Dict[str, Any] = {
         "goal": primary.get("goal", ""),
         "current_state": primary.get("current_state", ""),
+        "completed": list(reversed(primary.get("completed", []))),  # most recent first
         "environment_warnings": environment_warnings(env_saved, environment),
-        "open_tasks": [t for t in primary.get("open_tasks", []) if t.get("status") == "open"]
-        if include_action_items else [],
+        "open_tasks": still_open(primary) if include_action_items else [],
         "decisions": list(reversed(primary.get("decisions", []))),  # most recent first
         "key_facts": primary.get("key_facts", []),
         "files": primary.get("files", []),
@@ -882,7 +924,8 @@ def resume_session(
                 "created_at": d["provenance"].get("created_at", ""),
                 "goal": d.get("goal", ""),
                 "current_state": d.get("current_state", ""),
-                "open_tasks": [t["task"] for t in d.get("open_tasks", []) if t.get("status") == "open"][:3],
+                "completed": (d.get("completed") or [])[-5:],
+                "open_tasks": [t["task"] for t in still_open(d)][:3],
                 "decisions": [x["what"] for x in d.get("decisions", []) if x.get("status") == "made"][-3:],
                 "key_facts": d.get("key_facts", [])[:5],
             }
