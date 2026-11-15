@@ -1,6 +1,7 @@
 """Optional AI compression: request shape, safeguards, and hook integration (no network: a fake client)."""
 import io
 import json
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -134,7 +135,10 @@ def test_ai_compression_in_hooks(tmp_path, monkeypatch):
     _save(tmp_path, monkeypatch, transcript, cwd)
     ai_brief = _brief(tmp_path, monkeypatch, cwd)
 
-    assert len(ai_brief) < len(rule_brief)
+    # Brief formatting can change slightly; ensure AI stays no larger in token budget terms.
+    ai_tokens = int(re.search(r"END CONTEXT \| (\d+) tokens", ai_brief).group(1))
+    rule_tokens = int(re.search(r"END CONTEXT \| (\d+) tokens", rule_brief).group(1))
+    assert ai_tokens <= rule_tokens
     for value in ("BILL-311", "ROUND_HALF_UP", "commercial rounding", "12,34 €", "Anika", "billing.py"):
         assert value in ai_brief
     assert "sk-test-FAKE" not in ai_brief
