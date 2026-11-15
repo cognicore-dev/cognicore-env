@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`cognicore usage`**: token usage of your Claude Code sessions, read from Claude Code's own transcripts, with no model calls. Per project it shows sessions, turns, input tokens processed, startup context (what the first turn received), final context (what continuing resends every turn), CogniCore's brief size, and the per-turn saving after `/clear`: context − (startup + brief). Options: `--days`, `--json`.
+
 ### Performance
 - **Hooks start in 0.3 s instead of 1.3 s.** Every hook imported the OpenAI SDK through `cognicore.memory`, which took about a second, and no hook uses it. It now loads on first use.
 - **Fewer uploads.** The Stop hook (after every reply) uploads at most once a minute. SessionEnd and PreCompact always upload, and each upload also sends sessions a skipped one left behind.

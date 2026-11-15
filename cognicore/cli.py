@@ -177,6 +177,13 @@ def cmd_sync(args):
     return sync_main([args.action])
 
 
+def cmd_usage(args):
+    """Token usage of your Claude Code sessions, and what CogniCore saves."""
+    from cognicore.usage import main as usage_main
+
+    return usage_main(args.rest)
+
+
 def cmd_lesson(args):
     """Lessons from mistakes: add, check before acting, list, forget."""
     from cognicore.lessons import main as lesson_main
@@ -493,6 +500,12 @@ def main():
                                 add_help=False)
     lesson_cmd.add_argument("rest", nargs=argparse.REMAINDER)
 
+    usage_cmd = sub.add_parser("usage", help="Tokens per session and project, startup size, and what CogniCore saves",
+                               add_help=False)
+    usage_cmd.add_argument("rest", nargs=argparse.REMAINDER)
+
+    if sys.argv[1:2] == ["usage"]:  # its own options (--days, --json) are not cognicore's
+        sys.exit(cmd_usage(argparse.Namespace(rest=sys.argv[2:])))
     args = p.parse_args()
     cmds = {"list": cmd_list, "train": cmd_train, "benchmark": cmd_benchmark,
             "arena": cmd_arena, "ui": cmd_ui, "integrations": cmd_integrations,
@@ -501,7 +514,7 @@ def main():
             "passport": cmd_passport, "civilization": cmd_civilization,
             "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install,
             "login": cmd_login, "logout": cmd_logout, "sync": cmd_sync,
-            "lesson": cmd_lesson}
+            "lesson": cmd_lesson, "usage": cmd_usage}
     if args.command in cmds:
         result = cmds[args.command](args)
         if isinstance(result, int) and result:
