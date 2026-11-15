@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`cognicore usage`**: token usage of your Claude Code sessions, read from Claude Code's own transcripts, with no model calls. Per project it shows sessions, turns, input tokens processed, startup context (what the first turn received), final context (what continuing resends every turn), CogniCore's brief size, and the per-turn saving after `/clear`: context − (startup + brief). Options: `--days`, `--json`.
+
+### Performance
+- **Hooks start in 0.3 s instead of 1.3 s.** Every hook imported the OpenAI SDK through `cognicore.memory`, which took about a second, and no hook uses it. It now loads on first use.
+- **Fewer uploads.** The Stop hook (after every reply) uploads at most once a minute. SessionEnd and PreCompact always upload, and each upload also sends sessions a skipped one left behind.
+- **No waiting on a server that's down.** After a network failure, session starts skip the pull for 10 minutes and start from local memory, instead of waiting 3 s for a timeout each time.
+
+### Added
 - **AI summaries of synced sessions on the hosted server, with Sarvam AI.** When the server's environment has `SARVAM_API_KEY`, each synced session's handoff is rewritten in the background into a short one: goal, state, decisions, open tasks and key facts. The key lives only on the server. Every item may cite only values present in the original, so invented values are dropped. Exact values, files, code and the Done list are kept as captured. A handoff is summarised once it reaches 3,000 tokens (`COGNICORE_SUMMARY_MIN_TOKENS`), and again only after it grows by as much. In between, the cached summary is reused. The summary is stored just after the upload's revision, so a newer upload always wins and clients pull the summary like any other session. On a test session, 31 open tasks became the 1 real one.
 
 ### Fixed
