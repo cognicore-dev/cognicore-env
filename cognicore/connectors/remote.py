@@ -1590,6 +1590,11 @@ def health_check():
         "status": "ok",
         "version": "1.0",
         "commit": commit if _COMMIT_RE.fullmatch(commit) else "unknown",
+        "ai_summaries": {
+            "enabled": bool(os.environ.get("SARVAM_API_KEY")),
+            "model": os.environ.get("COGNICORE_SARVAM_MODEL") or "sarvam-105b",
+            "last": dict(SUMMARY_STATUS) or None,
+        },
     }
 
 
@@ -1642,8 +1647,25 @@ _summary_log = __import__("logging").getLogger("cognicore.hosted_summary")
 _SUMMARY_SLOTS = __import__("threading").BoundedSemaphore(2)  # at most 2 Sarvam calls at once
 
 
+# The last summary attempt, for /health: the outcome and timing only, never the key or content.
+SUMMARY_STATUS: Dict[str, Any] = {}
+
+
 def summarize_synced(backend: Any, external_id: str, handoff: Dict[str, Any], revision: float,
                      summarize: Any = None) -> str:
+    started = _time.time()
+    try:
+        outcome = _summarize_synced(backend, external_id, handoff, revision, summarize)
+    except Exception as e:  # a background task: record it rather than lose it
+        _summary_log.exception("sarvam summary failed")
+        outcome = f"error: {type(e).__name__}"
+    if outcome not in ("short", "already summarised"):  # only attempts that did something
+        SUMMARY_STATUS.update(outcome=outcome, at=round(started), seconds=round(_time.time() - started, 1))
+    return outcome
+
+
+def _summarize_synced(backend: Any, external_id: str, handoff: Dict[str, Any], revision: float,
+                      summarize: Any = None) -> str:
     """Replace a synced handoff's summary part with a Sarvam summary, stored just after *revision*.
 
     Throttled per session: a handoff shorter than COGNICORE_SUMMARY_MIN_TOKENS is left

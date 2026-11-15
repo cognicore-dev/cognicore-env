@@ -139,3 +139,66 @@ def test_server_leaves_short_and_already_summarised_handoffs_alone(tmp_path, mon
     assert remote.summarize_synced(backend, "a", _handoff(0), time.time(), summarize=never) == "short"
     done = {**_handoff(), "compression": {"method": "ai"}}
     assert remote.summarize_synced(backend, "a", done, time.time(), summarize=never) == "already summarised"
+
+
+# --- Big handoffs: the newest part is sent, nothing is lost ---------------------
+
+def _big_handoff():
+    doc = _handoff(0)
+    doc["decisions"] = [{"what": f"Decision number {i} about the BILL-311 rollout plan and its order",
+                         "why": "it was agreed in review", "status": "made"} for i in range(400)]
+    doc["key_facts"] = [f"Fact number {i} about invoice rounding in the billing service" for i in range(400)]
+    return doc
+
+
+def test_big_handoffs_send_only_the_newest_items_and_keep_the_rest_as_captured():
+    doc = _big_handoff()
+    sent = {}
+
+    def post(url, body, key, timeout):
+        sent["text"] = body["messages"][1]["content"]
+        sent["timeout"] = timeout
+        return _reply({**GOOD, "decisions": [{"what": "Ship the rollout in the agreed order", "why": "agreed in review"}],
+                       "key_facts": ["Reviewer is Anika"]})
+
+    summary, info = ss.summarize_handoff(doc, api_key="k", post=post)
+    assert info["source_tokens"] <= ss.MAX_SEND_TOKENS < info["trimmed_from_tokens"]
+    assert "Decision number 399" in sent["text"] and "Decision number 0 " not in sent["text"]
+    assert sent["timeout"] >= 300 and ss.MAX_TOKENS >= 16_000
+
+    out = ss.apply_summary(doc, summary, info)
+    whats = [d["what"] for d in out["decisions"]]
+    assert whats[0].startswith("Decision number 0 ") and whats[-1] == "Ship the rollout in the agreed order"
+    assert "Decision number 399 about the BILL-311 rollout plan and its order" not in whats  # summarised
+    assert out["key_facts"][0].startswith("Fact number 0 ") and out["key_facts"][-1] == "Reviewer is Anika"
+
+
+def test_small_handoffs_are_sent_whole():
+    assert ss.sendable(_handoff()) is _handoff() or ss.sendable(_handoff()) == _handoff()
+
+
+# --- /health shows whether summaries work, without the key -------------------
+
+def test_health_reports_the_last_summary_outcome_but_never_the_key(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("SARVAM_API_KEY", "secret-key-value")
+    monkeypatch.setattr(remote, "SUMMARY_STATUS", {})
+    backend = SQLiteMemoryBackend(str(tmp_path / "user.db"))
+    failing = lambda doc: (None, {"skipped": "API error 403"})  # noqa: E731
+    remote.summarize_synced(backend, "a", _handoff(), time.time(), summarize=failing)
+    body = TestClient(remote.app).get("/health").json()
+    assert body["ai_summaries"]["enabled"] is True
+    assert body["ai_summaries"]["last"]["outcome"] == "skipped: API error 403"
+    assert "secret-key-value" not in json.dumps(body)
+
+
+def test_an_unexpected_error_in_the_background_is_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(remote, "SUMMARY_STATUS", {})
+    backend = SQLiteMemoryBackend(str(tmp_path / "user.db"))
+
+    def boom(doc):
+        raise RuntimeError("bad")
+
+    assert remote.summarize_synced(backend, "a", _handoff(), time.time(), summarize=boom) == "error: RuntimeError"
+    assert remote.SUMMARY_STATUS["outcome"] == "error: RuntimeError"
