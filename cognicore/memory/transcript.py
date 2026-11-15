@@ -70,6 +70,34 @@ def _entries(path: str) -> List[Dict[str, Any]]:
     return out
 
 
+def start_cwd(path: str, scan_bytes: int = 256_000) -> str:
+    """The folder the session started in: the first ``cwd`` its transcript records, or "".
+
+    Claude Code writes the current folder on every line and it changes when the
+    agent changes directory; the first one names the session's project. Codex
+    records it once, in ``session_meta``. Only the start of the file is read.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(scan_bytes).decode("utf-8", "ignore").splitlines()
+    except OSError:
+        return ""
+    for line in head:
+        if '"cwd"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # the last line may be cut short by the scan limit
+        if not isinstance(entry, dict):
+            continue
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+        found = entry.get("cwd") or payload.get("cwd")
+        if isinstance(found, str) and found.strip():
+            return found.strip()
+    return ""
+
+
 def read_transcript(path: str, cwd: str = "") -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
     """Return ``(conversation, supplied_handoff)`` from a Claude Code or Codex transcript file.
 

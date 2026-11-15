@@ -167,6 +167,14 @@ class SQLiteMemoryBackend(MemoryBackend):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project, timestamp)")
+        try:  # once per database: sessions saved under a subfolder move to their repository's key
+            from cognicore.memory.context_preservation import migrate_project_keys
+
+            moved = migrate_project_keys(conn)
+            if moved:
+                logger.info(f"Re-keyed {moved} sessions to their repository root")
+        except Exception as e:  # never block opening the database
+            logger.warning(f"Project key migration skipped: {e}")
 
     def _row_to_entry(self, row: sqlite3.Row) -> MemoryEntry:
         scope_str = row["scope"]
