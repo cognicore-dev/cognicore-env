@@ -187,7 +187,7 @@ def clear_hint(transcript: str, session_key: str) -> str:
     except OSError:
         pass
     message = (f"CogniCore: this session resends about {size // 1000}k tokens every turn. "
-               f"Run /clear to continue the same work from a ~1k-token CogniCore brief "
+               f"Run /clear to continue the same work from a short (~700-token) CogniCore brief "
                f"(this session is saved). Set COGNICORE_CLEAR_AT=0 to turn this off.")
     return json.dumps({"systemMessage": message})
 
