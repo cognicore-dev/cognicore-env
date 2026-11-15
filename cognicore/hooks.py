@@ -20,7 +20,7 @@ Environment:
     COGNICORE_DATA_DIR       where memory lives
     COGNICORE_AUTO_CAPTURE   "0" disables saving
     COGNICORE_AUTO_RESUME    "0" disables the start-of-session brief
-    COGNICORE_RESUME_TOKENS  budget for the brief (default 1000)
+    COGNICORE_RESUME_TOKENS  budget for the brief (default 700)
     COGNICORE_CLEAR_AT       context size that triggers the "/clear" tip (default 80000; 0 = off)
     COGNICORE_SYNC           "0" pauses sync with the hosted account (see cognicore.sync)
 """
@@ -62,7 +62,7 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
                              (project_key(event["cwd"]),)).fetchone()
     if not known and not pointer:
         return ""  # nothing to resume: inject nothing, cost nothing
-    budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "1000"))
+    budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "700"))
     brief = resume_session(backend, project=event["cwd"], max_tokens=budget) if known else ""
     context = "\n\n".join(part for part in (brief, pointer) if part)
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})

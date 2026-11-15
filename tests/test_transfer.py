@@ -646,3 +646,43 @@ def test_harness_events_are_not_saved_as_conversation(tmp_path):
     for leaked in ("bjd3y7vcy", "toolu_", "output-file", "ide_opened_file", "Pending Tasks", "pasted_content"):
         assert leaked not in text, leaked
     assert "Fix the BILL-311 rounding." in text and "claude.ai says the server is back up." in text
+
+
+def test_phrases_that_state_no_task_are_not_tasks():
+    conv = [{"role": "assistant", "content": (
+        "Right, you don't need to do anything. "
+        "It would need to find the Store version's folder. "
+        "Compaction must never hide an error Claude needs. "
+        "The difference must be in the hosted recall tool itself. "
+        "Only two endpoints exist, so the Cursor URL must be one of those. "
+        "I'll check the server, since both apps must point at the same memory. "
+        "Any agent that lands on the old session still sees it as pending. "
+        "That is the most useful next step. "
+        "It opens with a block telling the agent how to use its to-do tool. "
+        # still tasks:
+        "Next step: rotate the Sarvam key. "
+        "The DeepSeek key must be rotated today. "
+        "You need to trust the hooks once in Codex.")}]
+    assert _tasks(conv) == [
+        "Next step: rotate the Sarvam key.",
+        "The DeepSeek key must be rotated today.",
+        "You need to trust the hooks once in Codex.",
+    ]
+
+
+def test_brief_skips_misread_tasks_saved_earlier_and_keeps_room_for_decisions(backend):
+    from cognicore.memory.handoff import is_misread_task
+
+    assert is_misread_task("Right, you don't need to do anything.")
+    assert not is_misread_task("Publish release 0.12.0 to PyPI")  # no keyword: agent-written
+    tasks = [{"task": f"Ship feature number {i} to the beta users", "status": "open"} for i in range(30)]
+    tasks.append({"task": "Right, you don't need to do anything.", "status": "open"})
+    decisions = [{"what": "Use SQLite for the local store", "why": "it needs no server", "status": "made"}]
+    save_session(backend, [{"role": "user", "content": "Our goal is to ship the beta."}],
+                 session_name="beta", supplied_handoff=json.dumps({"open_tasks": tasks, "decisions": decisions}))
+    out = resume_session(backend, max_tokens=700)
+    assert "don't need to do anything" not in out
+    assert out.count("Ship feature number") == 10
+    assert "Use SQLite for the local store" in out
+    assert "open_tasks" in out.split("More available", 1)[1]
+    assert resume_session(backend, section="open_tasks").count("Ship feature number") == 30
