@@ -117,33 +117,36 @@ def save(event: dict, agent: str = "claude-code") -> str:
         return ""
     from cognicore.memory.context_preservation import project_key, save_session
     from cognicore.memory.handoff import stated_goal
-    from cognicore.memory.transcript import read_transcript
+    from cognicore.memory.transcript import read_transcript, start_cwd
+    from cognicore.repo import project_folder
 
     conversation, supplied = read_transcript(transcript, cwd)
+    # The event's cwd follows the agent's `cd`; the project is where the session started.
+    project = start_cwd(transcript) or cwd
     if not conversation and not supplied:
         return ""
     backend = _backend()
     session_key = f"{agent}:{event.get('session_id', '')}" if event.get("session_id") else ""
     supplied, compression = _with_ai_summary(backend, conversation, supplied, session_key)
     goal = ""
-    if cwd and not supplied.get("goal") and not stated_goal(conversation):
+    if project and not supplied.get("goal") and not stated_goal(conversation):
         # A continuation session: keep the project's goal rather than promoting
         # "continue where we left off" to goal. This session's own row is skipped.
         with backend._get_conn() as conn:
             row = conn.execute(
                 "SELECT handoff_json FROM sessions WHERE project = ? AND (external_id IS NULL OR external_id != ?) "
                 "AND handoff_json IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
-                (project_key(cwd), f"{agent}:{event.get('session_id', '')}"),
+                (project_key(project), f"{agent}:{event.get('session_id', '')}"),
             ).fetchone()
         if row:
             goal = json.loads(row[0]).get("goal", "")
     res = json.loads(save_session(
         backend, conversation, goal=goal,
-        session_name=Path(cwd).name if cwd else "",
+        session_name=project_folder(project).name if project else "",
         agent=agent, client=f"{agent}-hooks",
         supplied_handoff=supplied or None,
         session_key=session_key,
-        project=cwd,
+        project=project,
         compact=compression is not None, compression=compression,
     ))
     if not res.get("deduplicated") and not res.get("error"):
