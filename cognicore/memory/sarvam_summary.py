@@ -34,11 +34,11 @@ from cognicore.memory.redact import redact_secrets
 
 SARVAM_URL = "https://api.sarvam.ai/v1/chat/completions"
 DEFAULT_MODEL = "sarvam-105b"
-# sarvam-105b reasons before it answers; the reasoning counts against max_tokens.
-# sarvam-105b reasons at length before answering, and the reasoning grows with the
-# input. The call runs in the background, so it may take minutes; what is sent is
-# capped so it stays well inside these limits.
-MAX_TOKENS = 16_000
+# sarvam-105b reasons at length before answering, and the reasoning counts against
+# max_tokens and grows with the input: a 5k-token session used 15,865 of 16,000.
+# The call runs in the background, so it may take minutes; what is sent is capped
+# so it stays well inside these limits.
+MAX_TOKENS = 32_000
 TIMEOUT = 300.0
 MAX_SEND_TOKENS = 6_000
 # (section, keep newest from the end?) Decisions, facts and Done are in the order they
@@ -49,9 +49,65 @@ JSON_INSTRUCTIONS = """
 
 The input is an automatically extracted, noisy handoff, not a transcript. Many of its "open tasks" and "decisions" are just sentences that contained a keyword: keep only real ones. Merge duplicates. Drop anything already finished.
 
+A decision's "why" is the reason the handoff gives for it, in its words. If the handoff gives no reason, "why" is "": never infer or invent one.
+A decision marked "Rejected:" in the handoff stays rejected: its "status" is "rejected", otherwise "made".
+
 Answer with one JSON object and nothing else:
-{"goal": "...", "current_state": "...", "decisions": [{"what": "...", "why": "..."}], "open_tasks": ["..."], "key_facts": ["..."], "files": ["..."]}
+{"goal": "...", "current_state": "...", "decisions": [{"what": "...", "why": "...", "status": "made"}], "open_tasks": ["..."], "key_facts": ["..."], "files": ["..."]}
 At most 8 decisions, 10 open tasks and 12 key facts."""
+
+
+_EMPTY_WHY = {"", "none", "null", "n/a", "na", "-", "unknown", "not stated", "no reason given"}
+_WORD = re.compile(r"[a-z0-9][a-z0-9_.\-/]*")
+
+
+def _why(value: Any) -> str:
+    """A decision's reason as text; None and placeholders such as "None" or "n/a" become ""."""
+    text = str(value or "").strip()
+    return "" if text.lower().strip(" .()") in _EMPTY_WHY else text
+
+
+def _reason_grounded(why: str, source_lower: str) -> bool:
+    """Whether *why* is a reason the source gives: most of its content words occur there.
+
+    The model tends to fill an empty "why" with a plausible reason ("reduced for
+    efficiency"). Value grounding can't catch that, since it contains no value.
+    """
+    words = [w for w in _WORD.findall(why.lower()) if len(w) > 3]
+    if not words:
+        return True
+    found = sum(1 for w in words if w in source_lower)
+    return found / len(words) >= 0.75
+
+
+def _ground_reasons(summary: Dict[str, Any], source: str) -> int:
+    """Empty every decision's "why" that the source doesn't state; returns how many."""
+    source_lower, dropped = source.lower(), 0
+    for d in summary.get("decisions") or []:
+        if not isinstance(d, dict):
+            continue
+        why = _why(d.get("why"))
+        if why and not _reason_grounded(why, source_lower):
+            why, dropped = "", dropped + 1
+        d["why"] = why
+    return dropped
+
+
+def _rejected_in(doc: Dict[str, Any]) -> List[str]:
+    return [str(d.get("what", "")).strip().lower() for d in doc.get("decisions") or []
+            if isinstance(d, dict) and d.get("status") == "rejected" and d.get("what")]
+
+
+def _is_rejected(d: Dict[str, Any], what: str, rejected_source: List[str]) -> Tuple[bool, str]:
+    """Whether a summary decision is a rejected one, and its text without a "Rejected:" prefix."""
+    m = re.match(r"\s*rejected\s*[:\-–—]\s*", what, re.I)
+    if m:
+        return True, what[m.end():].strip()
+    if str(d.get("status", "")).strip().lower() == "rejected":
+        return True, what
+    low = what.lower()
+    # The model sometimes drops the prefix: a decision that repeats a rejected one stays rejected.
+    return any(low and (low in r or r in low) for r in rejected_source), what
 
 
 def min_tokens() -> int:
@@ -159,6 +215,7 @@ def summarize_handoff(
         return None, {**info, "skipped": "invalid JSON"}
     summary, dropped = _keep_grounded(summary, text)
     info["dropped_ungrounded"] = dropped
+    info["dropped_reasons"] = _ground_reasons(summary, text)
     if not (summary.get("goal") or summary.get("current_state") or summary.get("open_tasks")):
         return None, {**info, "skipped": "empty summary"}
     return summary, info
@@ -178,11 +235,13 @@ def apply_summary(doc: Dict[str, Any], summary: Dict[str, Any], info: Dict[str, 
         if summary.get(key):
             out[key] = summary[key]
     decisions: List[Dict[str, str]] = []
+    rejected_source = _rejected_in(doc)
     for d in summary.get("decisions") or []:
-        what = str(d.get("what", "")).strip()
-        rejected = what.lower().startswith("rejected:")
-        decisions.append({"what": what[len("rejected:"):].strip() if rejected else what,
-                          "why": str(d.get("why", "")).strip(), "status": "rejected" if rejected else "made"})
+        if not isinstance(d, dict):
+            continue
+        rejected, what = _is_rejected(d, str(d.get("what") or "").strip(), rejected_source)
+        if what:
+            decisions.append({"what": what, "why": _why(d.get("why")), "status": "rejected" if rejected else "made"})
     out["decisions"] = decisions
     out["open_tasks"] = [{"task": t, "status": "open"} for t in summary.get("open_tasks") or []]
     seen = {f.lower() for f in out.get("files") or []}

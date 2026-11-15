@@ -14,6 +14,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Smaller start-of-session brief: 700 tokens by default, down from 1,000.** On this project's real sessions, simply cutting the budget would have dropped every decision. The brief now shows at most 10 open tasks, so decisions still fit. The other tasks are counted in the "More available" line, and `section="open_tasks"` returns all of them.
 
 ### Fixed
+- **Sarvam summaries no longer invent reasons, mislabel rejected decisions or run out of room.** A real session used 15,865 of the 16,000 output tokens on reasoning, so the limit is now 32,000. A decision's `why` must be one the handoff states: the prompt says so, and a reason whose words mostly aren't in the source is emptied (counted as `dropped_reasons`). A missing reason no longer shows as "(why: None)". A rejected decision stays rejected whether the model marks it with `"status": "rejected"`, a "Rejected -" prefix, or drops the prefix on a decision the handoff already marked rejected.
 - **Sentences that state no task are no longer saved as open tasks.** Examples: "you don't need to do anything", "it would need to…", "the URL must be one of those", "compaction must never…", "since both apps must…", "still pending", "that's the next step" and "to-do tool". In this project's saved sessions, these made up 12 of 33 open tasks. Briefs also skip them in sessions saved before this fix.
 
 ### Added
