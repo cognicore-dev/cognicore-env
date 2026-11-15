@@ -93,6 +93,20 @@ def save_state(state: Dict[str, Any]) -> None:
         pass
 
 
+OFFLINE_FOR = 600.0  # after a network failure, session starts skip the pull this long
+
+
+def offline() -> bool:
+    """True shortly after the server could not be reached."""
+    return float(load_state().get("offline_until") or 0) > time.time()
+
+
+def note_failure(error: Exception) -> None:
+    """Back off after a network failure (not after an HTTP error: the server answered)."""
+    if not isinstance(error, _HTTPError):
+        _update_state(offline_until=time.time() + OFFLINE_FOR)
+
+
 def enabled() -> bool:
     """Signed in, and not paused with COGNICORE_SYNC=0."""
     return os.environ.get("COGNICORE_SYNC") != "0" and bool(load_state().get("refresh_token"))
@@ -339,6 +353,7 @@ def _record_push(external_id: str, revision: float, stamp: bool = True) -> None:
         if len(pushed) > MAX_PUSHED_TRACKED:  # keep the newest entries
             pushed = dict(sorted(pushed.items(), key=lambda kv: kv[1])[-MAX_PUSHED_TRACKED:])
         state["pushed"] = pushed
+        state.pop("offline_until", None)  # the server answered
         if stamp:
             state["last_push"] = time.time()
         save_state(state)
@@ -413,7 +428,7 @@ def pull(backend: Any, timeout: float = PULL_TIMEOUT) -> List[Dict[str, Any]]:
                 "client": doc.get("provenance", {}).get("client") or doc.get("provenance", {}).get("agent") or "",
                 "project": doc.get("provenance", {}).get("project") or "",
             })
-    _update_state(pull_cursor=cursor, last_pull=time.time())
+    _update_state(pull_cursor=cursor, last_pull=time.time(), offline_until=0)
     return imported
 
 
@@ -523,6 +538,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             from cognicore.hooks import _log
 
             _log(f"sync push failed: {e}")
+            note_failure(e)
             return 0
         print(f"Sync failed: {e}", file=sys.stderr)
         return 1

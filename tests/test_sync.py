@@ -398,3 +398,51 @@ def test_retries_stop_at_a_network_error_but_skip_a_refused_session(signed_in, l
     with pytest.raises(sync.SyncError):
         sync.push_pending(local, "claude-code:d")
     assert len(calls) == 1  # one try while the server is down, not one per session
+
+
+# --- Fewer uploads per turn, no waiting while the server is down -------------
+
+def test_stop_uploads_at_most_once_a_minute_but_session_end_always_does(signed_in, monkeypatch, tmp_path):
+    pushed = []
+    monkeypatch.setattr(sync, "push_in_background", pushed.append)
+    transcript = tmp_path / "t.jsonl"
+
+    def turn(text, event_name):
+        with transcript.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+        hooks.save({"session_id": "s1", "transcript_path": str(transcript), "cwd": str(tmp_path),
+                    "hook_event_name": event_name})
+
+    sync._update_state(last_push=time.time())  # an upload just happened
+    turn("Our goal is to fix BILL-311 today.", "Stop")
+    turn("We need to update format_eur too.", "Stop")
+    assert pushed == []
+    turn("Also check the VAT rounding rule.", "SessionEnd")
+    assert pushed == ["claude-code:s1"]
+    sync._update_state(last_push=time.time() - hooks.PUSH_EVERY - 1)
+    turn("And the invoice footer.", "Stop")
+    assert pushed == ["claude-code:s1", "claude-code:s1"]
+
+
+def test_session_start_does_not_wait_on_a_server_that_just_failed(signed_in, monkeypatch, tmp_path):
+    calls = []
+
+    def unreachable(*a, **k):
+        calls.append(1)
+        raise sync.SyncError("could not reach memory.test: timed out")
+
+    monkeypatch.setattr(sync, "_request", unreachable)
+    event = {"cwd": str(tmp_path), "source": "startup"}
+    hooks.session_start(event)
+    assert len(calls) == 1 and sync.offline()
+    hooks.session_start(event)  # within the back-off: no request, no wait
+    assert len(calls) == 1
+
+    sync._update_state(offline_until=time.time() - 1)  # back-off over
+    hooks.session_start(event)
+    assert len(calls) == 2
+
+
+def test_an_http_error_is_not_treated_as_offline(signed_in):
+    sync.note_failure(sync._HTTPError(500, "boom"))
+    assert not sync.offline()
