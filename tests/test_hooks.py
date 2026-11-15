@@ -64,7 +64,8 @@ def test_save_then_session_start_injects_this_projects_brief(tmp_path, monkeypat
     cwd.mkdir()
     transcript = _write_transcript(tmp_path / "t.jsonl", str(cwd))
     event = {"session_id": "s-1", "transcript_path": str(transcript), "cwd": str(cwd)}
-    assert _run("save", event, monkeypatch, tmp_path / "mem") == ""
+    saved = json.loads(_run("save", event, monkeypatch, tmp_path / "mem"))["systemMessage"]
+    assert "Use Decimal with ROUND_HALF_UP" in saved and "cognicore project accept 1" in saved
 
     out = json.loads(_run("session-start", {"cwd": str(cwd), "source": "startup"}, monkeypatch, tmp_path / "mem"))
     brief = out["hookSpecificOutput"]["additionalContext"]

@@ -151,7 +151,37 @@ def save(event: dict, agent: str = "claude-code") -> str:
     ))
     if not res.get("deduplicated") and not res.get("error"):
         _push_in_background(session_key, str(event.get("hook_event_name") or ""))
-    return clear_hint(transcript, session_key)
+    suggested = "" if res.get("deduplicated") else _suggest(backend, res, conversation, cwd, agent, session_key)
+    return _join_messages(suggested, clear_hint(transcript, session_key))
+
+
+def _suggest(backend, res: dict, conversation, cwd: str, agent: str, session_key: str) -> str:
+    """Propose project-context items the session stated; the one-line message, or ""."""
+    if not res.get("session_id") or not cwd:
+        return ""
+    try:
+        from cognicore import project_suggest
+
+        with backend._get_conn() as conn:
+            row = conn.execute("SELECT handoff_json FROM sessions WHERE session_id = ?",
+                               (res["session_id"],)).fetchone()
+        handoff = json.loads(row[0]) if row and row[0] else {}
+        return project_suggest.from_session(handoff, conversation, cwd, agent=agent,
+                                            session=str(res["session_id"]))
+    except Exception as e:  # a suggestion is never worth breaking the save
+        _log(f"project suggestions skipped: {type(e).__name__}: {e}")
+        return ""
+
+
+def _join_messages(text: str, hint_json: str) -> str:
+    """One Stop-hook output carrying the suggestion line and/or the /clear hint."""
+    lines = [text] if text else []
+    if hint_json:
+        try:
+            lines.append(json.loads(hint_json)["systemMessage"])
+        except (ValueError, KeyError, TypeError):
+            pass
+    return json.dumps({"systemMessage": "\n".join(lines)}) if lines else ""
 
 
 # A session resends its whole history every turn. Past this size, /clear plus

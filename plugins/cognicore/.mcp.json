@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "cognicore-mcp",
       "env": {
-        "COGNICORE_TOOLSETS": "search"
+        "COGNICORE_TOOLSETS": "search,project"
       }
     }
   }

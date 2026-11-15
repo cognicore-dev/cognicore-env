@@ -26,7 +26,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 MARKETPLACE_SOURCE = "cognicore-dev/cognicore-env"
 MARKETPLACE_NAME = "cognicore-beta-marketplace"
 PLUGIN = "cognicore"
-LEAN_TOOLSETS = "memory,session"
+LEAN_TOOLSETS = "memory,session,project"
 
 Step = Tuple[str, Callable[[], str]]
 
