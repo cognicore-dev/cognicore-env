@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **AI summaries of synced sessions on the hosted server, with Sarvam AI.** When the server's environment has `SARVAM_API_KEY`, each synced session's handoff is rewritten in the background into a short one: goal, state, decisions, open tasks and key facts. The key lives only on the server. Every item may cite only values present in the original, so invented values are dropped. Exact values, files, code and the Done list are kept as captured. A handoff is summarised once it reaches 3,000 tokens (`COGNICORE_SUMMARY_MIN_TOKENS`), and again only after it grows by as much. In between, the cached summary is reused. The summary is stored just after the upload's revision, so a newer upload always wins and clients pull the summary like any other session. On a test session, 31 open tasks became the 1 real one.
+
 ### Fixed
 - **A failed sync upload is retried.** Each session was uploaded once, when it was saved. If that upload timed out and the session never saved again (it ended, or the user ran /clear), claude.ai kept the old version. Every upload now also sends any of the 20 most recent sessions the server hasn't accepted yet. Retrying stops at the first network error. A session the server refuses (4xx) is logged and skipped, so it can't block the others.
 - **Cursor can sign in to the hosted server.** Cursor registers its desktop callback (`cursor://anysphere.cursor-mcp/oauth/callback`) and its cursor.com callbacks for cloud agents and the bot in one request; the server rejected the whole registration, so Cursor showed "Could not obtain authentication URL". These callbacks are now accepted.
