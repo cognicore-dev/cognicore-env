@@ -57,6 +57,10 @@ services:
       COGNICORE_RATE_LIMIT_USER: ${COGNICORE_RATE_LIMIT_USER:-120}
       COGNICORE_RATE_LIMIT_IP: ${COGNICORE_RATE_LIMIT_IP:-120}
       COGNICORE_USE_SEMANTIC: ${COGNICORE_USE_SEMANTIC:-0}
+      # Optional: AI summaries of synced sessions with Sarvam AI. Off unless set (in deploy/.env only).
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      COGNICORE_SARVAM_MODEL: ${COGNICORE_SARVAM_MODEL:-sarvam-105b}
+      COGNICORE_SUMMARY_MIN_TOKENS: ${COGNICORE_SUMMARY_MIN_TOKENS:-3000}
     volumes:
       # Per-user SQLite databases. A real filesystem, never network storage:
       # SQLite over SMB or NFS corrupts under concurrent writes.

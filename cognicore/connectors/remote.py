@@ -1626,10 +1626,58 @@ async def sync_push(request: Request):
     if external_id.startswith("hosted:"):
         raise HTTPException(status_code=400, detail="hosted: ids are reserved for sessions saved here")
     revision = min(revision, _time.time() + 300)  # a client clock far ahead must not pin a session
-    res = await asyncio.to_thread(import_handoff, _sync_backend(request), handoff, external_id, revision)
+    backend = _sync_backend(request)
+    res = await asyncio.to_thread(import_handoff, backend, handoff, external_id, revision)
     if res.get("error"):
         raise HTTPException(status_code=400, detail=res["error"])
+    if res.get("status") in ("created", "updated") and os.environ.get("SARVAM_API_KEY"):
+        task = asyncio.create_task(asyncio.to_thread(summarize_synced, backend, external_id, handoff, revision))
+        _SUMMARY_TASKS.add(task)  # keep a reference until it finishes
+        task.add_done_callback(_SUMMARY_TASKS.discard)
     return res
+
+
+_SUMMARY_TASKS: set = set()
+_summary_log = __import__("logging").getLogger("cognicore.hosted_summary")
+_SUMMARY_SLOTS = __import__("threading").BoundedSemaphore(2)  # at most 2 Sarvam calls at once
+
+
+def summarize_synced(backend: Any, external_id: str, handoff: Dict[str, Any], revision: float,
+                     summarize: Any = None) -> str:
+    """Replace a synced handoff's summary part with a Sarvam summary, stored just after *revision*.
+
+    Throttled per session: a handoff shorter than COGNICORE_SUMMARY_MIN_TOKENS is left
+    as is, and Sarvam is asked again only after the handoff grew by that much since
+    the last summary; in between, the cached summary is applied to the new handoff.
+    A newer push wins over the summary (its revision is higher). Returns what happened.
+    """
+    from cognicore.memory import sarvam_summary as ss
+    from cognicore.memory.context_preservation import import_handoff
+
+    if (handoff.get("compression") or {}).get("method") == "ai":
+        return "already summarised"
+    tokens = len(ss.source_text(handoff)) // 4
+    if tokens < ss.min_tokens():
+        return "short"
+    with backend._get_conn() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS ai_summaries (external_id TEXT PRIMARY KEY, "
+                     "source_tokens INTEGER, summary_json TEXT, info_json TEXT, created_at REAL)")
+        row = conn.execute("SELECT source_tokens, summary_json, info_json FROM ai_summaries WHERE external_id = ?",
+                           (external_id,)).fetchone()
+    if row and tokens - row["source_tokens"] < ss.min_tokens():
+        summary, info, outcome = json.loads(row["summary_json"]), json.loads(row["info_json"]), "reused"
+    else:
+        with _SUMMARY_SLOTS:
+            summary, info = (summarize or ss.summarize_handoff)(handoff)
+        if summary is None:
+            _summary_log.info("sarvam summary skipped for %s: %s", external_id, info.get("skipped"))
+            return f"skipped: {info.get('skipped')}"
+        with backend._get_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO ai_summaries VALUES (?, ?, ?, ?, ?)",
+                         (external_id, tokens, json.dumps(summary), json.dumps(info), _time.time()))
+        outcome = "summarised"
+    res = import_handoff(backend, ss.apply_summary(handoff, summary, info), external_id, revision + 0.001)
+    return outcome if res.get("status") == "updated" else f"{outcome}, not stored: {res}"
 
 
 @app.get("/sync/sessions")

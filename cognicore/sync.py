@@ -328,8 +328,8 @@ def push(backend: Any, external_id: str, timeout: float = PUSH_TIMEOUT) -> Dict[
     return res
 
 
-def _record_push(external_id: str, revision: float) -> None:
-    """Remember the revision the server accepted, so a missed upload can be found later."""
+def _record_push(external_id: str, revision: float, stamp: bool = True) -> None:
+    """Remember the revision the server has, so a missed upload can be found later."""
     with _Lock("sync.lock"):
         state = load_state()
         if not state.get("refresh_token"):
@@ -338,7 +338,9 @@ def _record_push(external_id: str, revision: float) -> None:
         pushed[external_id] = revision
         if len(pushed) > MAX_PUSHED_TRACKED:  # keep the newest entries
             pushed = dict(sorted(pushed.items(), key=lambda kv: kv[1])[-MAX_PUSHED_TRACKED:])
-        state.update(pushed=pushed, last_push=time.time())
+        state["pushed"] = pushed
+        if stamp:
+            state["last_push"] = time.time()
         save_state(state)
 
 
@@ -398,6 +400,9 @@ def pull(backend: Any, timeout: float = PULL_TIMEOUT) -> List[Dict[str, Any]]:
             done = import_handoff(backend, item["handoff"], str(item["external_id"]), revision)
         except (KeyError, TypeError, ValueError):
             continue
+        if done.get("status") in ("created", "updated"):
+            # The server has this revision (e.g. its AI summary of a local session): don't upload it back.
+            _record_push(str(item["external_id"]), revision, stamp=False)
         cursor = max(cursor, revision)
         if done.get("status") == "created":
             doc = item["handoff"]
