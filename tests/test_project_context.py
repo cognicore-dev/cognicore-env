@@ -23,6 +23,11 @@ def repo(tmp_path, monkeypatch):
     return project
 
 
+def _core(items):
+    """Items without their provenance (id, date, by, session)."""
+    return [{k: v for k, v in i.items() if k in ("what", "why", "status", "text")} for i in items]
+
+
 def _cli(*argv, capsys):
     code = pc.main(list(argv))
     return code, capsys.readouterr().out
@@ -60,7 +65,7 @@ def test_commands_write_a_readable_file_and_list_it(repo, capsys):
 
     code, out = _cli("list", capsys=capsys)
     assert code == 0
-    assert "Goal: Ship Sarvam summaries" in out and "  2. Rejected: Hosted MCP save per turn" in out
+    assert "Goal: Ship Sarvam summaries" in out and "  D2. Rejected: Hosted MCP save per turn" in out
 
 
 def test_hand_edits_survive_a_round_trip(repo):
@@ -86,10 +91,10 @@ rounding in format_eur
     target.write_text(hand, encoding="utf-8")
     ctx = pc.load()
     assert ctx["goal"] == "Fix BILL-311 rounding in format_eur"
-    assert ctx["decisions"] == [
+    assert _core(ctx["decisions"]) == [
         {"what": "Use ROUND_HALF_UP", "why": "finance requires commercial rounding", "status": "made"},
         {"what": "banker's rounding because nobody asked for it", "why": "", "status": "rejected"}]
-    assert ctx["rules"] == [{"text": "Run the billing tests before pushing"}]
+    assert _core(ctx["rules"]) == [{"text": "Run the billing tests before pushing"}]
     pc.add("fact", "Totals are in EUR")
     again = target.read_text(encoding="utf-8")
     assert "## Owners\n- Billing: Anika" in again  # an unknown section is kept as written
@@ -102,7 +107,8 @@ def test_repeats_are_not_added_and_a_decision_can_be_updated(repo):
     assert not added and len(pc.load()["rules"]) == 1
     pc.add("decision", "Use Sarvam", why="Indian-hosted")
     _, _, changed = pc.add("decision", "Use Sarvam", why="Indian-hosted", rejected=True)
-    assert changed and pc.load()["decisions"] == [{"what": "Use Sarvam", "why": "Indian-hosted", "status": "rejected"}]
+    assert changed and _core(pc.load()["decisions"]) == [{"what": "Use Sarvam", "why": "Indian-hosted",
+                                                     "status": "rejected"}]
 
 
 def test_secrets_are_redacted_before_writing(repo, capsys):
@@ -230,4 +236,4 @@ def test_the_cognicore_command_routes_to_project(repo, monkeypatch, capsys):
     with pytest.raises(SystemExit) as done:
         cli.main()
     assert done.value.code == 0
-    assert pc.load()["decisions"] == [{"what": "X", "why": "Y", "status": "made"}]
+    assert _core(pc.load()["decisions"]) == [{"what": "X", "why": "Y", "status": "made"}]

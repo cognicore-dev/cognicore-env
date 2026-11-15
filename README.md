@@ -43,6 +43,7 @@ Method and full results: [`docs/transfer-audit.md`](docs/transfer-audit.md#head-
 - **Automatic.** When a session ends, hooks save it from the agent's own transcript. At the next start they inject that project's latest work. There's nothing to remember to call.
 - **A short, useful brief.** It covers the goal, where things stand, open tasks, decisions with their reasons, and exact values like ticket IDs, versions and paths. It's sized to a token budget, and the agent can ask for more sections when it needs them.
 - **Project context you curate.** Session memory is guessed from chat. For what must be right, write it down: `cognicore project set goal "..."`, `cognicore project add decision "..." --why "..."`, `cognicore project add rule "..."`. It goes to `.cognicore/context.md` at the repo root, a plain Markdown file you can edit, review in pull requests and roll back (`cognicore project history`). Every brief puts it first, using at most 300 of its 700 tokens, and its goal replaces the guessed one.
+- **Suggested, then confirmed.** When a session states a decision with its reason, a rule ("always…", "never…", "don't…") or a new goal, the Stop hook shows up to three suggestions once: `CogniCore: 2 suggested for project context: 1. Decision: Use Decimal (why: …); 2. Rule: Never put keys in git. Accept with cognicore project accept 1 2`. Agents can propose items through the `cognicore_project_propose` MCP tool; only you can accept them. `cognicore project suggestions` lists what's waiting, and `dismiss <n>` drops an item for good. Each item in the file records its date, who added it and the session it came from, and has an id for `cognicore project remove D2`. `COGNICORE_SUGGEST=0` turns suggestions off.
 - **Any agent.** Work saved in Claude Code resumes in Codex, and the other way round. Any MCP client can call `cognicore_save_session` and `cognicore_resume_session`.
 - **Local and private.** Memory stays in `~/.cognicore/mcp` (SQLite). CogniCore never reads tool output, file contents or the model's thinking, and it redacts secrets before saving.
 - **Optional sync with claude.ai, Desktop and mobile.** Run `cognicore login` once. Claude Code and Codex sessions then reach your hosted account, and sessions from the CogniCore connector come back. Only the redacted handoff is sent, never the transcript.
@@ -301,7 +302,7 @@ cognicore benchmark               # A/B benchmark: memory vs no memory
 cognicore arena                   # ELO tournament between agents
 cognicore ui                      # NEXUS dashboard
 cognicore studio                  # memory observability studio
-cognicore project list            # curated project context (set, add, remove, history)
+cognicore project list            # curated project context (set, add, remove D2, history, accept 1 2)
 ```
 
 If `cognicore` isn't on your PATH after install, run

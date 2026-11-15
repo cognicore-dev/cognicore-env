@@ -156,6 +156,7 @@ LOCAL_TOOLSETS: Dict[str, List[str]] = {
     "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
     "reflection": ["cognicore_recall_failures", "cognicore_recall_successes", "cognicore_reflect"],
     "safety": ["cognicore_scan_threat"],
+    "project": ["cognicore_project_propose"],  # curated project context, for agents with hooks too
 }
 
 
@@ -267,7 +268,7 @@ def create_mcp_server() -> "FastMCP":
         )
 
     wanted = {s.strip().lower() for s in os.environ.get("COGNICORE_TOOLSETS", "").split(",") if s.strip()}
-    hooks_only = bool(wanted) and wanted <= {"search"}
+    hooks_only = bool(wanted) and wanted <= {"search", "project"}
     mcp = FastMCP("cognicore", instructions=HOOKS_INSTRUCTIONS if hooks_only else MEMORY_INSTRUCTIONS)
 
     # ------------------------------------------------------------------
@@ -720,6 +721,19 @@ def create_mcp_server() -> "FastMCP":
             section=section or None,
             environment=_with_local_os(environment_json) if environment_json else None,
         )
+
+    @mcp.tool()
+    def cognicore_project_propose(kind: str, text: str, why: str = "", cwd: str = "") -> str:
+        """Suggests an item for this project's curated context (.cognicore/context.md). It is queued, not written: a person adds it with `cognicore project accept <n>`.
+
+        kind: decision, rule, goal, status or value. why: the reason, for a decision. cwd: the project folder (default: the server's)."""
+        from cognicore import project_suggest
+
+        res = project_suggest.propose(kind, text, why, cwd=cwd or None, by=os.environ.get("COGNICORE_AGENT", "agent"))
+        if res.get("skipped"):
+            return json.dumps({"queued": False, "reason": res["skipped"]})
+        return json.dumps({"queued": True, "number": res["n"], "item": project_suggest.describe(res),
+                           "accept_with": f"cognicore project accept {res['n']}"})
 
     # e.g. COGNICORE_TOOLSETS=memory,session for a memory-only agent. Default: all tools.
     limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), LOCAL_TOOLSETS)

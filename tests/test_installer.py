@@ -35,7 +35,7 @@ def test_install_sets_up_both_agents(fake_agents):
     assert installer.install(codex_home=str(home), out=out.append) == 0
     assert ["/bin/claude", "plugin", "marketplace", "add", "cognicore-dev/cognicore-env"] in calls
     assert ["/bin/claude", "plugin", "install", "cognicore@cognicore-beta-marketplace"] in calls
-    assert ["/bin/codex", "mcp", "add", "cognicore", "--env", "COGNICORE_TOOLSETS=memory,session", "--",
+    assert ["/bin/codex", "mcp", "add", "cognicore", "--env", "COGNICORE_TOOLSETS=memory,session,project", "--",
             "/bin/cognicore-mcp"] in calls
     assert (home / "hooks.json").exists() and "cognicore:begin" in (home / "AGENTS.md").read_text(encoding="utf-8")
     assert any("/hooks" in line for line in out)
@@ -85,7 +85,7 @@ def test_local_plugin_manifest():
     meta = json.loads((plugin / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert meta["name"] == "cognicore"
     server = json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["cognicore"]
-    assert server["command"] == "cognicore-mcp" and server["env"]["COGNICORE_TOOLSETS"] == "search"
+    assert server["command"] == "cognicore-mcp" and server["env"]["COGNICORE_TOOLSETS"] == "search,project"
     hooks = json.loads((plugin / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     assert set(hooks) == {"SessionStart", "Stop", "PreCompact", "SessionEnd"}
     for groups in hooks.values():
