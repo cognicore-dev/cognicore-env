@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Sarvam summaries are given room to finish, and `/health` says whether they work.** `sarvam-105b` reasons at length before it answers, and on a real 5k-token session it produced nothing within the old 120 s and 8,000-token limits. The background call now waits up to 300 s and allows 16,000 output tokens. At most about 6,000 tokens of a handoff are sent, newest items first, and items too old to send stay in the handoff as captured, so nothing is lost. `/health` now has `ai_summaries`: whether a key is set (never the key itself), the model, and the outcome and duration of the last attempt, such as `summarised` or `skipped: API error 403`. Unexpected errors in the background task are now recorded instead of lost.
+
 ### Added
 - **`cognicore usage`**: token usage of your Claude Code sessions, read from Claude Code's own transcripts, with no model calls. Per project it shows sessions, turns, input tokens processed, startup context (what the first turn received), final context (what continuing resends every turn), CogniCore's brief size, and the per-turn saving after `/clear`: context − (startup + brief). Options: `--days`, `--json`.
 

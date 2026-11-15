@@ -35,9 +35,15 @@ from cognicore.memory.redact import redact_secrets
 SARVAM_URL = "https://api.sarvam.ai/v1/chat/completions"
 DEFAULT_MODEL = "sarvam-105b"
 # sarvam-105b reasons before it answers; the reasoning counts against max_tokens.
-MAX_TOKENS = 8000
-TIMEOUT = 120.0
-MAX_SOURCE_TOKENS = 60_000
+# sarvam-105b reasons at length before answering, and the reasoning grows with the
+# input. The call runs in the background, so it may take minutes; what is sent is
+# capped so it stays well inside these limits.
+MAX_TOKENS = 16_000
+TIMEOUT = 300.0
+MAX_SEND_TOKENS = 6_000
+# (section, keep newest from the end?) Decisions, facts and Done are in the order they
+# were said; open tasks are newest first.
+_LISTS = (("completed", True), ("decisions", True), ("open_tasks", False), ("key_facts", True), ("files", False))
 
 JSON_INSTRUCTIONS = """
 
@@ -53,6 +59,20 @@ def min_tokens() -> int:
         return int(os.environ.get("COGNICORE_SUMMARY_MIN_TOKENS", "3000"))
     except ValueError:
         return 3000
+
+
+def sendable(doc: Dict[str, Any], max_tokens: int = MAX_SEND_TOKENS) -> Dict[str, Any]:
+    """*doc* with its lists cut to the newest items, so its source text fits *max_tokens*."""
+    if len(source_text(doc)) // 4 <= max_tokens:
+        return doc
+    cap = max(len(doc.get(k) or []) for k, _ in _LISTS)
+    out = dict(doc)
+    while cap > 1 and len(source_text(out)) // 4 > max_tokens:
+        cap //= 2
+        for key, newest_last in _LISTS:
+            items = list(doc.get(key) or [])
+            out[key] = items[-cap:] if newest_last else items[:cap]
+    return out
 
 
 def source_text(doc: Dict[str, Any]) -> str:
@@ -106,15 +126,16 @@ def summarize_handoff(
     """Summarise a handoff with Sarvam. Returns ``(summary, info)``; summary is None when skipped."""
     api_key = api_key or os.environ.get("SARVAM_API_KEY", "")
     model = model or os.environ.get("COGNICORE_SARVAM_MODEL") or DEFAULT_MODEL
-    text, redactions = redact_secrets(source_text(doc))
+    sent = sendable(doc)
+    text, redactions = redact_secrets(source_text(sent))
     info: Dict[str, Any] = {"method": "ai", "provider": "sarvam", "model": model,
                             "redactions": redactions, "source_tokens": len(text) // 4}
+    if sent is not doc:
+        info["trimmed_from_tokens"] = len(source_text(doc)) // 4
     if not api_key:
         return None, {**info, "skipped": "no SARVAM_API_KEY"}
     if not text.strip():
         return None, {**info, "skipped": "empty"}
-    if info["source_tokens"] > MAX_SOURCE_TOKENS:
-        return None, {**info, "skipped": "too_long"}
     body = {
         "model": model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT + JSON_INSTRUCTIONS},
@@ -144,8 +165,15 @@ def summarize_handoff(
 
 
 def apply_summary(doc: Dict[str, Any], summary: Dict[str, Any], info: Dict[str, Any]) -> Dict[str, Any]:
-    """A copy of *doc* whose summary part is replaced; values, files, code and Done are kept."""
+    """A copy of *doc* whose summary part is replaced; values, files, code and Done are kept.
+
+    Items too old to be sent (see :func:`sendable`) are kept after the summary's
+    own, as captured, so cutting the input never loses anything.
+    """
     out = copy.deepcopy(doc)
+    sent = sendable(doc)
+    unsent = {key: [i for i in doc.get(key) or [] if i not in (sent.get(key) or [])]
+              for key in ("decisions", "open_tasks", "key_facts")}
     for key in ("goal", "current_state"):
         if summary.get(key):
             out[key] = summary[key]
@@ -164,5 +192,8 @@ def apply_summary(doc: Dict[str, Any], summary: Dict[str, Any], info: Dict[str, 
                             + [f"{d['what']} {d['why']}" for d in decisions]
                             + [t["task"] for t in out["open_tasks"]]).lower()
     out["key_facts"] = [f for f in summary.get("key_facts") or [] if f.strip().lower() not in elsewhere]
+    out["decisions"] = unsent["decisions"] + out["decisions"]  # older ones first, as captured
+    out["open_tasks"] += unsent["open_tasks"]  # newest first, so the unsent (older) go last
+    out["key_facts"] = unsent["key_facts"] + out["key_facts"]
     out["compression"] = {k: v for k, v in info.items() if k != "skipped"}
     return out

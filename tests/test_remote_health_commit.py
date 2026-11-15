@@ -16,7 +16,9 @@ def client():
 
 def test_reports_the_commit_the_image_was_built_from(client, monkeypatch):
     monkeypatch.setenv("COGNICORE_COMMIT", SHA)
-    assert client.get("/health").json() == {"status": "ok", "version": "1.0", "commit": SHA}
+    body = client.get("/health").json()
+    assert {k: body[k] for k in ("status", "version", "commit")} == {"status": "ok", "version": "1.0", "commit": SHA}
+    assert set(body) == {"status", "version", "commit", "ai_summaries"}
 
 
 def test_reports_unknown_without_a_commit(client, monkeypatch):
