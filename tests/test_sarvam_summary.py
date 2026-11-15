@@ -202,3 +202,44 @@ def test_an_unexpected_error_in_the_background_is_recorded(tmp_path, monkeypatch
 
     assert remote.summarize_synced(backend, "a", _handoff(), time.time(), summarize=boom) == "error: RuntimeError"
     assert remote.SUMMARY_STATUS["outcome"] == "error: RuntimeError"
+
+
+def test_reasoning_has_room_for_large_sessions():
+    sent = {}
+    ss.summarize_handoff(_handoff(), api_key="k-test",
+                         post=lambda u, body, k, t: sent.update(body=body) or _reply(GOOD))
+    assert sent["body"]["max_tokens"] == ss.MAX_TOKENS == 32_000
+    assert 'never infer or invent' in sent["body"]["messages"][0]["content"]
+
+
+def test_an_invented_reason_is_emptied_and_a_stated_one_kept():
+    reply = dict(GOOD, decisions=[
+        {"what": "Use ROUND_HALF_UP", "why": "finance requires commercial rounding"},
+        {"what": "Docs follow the merge", "why": "default budget reduced for efficiency"},  # not in the handoff
+    ])
+    summary, info = ss.summarize_handoff(_handoff(), api_key="k", post=lambda *a: _reply(reply))
+    whys = {d["what"]: d["why"] for d in summary["decisions"]}
+    assert whys == {"Use ROUND_HALF_UP": "finance requires commercial rounding", "Docs follow the merge": ""}
+    assert info["dropped_reasons"] == 1
+
+
+@pytest.mark.parametrize("why", [None, "None", "null", "N/A", "(none)", ""])
+def test_a_missing_reason_never_shows_as_why_none(why):
+    doc = ss.apply_summary(_handoff(1), dict(GOOD, decisions=[{"what": "Use ROUND_HALF_UP", "why": why}]), {})
+    assert doc["decisions"][-1] == {"what": "Use ROUND_HALF_UP", "why": "", "status": "made"}
+
+
+def test_a_rejected_decision_stays_rejected_whichever_way_the_model_marks_it():
+    doc = _handoff(1)
+    doc["decisions"].append({"what": "The --marketplace install line in the README", "why": "", "status": "rejected"})
+    summary = dict(GOOD, decisions=[
+        {"what": "Rejected - banker's rounding", "why": ""},
+        {"what": "Float maths for totals", "why": "", "status": "rejected"},
+        {"what": "The --marketplace install line in the README", "why": ""},  # prefix dropped by the model
+        {"what": "Use ROUND_HALF_UP", "why": "finance requires commercial rounding", "status": "made"},
+        {"what": "", "why": "x"}, "not a dict",
+    ])
+    out = ss.apply_summary(doc, summary, {})
+    assert [(d["what"], d["status"]) for d in out["decisions"]] == [
+        ("banker's rounding", "rejected"), ("Float maths for totals", "rejected"),
+        ("The --marketplace install line in the README", "rejected"), ("Use ROUND_HALF_UP", "made")]
