@@ -350,3 +350,51 @@ def test_local_recall_does_not_label_session_facts_as_failures(monkeypatch):
         {"goal": "Recall test", "key_facts": ["The recall test code word is BLUE-HERON-4417"]})}))
     out = str(asyncio.run(app.call_tool("cognicore_recall", {"query": "recall test code word"})))
     assert "BLUE-HERON-4417" in out and "FAILURE" not in out
+
+
+# --- A failed background upload is retried by the next one ------------------
+
+def _save(local, key, goal):
+    save_session(local, [{"role": "user", "content": f"Our goal is to {goal}."}],
+                 agent="claude-code", session_key=key, project="/work/app")
+
+
+def test_a_missed_upload_is_retried_by_the_next_sessions_upload(signed_in, local, monkeypatch):
+    _save(local, "claude-code:a", "fix BILL-311")
+    real = sync._request
+    monkeypatch.setattr(sync, "_request", lambda *a, **k: (_ for _ in ()).throw(sync.SyncError("timed out")))
+    assert sync.main(["push", "claude-code:a"]) == 0  # the hook's upload fails quietly
+    assert sync.unpushed(local) == ["claude-code:a"]
+
+    monkeypatch.setattr(sync, "_request", real)  # server is back; session a ended and is never saved again
+    _save(local, "claude-code:b", "plan the launch posts")
+    assert sync.push_pending(local, "claude-code:b") == 2
+    assert sync.unpushed(local) == []
+    assert "BILL-311" in resume_session(remote.get_backend(_ctx(ALICE)), query="BILL-311")
+
+
+def test_retries_stop_at_a_network_error_but_skip_a_refused_session(signed_in, local, monkeypatch):
+    for key in ("claude-code:a", "claude-code:b", "claude-code:c"):
+        _save(local, key, f"ship {key[-1]}")
+    real = sync._request
+
+    def refuse_b(method, url, body=None, **kw):
+        if body and body.get("external_id") == "claude-code:b":
+            raise sync._HTTPError(413, "handoff too large")
+        return real(method, url, body, **kw)
+
+    monkeypatch.setattr(sync, "_request", refuse_b)
+    assert sync.push_pending(local, "claude-code:c") == 2  # c and a; b is refused, logged, not retried
+    assert sync.unpushed(local) == []
+
+    _save(local, "claude-code:d", "ship d")
+    calls = []
+
+    def down(*a, **k):
+        calls.append(1)
+        raise sync.SyncError("timed out")
+
+    monkeypatch.setattr(sync, "_request", down)
+    with pytest.raises(sync.SyncError):
+        sync.push_pending(local, "claude-code:d")
+    assert len(calls) == 1  # one try while the server is down, not one per session

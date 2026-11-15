@@ -50,6 +50,8 @@ PULL_TIMEOUT = 3.0
 PUSH_TIMEOUT = 15.0
 PULL_OVERLAP = 300  # seconds re-read on each pull, against clock skew; imports are idempotent
 PULL_LIMIT = 50
+RETRY_RECENT = 20  # recent sessions each upload checks for a missed upload
+MAX_PUSHED_TRACKED = 200
 
 
 class SyncError(Exception):
@@ -322,8 +324,63 @@ def push(backend: Any, external_id: str, timeout: float = PUSH_TIMEOUT) -> Dict[
     res = _request("PUT", f"{state['server']}/sync/sessions", {
         "external_id": external_id, "revision": row["timestamp"], "handoff": json.loads(row["handoff_json"]),
     }, token=access_token(), timeout=timeout)
-    _touch("last_push")
+    _record_push(external_id, row["timestamp"])
     return res
+
+
+def _record_push(external_id: str, revision: float) -> None:
+    """Remember the revision the server accepted, so a missed upload can be found later."""
+    with _Lock("sync.lock"):
+        state = load_state()
+        if not state.get("refresh_token"):
+            return
+        pushed = dict(state.get("pushed") or {})
+        pushed[external_id] = revision
+        if len(pushed) > MAX_PUSHED_TRACKED:  # keep the newest entries
+            pushed = dict(sorted(pushed.items(), key=lambda kv: kv[1])[-MAX_PUSHED_TRACKED:])
+        state.update(pushed=pushed, last_push=time.time())
+        save_state(state)
+
+
+def unpushed(backend: Any, limit: int = RETRY_RECENT) -> List[str]:
+    """Recent local sessions whose latest save the server has not accepted, newest first.
+
+    A background upload can fail (server timeout, laptop offline). The session that
+    missed it may never be saved again (it ended, or the user ran /clear), so each
+    later upload retries these.
+    """
+    pushed = load_state().get("pushed") or {}
+    with backend._get_conn() as conn:
+        rows = conn.execute(
+            "SELECT external_id, timestamp FROM sessions WHERE external_id IS NOT NULL "
+            "AND external_id NOT LIKE 'hosted:%' AND handoff_json IS NOT NULL "
+            "ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+    return [r[0] for r in rows if float(r[1]) > float(pushed.get(r[0], 0))]
+
+
+def push_pending(backend: Any, first: str) -> int:
+    """Upload *first*, then any recent session a failed upload left behind.
+
+    Stops at a network error (the server is down; the next save tries again). A
+    session the server refuses (a 4xx other than 401) is logged and not retried,
+    so it cannot block the ones behind it. Returns how many sessions were uploaded.
+    """
+    count = 0
+    for key in [first] + [k for k in unpushed(backend) if k != first]:
+        try:
+            if push(backend, key).get("status") != "nothing to push":
+                count += 1
+        except _HTTPError as e:
+            if e.status == 401 or e.status >= 500:
+                raise
+            from cognicore.hooks import _log
+
+            _log(f"sync push refused for {key}: {e}")
+            with backend._get_conn() as conn:
+                row = conn.execute("SELECT timestamp FROM sessions WHERE external_id = ?", (key,)).fetchone()
+            if row:
+                _record_push(key, row["timestamp"])  # this revision will never be accepted
+    return count
 
 
 def pull(backend: Any, timeout: float = PULL_TIMEOUT) -> List[Dict[str, Any]]:
@@ -362,10 +419,6 @@ def _update_state(**changes: Any) -> None:
         if state.get("refresh_token"):
             state.update(changes)
             save_state(state)
-
-
-def _touch(key: str) -> None:
-    _update_state(**{key: time.time()})
 
 
 def push_in_background(external_id: str) -> None:
@@ -441,7 +494,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if enabled():
                 from cognicore.hooks import _backend
 
-                push(_backend(), argv[1])
+                push_pending(_backend(), argv[1])
             return 0
         if command == "login":
             state = login(argv[1] if len(argv) > 1 else "")
