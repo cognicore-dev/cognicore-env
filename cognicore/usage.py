@@ -85,16 +85,18 @@ def collect(days: float = 30.0, root: Optional[Path] = None) -> List[Dict[str, A
 def brief_tokens(project: str) -> int:
     """Size of the brief CogniCore would inject for *project* now (0 if it has none)."""
     try:
+        from cognicore import project_context
         from cognicore.hooks import _backend
         from cognicore.memory.context_preservation import TokenBudget, project_key, resume_session
     except ImportError:
         return 0
     backend = _backend()
+    curated = project_context.load(project)
     with backend._get_conn() as conn:
         if not conn.execute("SELECT 1 FROM sessions WHERE project = ? LIMIT 1", (project_key(project),)).fetchone():
-            return 0
+            return TokenBudget.estimate_tokens(project_context.standalone_brief(curated)) if not project_context.is_empty(curated) else 0
     budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "700"))
-    return TokenBudget.estimate_tokens(resume_session(backend, project=project, max_tokens=budget))
+    return TokenBudget.estimate_tokens(resume_session(backend, project=project, max_tokens=budget, curated=curated))
 
 
 def by_project(sessions: Iterable[Dict[str, Any]], with_brief: bool = True) -> List[Dict[str, Any]]:
