@@ -21,6 +21,8 @@ Environment:
     COGNICORE_AUTO_CAPTURE   "0" disables saving
     COGNICORE_AUTO_RESUME    "0" disables the start-of-session brief
     COGNICORE_RESUME_TOKENS  budget for the brief (default 700)
+    COGNICORE_PROJECT_TOKENS how much of it the curated project context may use (default 300;
+                             see cognicore.project_context)
     COGNICORE_CLEAR_AT       context size that triggers the "/clear" tip (default 80000; 0 = off)
     COGNICORE_SYNC           "0" pauses sync with the hosted account (see cognicore.sync)
 """
@@ -53,17 +55,22 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
         return ""
     if event.get("source") in ("resume", "fork"):
         return ""  # the session already carries its own history
+    from cognicore import project_context
     from cognicore.memory.context_preservation import project_key, resume_session
 
     backend = _backend()
     pointer = _pull_from_other_apps(backend, event["cwd"])
+    curated = project_context.load(event["cwd"])  # read first: the source of truth when set
     with backend._get_conn() as conn:
         known = conn.execute("SELECT 1 FROM sessions WHERE project = ? LIMIT 1",
                              (project_key(event["cwd"]),)).fetchone()
-    if not known and not pointer:
+    if not known and not pointer and project_context.is_empty(curated):
         return ""  # nothing to resume: inject nothing, cost nothing
     budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "700"))
-    brief = resume_session(backend, project=event["cwd"], max_tokens=budget) if known else ""
+    if known:
+        brief = resume_session(backend, project=event["cwd"], max_tokens=budget, curated=curated)
+    else:
+        brief = project_context.standalone_brief(curated)
     context = "\n\n".join(part for part in (brief, pointer) if part)
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})
 

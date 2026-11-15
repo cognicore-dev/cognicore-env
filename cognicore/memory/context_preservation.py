@@ -11,7 +11,7 @@ import json
 import time
 import uuid
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Sequence, Tuple
 from datetime import datetime
 
 from cognicore.memory.base import MemoryEntry, MemoryScope
@@ -820,14 +820,16 @@ def _relevant_experiences(backend: Any, query: str, environment: Any, top_k: int
 
 
 def _render(fmt: str, included: Dict[str, Any], omitted: Dict[str, int], provenance: Dict[str, Any],
-            environment: Dict[str, Any], max_tokens_applied: Optional[int] = None) -> str:
+            environment: Dict[str, Any], max_tokens_applied: Optional[int] = None,
+            preface: Sequence[str] = ()) -> str:
     more = ""
     if omitted:
         counts = ", ".join(f"{n} {s}" for s, n in omitted.items())
         more = (f"More available ({counts}): cognicore_resume_session("
                 f"session_id='{provenance.get('session_id')}', section=<name>)")
     if fmt == "json":
-        doc = {"schema": SCHEMA_VERSION, "provenance": provenance, **included}
+        doc = {"schema": SCHEMA_VERSION, "provenance": provenance,
+               **({"project_context": list(preface)} if preface else {}), **included}
         if max_tokens_applied:
             doc["max_tokens_applied"] = max_tokens_applied
         if environment:
@@ -837,7 +839,7 @@ def _render(fmt: str, included: Dict[str, Any], omitted: Dict[str, int], provena
             doc["more"] = more
         body = json.dumps(doc, ensure_ascii=False)
         return json.dumps({**doc, "tokens": TokenBudget.estimate_tokens(body)}, ensure_ascii=False)
-    brief = render_text(included, provenance, more)
+    brief = render_text(included, provenance, more, preface)
     return f"{brief}\n\n=== END CONTEXT | {TokenBudget.estimate_tokens(brief)} tokens ==="
 
 
@@ -867,6 +869,7 @@ def resume_session(
     section: Optional[str] = None,
     environment: Any = None,
     project: Optional[str] = None,
+    curated: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     TOOL 3: cognicore_resume_session
@@ -877,6 +880,10 @@ def resume_session(
     decisions, key facts, files, exact values, experiences, code, other
     sessions — until ``max_tokens`` is used. Whatever did not fit is listed
     so it can be fetched with ``session_id`` + ``section``.
+
+    ``curated`` is the project context (:mod:`cognicore.project_context`). It
+    comes first, within its own share of the budget, and its goal replaces the
+    session's guessed one; session decisions it already states are not repeated.
     """
     fmt = "json" if str(format).lower() == "json" else "text"
     if section and section not in SECTIONS and section != "all":
@@ -939,6 +946,17 @@ def resume_session(
     }
     provenance = primary["provenance"]
 
+    preface: List[str] = []
+    if curated and not section:
+        from cognicore.project_context import brief_lines
+
+        preface = brief_lines(curated)
+        if preface and curated.get("goal"):
+            sections["goal"] = ""  # the curated goal is in the preface
+        stated = {str(d.get("what", "")).strip().lower() for d in curated.get("decisions") or []}
+        sections["decisions"] = [d for d in sections["decisions"]
+                                 if str(d.get("what", "")).strip().lower() not in stated]
+
     if section:
         # On-demand retrieval of what a budgeted resume left out.
         if section in ("provenance", "environment"):
@@ -954,7 +972,8 @@ def resume_session(
 
     def render(inc: Dict[str, Any], om: Dict[str, int]) -> str:
         return _render(fmt, inc, om, provenance, env_saved if fmt == "json" else {},
-                       max_tokens_applied=budget if max_tokens and budget != max_tokens else None)
+                       max_tokens_applied=budget if max_tokens and budget != max_tokens else None,
+                       preface=preface)
 
     cost = json_cost if fmt == "json" else text_cost
     fixed = TokenBudget.estimate_tokens(render({}, {})) + 30

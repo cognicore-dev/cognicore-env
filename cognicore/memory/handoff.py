@@ -21,7 +21,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from cognicore.memory.redact import redact_secrets
 
@@ -849,8 +849,12 @@ def json_cost(section: str, item: Any) -> int:
     return _estimate(json.dumps(item)) + 1
 
 
-def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str = "") -> str:
-    """Compact text brief. The session id is only printed in the "more" pointer, where it is needed."""
+def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str = "",
+                preface: Sequence[str] = ()) -> str:
+    """Compact text brief. The session id is only printed in the "more" pointer, where it is needed.
+
+    *preface* (the curated project context) goes first, before the session's own sections.
+    """
     head = [f"Session: {provenance.get('session_name') or ''}", (provenance.get("created_at") or "")[:10]]
     if provenance.get("agent"):
         head.append(f"by {provenance['agent']}" + (f" via {provenance['client']}" if provenance.get("client") else ""))
@@ -858,7 +862,7 @@ def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str 
         head.append(f"via {provenance['client']}")
     if provenance.get("migrated"):
         head.append("migrated from pre-v1 session")
-    lines = ["=== COGNICORE CONTEXT RESUME ===", " | ".join(h for h in head if h)]
+    lines = ["=== COGNICORE CONTEXT RESUME ===", *preface, " | ".join(h for h in head if h)]
     for section in SECTION_PRIORITY:
         value = included.get(section)
         if not value:
