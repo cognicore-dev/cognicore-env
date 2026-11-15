@@ -30,6 +30,7 @@ from cognicore.memory.handoff import (
     extract_sentences as _extract_sentences,
     handoff_from_legacy,
     handoff_text_for_matching,
+    is_misread_task,
     json_cost,
     normalize_environment,
     normalize_sentence as _normalize_sentence,
@@ -388,6 +389,9 @@ def compress_context(
 DEFAULT_RESUME_TOKENS = 1500
 # Below this the header, provenance and "more" pointer leave no room for the goal.
 MIN_RESUME_TOKENS = {"text": 120, "json": 200}
+# Most open tasks a budgeted brief shows, so decisions still fit after them; the
+# rest are counted in the "more" pointer and fetched with section="open_tasks".
+BRIEF_TASK_LIMIT = 10
 
 
 def _summary_text(session_name: str, timestamp: float, handoff: Dict[str, Any], facts_stored: int) -> str:
@@ -904,7 +908,8 @@ def resume_session(
         newer = by_time[:next((i for i, d in enumerate(by_time) if d is doc), 0)]
         done = _done_text(newer)
         return [t for t in doc.get("open_tasks", [])
-                if t.get("status") == "open" and not _finished_later(t["task"], done)]
+                if t.get("status") == "open" and not is_misread_task(t["task"])
+                and not _finished_later(t["task"], done)]
 
     sections: Dict[str, Any] = {
         "goal": primary.get("goal", ""),
@@ -953,8 +958,9 @@ def resume_session(
 
     cost = json_cost if fmt == "json" else text_cost
     fixed = TokenBudget.estimate_tokens(render({}, {})) + 30
+    limits = None if section else {"open_tasks": BRIEF_TASK_LIMIT}
 
-    included, omitted = select_for_budget(sections, budget, cost, fixed)
+    included, omitted = select_for_budget(sections, budget, cost, fixed, limits)
     if not section:
         # List files (text brief) and exact values only when the selected text does not
         # already mention them: cheap insurance without repeating what is on screen.
@@ -966,7 +972,7 @@ def resume_session(
                                 for c in primary.get("code", [])]
         shown = visible + " " + " ".join(sections["files"] or []).lower()
         sections["exact_values"] = [v for v in primary.get("exact_values", []) if v["value"].lower() not in shown]
-        included, omitted = select_for_budget(sections, budget, cost, fixed)
+        included, omitted = select_for_budget(sections, budget, cost, fixed, limits)
 
     out = render(included, omitted)
     while budget is not None and TokenBudget.estimate_tokens(out) > budget and _drop_last_item(included, omitted):

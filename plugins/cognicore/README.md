@@ -58,7 +58,7 @@ Long sessions keep everything searchable: the brief and what syncs stay short, w
 | Variable | Effect |
 |---|---|
 | `COGNICORE_DATA_DIR` | Where memory lives (default `~/.cognicore/mcp`) |
-| `COGNICORE_RESUME_TOKENS` | Budget for the start-of-session brief (default 1000) |
+| `COGNICORE_RESUME_TOKENS` | Budget for the start-of-session brief (default 700) |
 | `COGNICORE_AUTO_CAPTURE=0` / `COGNICORE_AUTO_RESUME=0` | Turn saving / resuming off |
 | `COGNICORE_AI_COMPRESS=auto` | Summarize long sessions with Claude. Needs `pip install anthropic` and Anthropic credentials. `COGNICORE_AI_MODEL` picks the model. |
 | `COGNICORE_SYNC=0` | Pause sync with your hosted account (after `cognicore login`) |

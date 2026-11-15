@@ -183,7 +183,21 @@ _QUOTED = re.compile(r'"[^"\n]{1,300}"|“[^”\n]{1,300}”|`[^`\n]{1,200}`')
 # "messier than it needs to be", "the remaining cost is tokens".
 _NOT_TASK = re.compile(
     r"\bthan\s+(?:\w+\s+){1,2}needs?\s+to\b"
-    r"|\bremaining\b(?!\s*(?::|tasks?|work|items?|steps?|todos?|issues?|follow[- ]?ups?)\b)", re.I)
+    r"|\bremaining\b(?!\s*(?::|tasks?|work|items?|steps?|todos?|issues?|follow[- ]?ups?)\b)"
+    # "you don't need to do anything", "no need to", "it would need to find ..."
+    r"|\b(?:don'?t|doesn'?t|do not|does not|didn'?t|won'?t|never|no|would|could|might)\s+needs?\s+to\b"
+    # A rule, not a task: "compaction must never hide an error"
+    r"|\bmust\s+(?:never|not)\b"
+    # An inference: "the URL must be one of those" (passive "must be rotated" stays a task)
+    r"|\bmust\s+be\s+(?!(?:\w+(?:ed|en)|done|set|run|put|built|sent|kept|made|paid|read|cut|split|left|told|"
+    r"found|shown|written|taken|given)\b)"
+    # A consequence or a reason: ", so a hosted server must run ...", "since both apps must point ..."
+    r"|(?:[,;]\s*so|\bsince)\s+(?:[\w`'/.-]+\s+){1,6}must\b"
+    # A state: "sees it as pending", "still pending"
+    r"|\b(?:is|are|was|were|as|still)\s+pending\b"
+    # "That's the most useful next step." names no step; "Next step: ..." does.
+    r"|\bnext\s+steps?\b(?!\s*(?::|-|is\b|are\b|would be\b|will be\b|here\b))"
+    r"|\bto-?do\s+(?:tool|app|tracker|feature)s?\b", re.I)
 _DONE = re.compile(r"- \[x\]|\b(?:done|completed|finished|shipped|merged)\s*[:\-]", re.I)
 _STATE = re.compile(
     r"\b(?:root cause|currently|status|is working|works now|fixed|failed with|failing|blocked|committed|"
@@ -258,6 +272,17 @@ def stated_goal(conversation: List[Any]) -> str:
 
 def _is_task(sentence: str) -> bool:
     return bool(_TASK.search(_NOT_TASK.sub(" ", sentence)))
+
+
+def is_misread_task(task: str) -> bool:
+    """A saved task that was only classified as one by a phrase that states no task.
+
+    Sessions saved before a rule was tightened keep such entries ("you don't need to
+    do anything"); the brief skips them. A task with no keyword at all (an agent-written
+    "Publish 0.12.0 to PyPI") is never misread.
+    """
+    unquoted = _QUOTED.sub(" ", task)
+    return bool(_TASK.search(unquoted)) and not _is_task(unquoted)
 
 
 # Most items a single session keeps per section (exact values and files are
@@ -776,12 +801,15 @@ def select_for_budget(
     max_tokens: Optional[int],
     cost: Callable[[str, Any], int],
     fixed_cost: int = 0,
+    limits: Optional[Dict[str, int]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Fill sections in priority order until the budget is used.
 
     Items that do not fit are skipped (smaller later items may still fit), so
-    the most important information is always kept first. Returns the
-    included sections and a count of omitted items per section.
+    the most important information is always kept first. ``limits`` caps how
+    many items a section may take, so one long list cannot crowd out the
+    sections after it. Returns the included sections and a count of omitted
+    items per section.
     """
     used = fixed_cost
     included: Dict[str, Any] = {}
@@ -793,9 +821,10 @@ def select_for_budget(
         items = value if isinstance(value, list) else [value]
         kept = []
         heading_cost = cost(section, None)
+        cap = (limits or {}).get(section)
         for item in items:
             c = cost(section, item) + (heading_cost if not kept else 0)
-            if max_tokens is None or used + c <= max_tokens:
+            if (cap is None or len(kept) < cap) and (max_tokens is None or used + c <= max_tokens):
                 kept.append(item)
                 used += c
             else:
