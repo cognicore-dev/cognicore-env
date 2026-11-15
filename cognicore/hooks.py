@@ -72,23 +72,33 @@ def _pull_from_other_apps(backend, cwd: str) -> str:
     """With sync on, fetch sessions saved in other apps; return a short pointer to the new ones."""
     from cognicore import sync
 
-    if not sync.enabled():
-        return ""
+    if not sync.enabled() or sync.offline():
+        return ""  # while the server is unreachable, start from local memory without waiting
     try:
         return sync.pointer_text(sync.pull(backend), cwd)
     except sync.SyncError as e:  # offline or signed out: the session starts as usual
         _log(f"sync pull skipped: {e}")
+        sync.note_failure(e)
         return ""
 
 
-def _push_in_background(session_key: str) -> None:
+# Stop fires after every reply. Uploading on each one starts a process per turn for a
+# handoff that barely changed, so Stop uploads at most this often. SessionEnd and
+# PreCompact always upload, and each upload also sends sessions a skipped one left behind.
+PUSH_EVERY = 60.0
+
+
+def _push_in_background(session_key: str, event_name: str = "") -> None:
     from cognicore import sync
 
-    if session_key and sync.enabled():
-        try:
-            sync.push_in_background(session_key)
-        except OSError as e:
-            _log(f"sync push not started: {e}")
+    if not session_key or not sync.enabled():
+        return
+    if event_name == "Stop" and time.time() - float(sync.load_state().get("last_push") or 0) < PUSH_EVERY:
+        return
+    try:
+        sync.push_in_background(session_key)
+    except OSError as e:
+        _log(f"sync push not started: {e}")
 
 
 def save(event: dict, agent: str = "claude-code") -> str:
@@ -130,7 +140,7 @@ def save(event: dict, agent: str = "claude-code") -> str:
         compact=compression is not None, compression=compression,
     ))
     if not res.get("deduplicated") and not res.get("error"):
-        _push_in_background(session_key)
+        _push_in_background(session_key, str(event.get("hook_event_name") or ""))
     return clear_hint(transcript, session_key)
 
 

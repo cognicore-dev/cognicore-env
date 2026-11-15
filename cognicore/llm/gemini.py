@@ -12,29 +12,26 @@ import logging
 
 logger = logging.getLogger("cognicore.llm.gemini")
 
-try:
-    from openai import OpenAI as _OpenAI
-
-    _openai_available = True
-except ImportError:
-    _openai_available = False
-    _OpenAI = None
-
+# The openai SDK takes about a second to import. It is loaded on first use, not with
+# this module: cognicore.memory imports this module, and every hook imports cognicore.memory.
 if TYPE_CHECKING:
     from openai import OpenAI
 
 
 def _require_openai():
-    if not _openai_available:
+    try:
+        from openai import OpenAI as _OpenAI
+    except ImportError:
         raise ImportError(
             "CogniCore LLM requires the openai package. "
             "Install with: pip install cognicore[llm]"
-        )
+        ) from None
+    return _OpenAI
 
 
 def get_client() -> "OpenAI":
     """Create an OpenAI client from environment variables."""
-    _require_openai()
+    _OpenAI = _require_openai()
     return _OpenAI(
         base_url=os.getenv("API_BASE_URL", "https://api.openai.com/v1"),
         api_key=os.getenv("HF_TOKEN", "no-key"),
