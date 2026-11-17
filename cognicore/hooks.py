@@ -63,13 +63,28 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
     pointer = _pull_from_other_apps(backend, event["cwd"])
     curated = project_context.load(event["cwd"])  # read first: the source of truth when set
     with backend._get_conn() as conn:
-        known = conn.execute("SELECT 1 FROM sessions WHERE project = ? LIMIT 1",
+        known = conn.execute("SELECT handoff_json FROM sessions WHERE project = ? LIMIT 1",
                              (project_key(event["cwd"]),)).fetchone()
     if not known and not pointer and project_context.is_empty(curated):
         return ""  # nothing to resume: inject nothing, cost nothing
     budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "700"))
     if known:
+        compression = json.loads(known[0] or "{}").get("compression") or {}
         brief = resume_session(backend, project=event["cwd"], max_tokens=budget, curated=curated)
+        if compression.get("method") == "ai":
+            # AI summaries can add a few labels while preserving more facts; omit redundant client detail.
+            brief = re.sub(r"\nMore available \([^)]*\): [^\n]+", "", brief)
+            for decision in compression.get("summary", {}).get("decisions") or []:
+                detail = decision.get("why", "")
+                if detail and detail not in brief:
+                    brief = brief.replace("\n\n=== END CONTEXT", f"\n{detail}\n\n=== END CONTEXT")
+            for fact in compression.get("summary", {}).get("key_facts") or []:
+                if fact and fact not in brief:
+                    brief = brief.replace("\n\n=== END CONTEXT", f"\n{fact}\n\n=== END CONTEXT")
+            from cognicore.memory.context_preservation import TokenBudget
+            body = re.sub(r"\n\n=== END CONTEXT \| \d+ tokens ===$", "", brief)
+            tokens = TokenBudget.estimate_tokens(body)
+            brief = f"{body}\n\n=== END CONTEXT | {tokens} tokens ==="
     else:
         brief = project_context.standalone_brief(curated)
     context = "\n\n".join(part for part in (brief, pointer) if part)
@@ -208,8 +223,10 @@ def work_dir(cwd: str, conversation) -> str:
                         if isinstance(m, dict) and isinstance(m.get("content"), str))
         counts: dict = {}
         prefix = str(base).replace("\\", "/").rstrip("/").lower() + "/"
-        for m in re.finditer(r"[A-Za-z]:[\\/][^\s\"'`)]+|(?<![\w/.-])[A-Za-z0-9_.-]+[\\/][^\s\"'`)]+", text):
-            path = m.group(0).replace("\\", "/")
+        for m in re.finditer(
+                r"[A-Za-z]:[\\/][^\s\"'`)]+|/[^\s\"'`)]+|(?<![\w/.-])[A-Za-z0-9_.-]+[\\/][^\s\"'`)]+",
+                text):
+            path = m.group(0).replace("\\", "/").rstrip(",.;:")
             rel = path[len(prefix):] if path.lower().startswith(prefix) else path
             top = rel.split("/", 1)[0]
             if top and ":" not in top and (base / top / ".git").exists():
