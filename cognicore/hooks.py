@@ -29,6 +29,7 @@ Environment:
 
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -62,13 +63,28 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
     pointer = _pull_from_other_apps(backend, event["cwd"])
     curated = project_context.load(event["cwd"])  # read first: the source of truth when set
     with backend._get_conn() as conn:
-        known = conn.execute("SELECT 1 FROM sessions WHERE project = ? LIMIT 1",
+        known = conn.execute("SELECT handoff_json FROM sessions WHERE project = ? LIMIT 1",
                              (project_key(event["cwd"]),)).fetchone()
     if not known and not pointer and project_context.is_empty(curated):
         return ""  # nothing to resume: inject nothing, cost nothing
     budget = int(os.environ.get("COGNICORE_RESUME_TOKENS", "700"))
     if known:
+        compression = json.loads(known[0] or "{}").get("compression") or {}
         brief = resume_session(backend, project=event["cwd"], max_tokens=budget, curated=curated)
+        if compression.get("method") == "ai":
+            # AI summaries can add a few labels while preserving more facts; omit redundant client detail.
+            brief = re.sub(r"\nMore available \([^)]*\): [^\n]+", "", brief)
+            for decision in compression.get("summary", {}).get("decisions") or []:
+                detail = decision.get("why", "")
+                if detail and detail not in brief:
+                    brief = brief.replace("\n\n=== END CONTEXT", f"\n{detail}\n\n=== END CONTEXT")
+            for fact in compression.get("summary", {}).get("key_facts") or []:
+                if fact and fact not in brief:
+                    brief = brief.replace("\n\n=== END CONTEXT", f"\n{fact}\n\n=== END CONTEXT")
+            from cognicore.memory.context_preservation import TokenBudget
+            body = re.sub(r"\n\n=== END CONTEXT \| \d+ tokens ===$", "", brief)
+            tokens = TokenBudget.estimate_tokens(body)
+            brief = f"{body}\n\n=== END CONTEXT | {tokens} tokens ==="
     else:
         brief = project_context.standalone_brief(curated)
     context = "\n\n".join(part for part in (brief, pointer) if part)
@@ -115,7 +131,7 @@ def save(event: dict, agent: str = "claude-code") -> str:
     transcript, cwd = event.get("transcript_path"), event.get("cwd") or ""
     if not transcript or not Path(transcript).is_file():
         return ""
-    from cognicore.memory.context_preservation import project_key, save_session
+    from cognicore.memory.context_preservation import save_session
     from cognicore.memory.handoff import stated_goal
     from cognicore.memory.transcript import read_transcript, start_cwd
     from cognicore.repo import project_folder
@@ -126,20 +142,14 @@ def save(event: dict, agent: str = "claude-code") -> str:
     if not conversation and not supplied:
         return ""
     backend = _backend()
+    cwd = work_dir(cwd, conversation)
+    project = work_dir(project, conversation)
     session_key = f"{agent}:{event.get('session_id', '')}" if event.get("session_id") else ""
     supplied, compression = _with_ai_summary(backend, conversation, supplied, session_key)
-    goal = ""
-    if project and not supplied.get("goal") and not stated_goal(conversation):
-        # A continuation session: keep the project's goal rather than promoting
-        # "continue where we left off" to goal. This session's own row is skipped.
-        with backend._get_conn() as conn:
-            row = conn.execute(
-                "SELECT handoff_json FROM sessions WHERE project = ? AND (external_id IS NULL OR external_id != ?) "
-                "AND handoff_json IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
-                (project_key(project), f"{agent}:{event.get('session_id', '')}"),
-            ).fetchone()
-        if row:
-            goal = json.loads(row[0]).get("goal", "")
+    curated = _project_context(cwd)
+    goal, goal_source = "", ""
+    if cwd and not supplied.get("goal") and not stated_goal(conversation):
+        goal, goal_source = _continued_goal(backend, cwd, session_key, curated), "carried"
     res = json.loads(save_session(
         backend, conversation, goal=goal,
         session_name=project_folder(project).name if project else "",
@@ -148,11 +158,86 @@ def save(event: dict, agent: str = "claude-code") -> str:
         session_key=session_key,
         project=project,
         compact=compression is not None, compression=compression,
+        project_context=curated, goal_source=goal_source if goal else "",
     ))
     if not res.get("deduplicated") and not res.get("error"):
         _push_in_background(session_key, str(event.get("hook_event_name") or ""))
     suggested = "" if res.get("deduplicated") else _suggest(backend, res, conversation, cwd, agent, session_key)
     return _join_messages(suggested, clear_hint(transcript, session_key))
+
+
+CARRY_GOAL_DAYS = 2
+
+
+def _continued_goal(backend, cwd: str, session_key: str, curated: dict) -> str:
+    """The goal of a continuation session ("continue with part 2"), which states none.
+
+    The project context's goal when it has one. Otherwise the goal the project's
+    previous session stated, if that session is recent: a goal carried from session
+    to session would otherwise describe week-old work forever.
+    """
+    if (curated or {}).get("goal"):
+        return curated["goal"]
+    from cognicore.memory.context_preservation import project_key
+
+    with backend._get_conn() as conn:
+        row = conn.execute(
+            "SELECT handoff_json, timestamp FROM sessions WHERE project = ? AND (external_id IS NULL OR "
+            "external_id != ?) AND handoff_json IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
+            (project_key(cwd), session_key),
+        ).fetchone()
+    if not row or time.time() - float(row[1] or 0) > CARRY_GOAL_DAYS * 86400:
+        return ""
+    doc = json.loads(row[0])
+    return "" if doc.get("provenance", {}).get("goal_source") == "carried" else doc.get("goal", "")
+
+
+def _project_context(cwd: str) -> dict:
+    """The project's curated context (.cognicore/context.md), or {} when it has none."""
+    try:
+        from cognicore import project_context
+
+        ctx = project_context.load(cwd)
+        return {} if project_context.is_empty(ctx) else ctx
+    except Exception as e:  # the context is optional for a save
+        _log(f"project context skipped: {type(e).__name__}: {e}")
+        return {}
+
+
+def work_dir(cwd: str, conversation) -> str:
+    """The folder the session worked in: *cwd*, or the one repo below it that the work was in.
+
+    A session started in a parent folder that is not a repo ("safetymind") and then
+    worked only inside a repo under it ("safetymind/cognicore-my-openenv/...") is that
+    repo's work, and is filed under it.
+    """
+    if not cwd:
+        return cwd
+    base = Path(cwd)
+    try:
+        home = Path.home().resolve()
+        # Already in a repo. A repo at the home folder (dotfiles) doesn't count, as in project_context.root.
+        if any((p / ".git").exists() for p in (base.resolve(), *base.resolve().parents) if p != home):
+            return cwd
+        text = " ".join(m.get("content", "") for m in conversation or []
+                        if isinstance(m, dict) and isinstance(m.get("content"), str))
+        counts: dict = {}
+        prefix = str(base).replace("\\", "/").rstrip("/").lower() + "/"
+        for m in re.finditer(
+                r"[A-Za-z]:[\\/][^\s\"'`)]+|/[^\s\"'`)]+|(?<![\w/.-])[A-Za-z0-9_.-]+[\\/][^\s\"'`)]+",
+                text):
+            path = m.group(0).replace("\\", "/").rstrip(",.;:")
+            rel = path[len(prefix):] if path.lower().startswith(prefix) else path
+            top = rel.split("/", 1)[0]
+            if top and ":" not in top and (base / top / ".git").exists():
+                counts[top] = counts.get(top, 0) + 1
+        if counts:
+            top, n = max(counts.items(), key=lambda kv: kv[1])
+            if n >= 3 and n / sum(counts.values()) >= 0.6:
+                return str(base / top)
+    except (OSError, ValueError) as e:
+        _log(f"work dir check skipped: {type(e).__name__}: {e}")
+    return cwd
 
 
 def _suggest(backend, res: dict, conversation, cwd: str, agent: str, session_key: str) -> str:

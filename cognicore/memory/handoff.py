@@ -80,8 +80,18 @@ def is_fragment(sentence: str) -> bool:
     s = sentence.strip()
     # A markdown heading such as "**What changed:**" or "## Next steps:" is a lead-in too.
     bare = s.strip("*_#` ").strip()
+    words = re.findall(r"[\w'.-]+", bare)
     return (s.startswith("|") or s.count("|") >= 2 or bool(_TABLE_SEPARATOR.match(s))
-            or bare.endswith(":") or bare == "")
+            or bare.endswith(":") or bare == ""
+            # A heading ("PART 2 - decision history ...") or a piece cut out of a quote.
+            or bool(_HEADING.match(bare)) or bare.count('"') % 2 == 1 or bare[:1] in ")]}\"'"
+            # Too short, or a pronoun with nothing it refers to: "Before you merge", "It's on the local server only."
+            or (len(words) <= 3 and not bare.endswith((".", "!")))
+            or bool(_DANGLING.match(bare) and len(words) <= 6))
+
+
+_HEADING = re.compile(r"^(?:part|step|phase|section|check)\s+\d+\s*(?:[-–—:.)]|$)", re.I)
+_DANGLING = re.compile(r"^(?:it|it's|this|that|these|those|they|there)\b|\bsays so\.?$", re.I)
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +169,19 @@ _ACKS = {
 }
 
 _GOAL = re.compile(
-    r"\b(?:(?:our|the|my|main)\s+goal|goal\s+is|objective|we(?:'re| are)\s+(?:trying|migrating|building|"
+    # "the Goal line", "the goal field" name a thing; "our goal is", "Main goal: X" state one.
+    r"\b(?:(?:our|the|my|main)\s+goal(?:\s+(?:for|of)\s+(?:[\w-]+\s+){1,4}?)?\s*(?=is\b|was\b|here\b|:|-)"
+    r"|goal\s+is|objective|we(?:'re| are)\s+(?:trying|migrating|building|"
     r"working)|trying to|working on|let'?s (?:plan|build|fix|migrate)|the task is|aim is|we want to)\b", re.I)
+# The bare noun "decision" is not a decision ("Every decision records its source",
+# "PART 2 - decision history"); neither is an agent narrating its next step
+# ("I'll switch to the Edit tool"). "Decision: X" and "we decided" are.
 _DECISION = re.compile(
-    r"\b(?:decided|decide to|decision|agreed to|we agreed|chose|opted|selected|will use|let'?s use|going with|"
-    r"settled on|switch(?:ed)? (?:from|to)|we picked|went with)\b", re.I)
+    r"\b(?:decided|agreed to|we agreed|chose|opted|will use|let'?s use|going with|"
+    r"settled on|switched (?:from|to)|(?:we|let'?s|we'll|we will) switch (?:from|to)|we picked|went with)\b"
+    r"|^decision\s*:", re.I)
+# An agent describing what it is about to do: never a decision, task or fact of the work.
+_NARRATION = re.compile(r"^(?:i'?ll|i will|i'm going to|i am going to|let me|now i'?ll|next,? i'?ll)\b", re.I)
 # Something that was tried and dropped. Past tense marks an attempt ("it didn't
 # work"); present tense ("X doesn't work there") usually describes a limitation,
 # so it only counts when the sentence says it was tried.
@@ -195,6 +213,8 @@ _NOT_TASK = re.compile(
     r"|(?:[,;]\s*so|\bsince)\s+(?:[\w`'/.-]+\s+){1,6}must\b"
     # A state: "sees it as pending", "still pending"
     r"|\b(?:is|are|was|were|as|still)\s+pending\b"
+    # "pending suggestions stay in ..." describes things, it asks for nothing
+    r"|\bpending\s+(?!(?:review|approval|merge|fix|tasks?|items?|work)\b)[a-z]+s\b"
     # "That's the most useful next step." names no step; "Next step: ..." does.
     r"|\bnext\s+steps?\b(?!\s*(?::|-|is\b|are\b|would be\b|will be\b|here\b))"
     r"|\bto-?do\s+(?:tool|app|tracker|feature)s?\b", re.I)
@@ -205,7 +225,8 @@ _STATE = re.compile(
 _STALLING = re.compile(
     r"\b(?:let me (?:think|check|look|see)|get back to you|take your time|wait here|ready to continue|"
     r"one (?:sec|second|moment)|happy to help|let me know|that'?s all|anything else|take a look)\b", re.I)
-_WHY = re.compile(r"\s+(?:because|since|so that|so|as)\s+|,\s+(?:because|since|so)\s+", re.I)
+# Bare "as" and "so" are not reasons: "saved as a decision", "PRIVACY.md says so".
+_WHY = re.compile(r"\s+(?:because|since|so that)\s+|,\s+(?:because|since|so)\s+", re.I)
 # Work that was finished: "Committed and pushed 1bab591", "Merged as #212", "I published 0.13.0".
 _COMPLETED = re.compile(
     r"\b(?:committed|pushed|merged|published|released|deployed|shipped|tagged|fixed|added|created|wrote|"
@@ -413,6 +434,8 @@ def build_handoff(
     found_goal, states, decisions, tasks, facts, completed = "", [], [], [], [], []
     for role, s in kept:
         u = _QUOTED.sub(" ", s)  # classify by what the sentence says, not what it quotes
+        if role == "assistant" and _NARRATION.match(s):
+            continue  # "I'll switch to the Edit tool": its exact values are still kept below
         if s.endswith("?"):
             # A question is not a task, decision or state; keep it only for its values.
             if extract_exact_values(s):
@@ -423,6 +446,9 @@ def build_handoff(
             decisions.append({"what": s, "why": "", "status": "rejected"})
         elif _DECISION.search(u):
             what, why = _split_why(s)
+            if _NARRATION.match(why):
+                facts.append(what)  # "X, so I'll do Y": a fact and a plan, not a decision
+                continue
             decisions.append({"what": what, "why": why, "status": "made"})
         elif not found_goal and _GOAL.search(u) and not s.endswith("?"):
             found_goal = s
@@ -771,8 +797,10 @@ def _line_for(section: str, item: Any) -> str:
     if section == "experiences":
         return f"- {item['task']} -> {item['solution']} [{item['status']}]"
     if section == "other_sessions":
-        parts = [f"- {item['session_name']} ({item['session_id']}, {item['created_at'][:10]}): "
-                 f"{_trim('goal', item['goal'])}"]
+        started, updated = session_dates(item)
+        when = started + (f", updated {updated}" if updated and updated != started else "")
+        by = f", by {item['agent']}" if item.get("agent") else ""
+        parts = [f"- {display_name(item)} ({item['session_id']}, {when}{by}): {_trim('goal', item['goal'])}"]
         for label, key in (("state", "current_state"), ("done", "completed"), ("open", "open_tasks"),
                            ("decided", "decisions"), ("facts", "key_facts")):
             val = item.get(key)
@@ -855,7 +883,9 @@ def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str 
 
     *preface* (the curated project context) goes first, before the session's own sections.
     """
-    head = [f"Session: {provenance.get('session_name') or ''}", (provenance.get("created_at") or "")[:10]]
+    started, updated = session_dates(provenance)
+    head = [f"Session: {display_name(provenance)}",
+            started + (f" (updated {updated})" if updated and updated != started else "")]
     if provenance.get("agent"):
         head.append(f"by {provenance['agent']}" + (f" via {provenance['client']}" if provenance.get("client") else ""))
     elif provenance.get("client"):
@@ -879,6 +909,45 @@ def render_text(included: Dict[str, Any], provenance: Dict[str, Any], more: str 
     if more:
         lines.append(more)
     return "\n".join(lines).strip()
+
+
+_ID_DATE = re.compile(r"^sess_(\d{4})(\d{2})(\d{2})_")
+
+
+def session_dates(prov: Dict[str, Any]) -> Tuple[str, str]:
+    """(started, last saved) as YYYY-MM-DD.
+
+    ``created_at`` used to be overwritten each time a growing session was saved again,
+    so for such sessions the date in the session id (when it was first saved) is the
+    start and ``created_at`` is the last save.
+    """
+    created = str(prov.get("created_at") or "")[:10]
+    updated = str(prov.get("updated_at") or "")[:10]
+    m = _ID_DATE.match(str(prov.get("session_id") or ""))
+    from_id = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
+    if from_id and created and from_id < created:
+        return from_id, max(created, updated)
+    return created or from_id, updated or created or from_id
+
+
+_GENERIC_DIRS = {"src", "lib", "app", "tests", "test", "docs", "scripts", "packages", "cognicore", "."}
+
+
+def display_name(prov: Dict[str, Any], files: Optional[Sequence[str]] = None) -> str:
+    """The session's project name, corrected when the work happened in a sub-project.
+
+    A session started in a parent folder that only works inside one repo below it
+    ("cognicore-my-openenv/cognicore/hooks.py", ...) is that repo's work.
+    """
+    name = str(prov.get("session_name") or "")
+    files = list(files if files is not None else prov.get("files") or [])
+    tops = [f.replace("\\", "/").split("/", 1)[0] for f in files
+            if isinstance(f, str) and "/" in f.replace("\\", "/") and not re.match(r"^[a-zA-Z]:|^/|^~|^https?:", f)]
+    if len(tops) >= 3:
+        top = max(set(tops), key=tops.count)
+        if tops.count(top) / len(tops) >= 0.6 and top.lower() not in _GENERIC_DIRS and top != name:
+            return top
+    return name
 
 
 def handoff_text_for_matching(doc: Dict[str, Any]) -> str:

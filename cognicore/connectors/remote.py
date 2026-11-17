@@ -246,6 +246,8 @@ def get_backend(ctx: Optional[Context] = None):
 from cognicore.memory import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
 from cognicore.memory.categorize import auto_categorize
+from cognicore.memory.brief_filters import agent_in_query, iso_day
+from cognicore.memory.recall_extras import agent_sessions, literal_hits, memory_counts
 from cognicore.memory.context_preservation import (
     TokenBudget,
     compress_context,
@@ -465,17 +467,32 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         category=category if category else None,
         scope=mem_scope
     )
-    if not results:
+    head: list = []
+    agent = agent_in_query(query)
+    if agent:
+        n, session_lines = agent_sessions(backend, agent)
+        head += ([f"Sessions saved by {agent}: {n}"] + session_lines) if n else [f"No sessions saved by {agent}."]
+    exact = [] if category else literal_hits(backend, query, limit=top_k)
+    if exact:
+        head.append(f"Exact matches ({len(exact)}):")
+        head += [f"  - {text} ({where}, {day})" for text, where, day in exact]
+    if not results and not head:
         return apply_auto_compression(ctx, conversation, "(none)" + _empty_account_note(ctx, backend))
 
     # Normalize scores to 0.0-1.0
     max_score = max(r.score for r in results) if results else 1.0
     max_score = max(max_score, 0.001)  # avoid div-by-zero
 
-    lines = [f"Found {len(results)} memories:"]
+    shown = {text.strip().lower() for text, _, _ in exact}
+    lines = head + [f"Found {len(results)} memories:"]
     for r in results:
+        if r.entry.text.strip().lower() in shown:
+            continue
         norm = _normalize_score(r.score, max_score)
-        lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}) #{r.entry.entry_id}")
+        by = f", by {r.entry.source_agent}" if getattr(r.entry, "source_agent", "") else ""
+        day = iso_day(r.entry.timestamp) if getattr(r.entry, "timestamp", None) else ""
+        lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}{by}{', ' + day if day else ''}) "
+                     f"#{r.entry.entry_id}")
     res = "\n".join(lines)
     return apply_auto_compression(ctx, conversation, res)
 
@@ -517,17 +534,13 @@ def cognicore_list(ctx: Context, limit: int = 10, category: str = "", scope: str
 def cognicore_stats(ctx: Context, conversation: Optional[list] = None) -> str:
     """Memory statistics: count, categories, uptime, storage."""
     backend = get_backend(ctx)
-    
-    # Get all memories for category breakdown
-    all_results = backend.search(query="", top_k=10000, scope=MemoryScope.USER)
-    total = len(all_results)
-    
-    # Category breakdown
-    cat_counts = {}
-    for r in all_results:
-        cat = r.entry.category or "general"
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
-    
+
+    # Every memory: remembered notes and facts from saved sessions (a search of
+    # scope "user" only counted the notes, and recall found ids it never counted).
+    counts = memory_counts(backend)
+    total = counts["total"]
+    cat_counts = dict(counts["categories"])
+
     # Uptime
     uptime_s = int(_time.time() - _server_start_time)
     hours, remainder = divmod(uptime_s, 3600)
@@ -535,7 +548,8 @@ def cognicore_stats(ctx: Context, conversation: Optional[list] = None) -> str:
     uptime_str = f"{hours}h {minutes}m {seconds}s"
     
     lines = [
-        f"Total memories: {total}",
+        f"Total memories: {total} ({counts['notes']} remembered notes, {counts['session_facts']} from "
+        f"{counts['sessions']} saved sessions)",
         f"Uptime: {uptime_str}",
         f"Categories:"
     ]
