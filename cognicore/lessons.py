@@ -76,6 +76,13 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS lessons_fts USING fts5(mistake, fix, why, situation);
     """)
+    try:  # once: lessons saved under a subfolder's key move to the repository's key
+        from cognicore.memory.context_preservation import migrate_project_keys
+
+        with conn:
+            migrate_project_keys(conn, table="lessons", column="scope")
+    except Exception:  # nosec B110 - a failed re-key must never stop lessons from loading
+        pass
     return conn
 
 

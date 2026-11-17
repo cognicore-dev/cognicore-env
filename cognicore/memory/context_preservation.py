@@ -5,6 +5,7 @@ Provides automatic context compression, session archiving, and session resumptio
 to solve token exhaustion in long LLM conversations without requiring additional LLM API calls.
 """
 
+import functools
 import os
 import re
 import json
@@ -459,9 +460,63 @@ def _existing_ids_by_text(conn, texts: List[str]) -> Dict[str, str]:
     return found
 
 
-def project_key(path: str) -> str:
-    """Normalize a project directory so the same folder always maps to the same key."""
+def _normalized(path: str) -> str:
     return os.path.normcase(os.path.realpath(os.path.expanduser(path))).rstrip("\\/")
+
+
+@functools.lru_cache(maxsize=256)
+def _project_key_cached(path: str) -> str:
+    from cognicore.repo import project_folder
+
+    return _normalized(str(project_folder(path)))
+
+
+def project_key(path: str) -> str:
+    """The key that names a project: one per repository, whatever folder inside it the agent is in.
+
+    It is the repository's top-level folder (every linked worktree maps to the
+    main checkout), else the folder itself when it isn't in a repository. A
+    repository at the home folder doesn't count. Normalized, so the same folder
+    always gives the same key.
+    """
+    if not path:
+        return ""
+    try:
+        return _project_key_cached(str(path))
+    except (OSError, RuntimeError, ValueError):
+        return _normalized(str(path))
+
+
+_KEYED_COLUMNS = {("sessions", "project"), ("lessons", "scope")}
+
+
+def migrate_project_keys(conn, table: str = "sessions", column: str = "project") -> int:
+    """Re-key rows saved under a subfolder or worktree path to their project's key.
+
+    Runs once per database and table (a marker row records it). Only the key
+    column changes; no row is removed. Paths that don't exist on this machine
+    (synced from another device) are kept verbatim. Returns the rows re-keyed.
+    """
+    if (table, column) not in _KEYED_COLUMNS:
+        raise ValueError(f"not a project-keyed column: {table}.{column}")
+    marker = f"project_keys_v2:{table}"
+    conn.execute("CREATE TABLE IF NOT EXISTS cognicore_meta (key TEXT PRIMARY KEY, value TEXT)")
+    if conn.execute("SELECT 1 FROM cognicore_meta WHERE key = ?", (marker,)).fetchone():
+        return 0
+    moved = 0
+    # table and column come from the fixed _KEYED_COLUMNS set above, never from input
+    for (old,) in conn.execute(
+            f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL AND {column} != ''"  # nosec B608
+    ).fetchall():
+        if old == "global" or not os.path.isdir(old):
+            continue  # another machine's path (synced) or a deleted folder: keep it verbatim
+        new = project_key(old)
+        if new and new != old:
+            moved += conn.execute(f"UPDATE {table} SET {column} = ? WHERE {column} = ?",  # nosec B608
+                                  (new, old)).rowcount
+    conn.execute("INSERT OR REPLACE INTO cognicore_meta (key, value) VALUES (?, ?)",
+                 (marker, str(int(time.time()))))
+    return moved
 
 
 def save_session(
@@ -662,7 +717,7 @@ def _store_session(backend: Any, handoff: Dict[str, Any], session_id: str, sessi
             conn.execute("""
                 UPDATE sessions SET name = ?, timestamp = ?, message_count = ?, total_tokens_estimated = ?,
                     summary_memory_id = ?, handoff_json = ?, conversation_hash = ?, agent = ?, client = ?,
-                    external_id = ?, project = ?
+                    external_id = ?, project = COALESCE(NULLIF(project, ''), ?)
                 WHERE session_id = ?
             """, values + (session_id,))
             # The rebuilt summary replaces the previous one.

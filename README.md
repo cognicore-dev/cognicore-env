@@ -247,6 +247,8 @@ whether it reads your data, changes it, or calls a third-party service.
 
 For the hosted, GitHub-sign-in variant, see [`plugins/cognicore-memory`](plugins/cognicore-memory/README.md).
 
+**Which project a session belongs to.** A session is filed under its git repository's top-level folder, whichever subfolder it ran in; every `git worktree` of a repository counts as the same project. Outside a repository, it's the folder the session started in, even if the agent later `cd`s elsewhere. A repository at your home folder (dotfiles) doesn't count.
+
 ### mem0
 
 Transfer verified memories to and from [mem0](https://github.com/mem0ai/mem0) with cryptographic

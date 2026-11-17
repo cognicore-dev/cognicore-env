@@ -118,13 +118,17 @@ def save(event: dict, agent: str = "claude-code") -> str:
         return ""
     from cognicore.memory.context_preservation import save_session
     from cognicore.memory.handoff import stated_goal
-    from cognicore.memory.transcript import read_transcript
+    from cognicore.memory.transcript import read_transcript, start_cwd
+    from cognicore.repo import project_folder
 
     conversation, supplied = read_transcript(transcript, cwd)
+    # The event's cwd follows the agent's `cd`; the project is where the session started.
+    project = start_cwd(transcript) or cwd
     if not conversation and not supplied:
         return ""
     backend = _backend()
     cwd = work_dir(cwd, conversation)
+    project = work_dir(project, conversation)
     session_key = f"{agent}:{event.get('session_id', '')}" if event.get("session_id") else ""
     supplied, compression = _with_ai_summary(backend, conversation, supplied, session_key)
     curated = _project_context(cwd)
@@ -133,11 +137,11 @@ def save(event: dict, agent: str = "claude-code") -> str:
         goal, goal_source = _continued_goal(backend, cwd, session_key, curated), "carried"
     res = json.loads(save_session(
         backend, conversation, goal=goal,
-        session_name=Path(cwd).name if cwd else "",
+        session_name=project_folder(project).name if project else "",
         agent=agent, client=f"{agent}-hooks",
         supplied_handoff=supplied or None,
         session_key=session_key,
-        project=cwd,
+        project=project,
         compact=compression is not None, compression=compression,
         project_context=curated, goal_source=goal_source if goal else "",
     ))

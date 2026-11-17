@@ -71,17 +71,10 @@ def root(cwd: Optional[str] = None) -> Path:
     A repository at the home folder (a dotfiles repo) doesn't count for folders
     inside it, or every project without its own repo would share one file.
     """
-    start = Path(cwd or os.getcwd()).resolve()
-    try:
-        home = Path.home().resolve()
-    except (RuntimeError, OSError):
-        home = None
-    for folder in (start, *start.parents):
-        if folder == home and folder != start:
-            break
-        if (folder / ".git").exists():
-            return folder
-    return start
+    from cognicore.repo import repo_root
+
+    found = repo_root(cwd)
+    return found if found is not None else Path(cwd or os.getcwd()).resolve()
 
 
 def path(cwd: Optional[str] = None) -> Path:
