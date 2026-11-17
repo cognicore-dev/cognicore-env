@@ -112,10 +112,9 @@ JWT_ALGORITHM = "HS256"
 
 from cognicore.connectors import oauth as _oauth
 
-# Real per-user sign-in for Claude and ChatGPT connectors, with Google, Microsoft
-# and/or GitHub. Active when GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET,
-# MICROSOFT_CLIENT_ID/MICROSOFT_CLIENT_SECRET or GITHUB_CLIENT_ID/
-# GITHUB_CLIENT_SECRET are set; see cognicore/connectors/oauth.py.
+# Real per-user sign-in for Claude and ChatGPT connectors, with Google and/or
+# GitHub. Active when GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or
+# GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are set; see cognicore/connectors/oauth.py.
 oauth_server = _oauth.OAuthServer(JWT_SECRET, JWT_ALGORITHM)
 
 
@@ -332,17 +331,17 @@ def _authenticated_user(ctx: Optional[Context] = None) -> Optional[str]:
         return None
 
 
-_PROVIDER_NAMES = {"google": "Google", "microsoft": "Microsoft", "github": "GitHub"}
+_PROVIDER_NAMES = {"google": "Google", "github": "GitHub"}
 
 
 def _empty_account_note(ctx: Context | None, backend) -> str:
     """A note for an empty account that names which sign-in it belongs to.
 
-    Google, Microsoft and GitHub sign-ins are separate accounts that are never
-    linked, so someone who reconnects with a different provider finds an empty
-    one, which looks exactly like lost memories. Shown only on the hosted
-    server, only when the account holds nothing at all, and only when another
-    provider is actually offered.
+    Google and GitHub sign-ins are separate accounts that are never linked, so
+    someone who reconnects with the other provider finds an empty one, which
+    looks exactly like lost memories. Shown only on the hosted server, only when
+    the account holds nothing at all, and only when the other provider is
+    actually offered.
     """
     user = _authenticated_user(ctx)
     if not user or ":" not in user:
@@ -1743,9 +1742,9 @@ def sync_pull(request: Request, since: float = 0.0, limit: int = 50):
 from fastapi import status
 
 # ── OAuth for Claude connectors ──────────────────────────────────────────────
-# With Google, Microsoft and/or GitHub client credentials set, these routes are
-# a real OAuth 2.1 server (DCR + PKCE) that signs users in with those providers;
-# see oauth.py. Each provider's own routes 404 when that provider is not configured.
+# With Google and/or GitHub client credentials set, these routes are a real
+# OAuth 2.1 server (DCR + PKCE) that signs users in with those providers; see
+# oauth.py. Each provider's own routes 404 when that provider is not configured.
 # Otherwise the legacy mock flow below is available only when
 # COGNICORE_ALLOW_INSECURE_AUTH is set, and every route returns 404 by default.
 
@@ -1836,18 +1835,6 @@ async def google_oauth_callback(request: Request):
     if not _oauth.google_enabled():
         raise HTTPException(status_code=404)
     return await oauth_server.google_callback(request)
-
-@app.get("/authorize/microsoft")
-def authorize_microsoft(request: Request):
-    if not _oauth.microsoft_enabled():
-        raise HTTPException(status_code=404)
-    return oauth_server.authorize_microsoft(request)
-
-@app.get(_oauth.MICROSOFT_CALLBACK_PATH)
-async def microsoft_oauth_callback(request: Request):
-    if not _oauth.microsoft_enabled():
-        raise HTTPException(status_code=404)
-    return await oauth_server.microsoft_callback(request)
 
 @app.post("/token")
 async def token(request: Request):

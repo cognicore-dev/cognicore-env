@@ -1,22 +1,20 @@
-"""OAuth 2.1 authorization server for the remote MCP server, with Google,
-Microsoft and GitHub sign-in.
+"""OAuth 2.1 authorization server for the remote MCP server, with Google and GitHub sign-in.
 
 Claude (claude.ai, Desktop, mobile, Claude Code) connects to a remote MCP server
 through OAuth: it reads protected-resource metadata, registers itself with
 Dynamic Client Registration, sends the user to ``/authorize`` with PKCE, and
 exchanges the code at ``/token``. This module implements that server side and
-delegates the actual sign-in to Google, Microsoft or GitHub, so every user gets
-a stable, distinct identity (``google:<sub>``, ``microsoft:<sub>`` or
-``github:<numeric id>``) without running a user database. The three are never
-linked: the same person signing in with each gets separate accounts.
+delegates the actual sign-in to Google or GitHub, so every user gets a stable,
+distinct identity (``google:<sub>`` or ``github:<numeric id>``) without running a
+user database. The two are never linked: the same person signing in with each
+gets two separate accounts.
 
 Everything is stateless except a small in-memory set of consumed code and
 refresh-token IDs. Requests, codes and tokens are JWTs signed with the server's
 ``COGNICORE_JWT_SECRET`` and told apart by their ``typ`` claim. The GitHub
-access token is used once to read the user's ID and is never stored. Google and
-Microsoft sign-in are OpenID Connect with only the ``openid`` scope: the ID
-token is verified, its ``sub`` read, and nothing else from the provider is
-stored.
+access token is used once to read the user's ID and is never stored. Google
+sign-in is OpenID Connect with only the ``openid`` scope: the ID token is
+verified, its ``sub`` read, and nothing from Google is stored.
 
 Each provider is enabled by its ``<PROVIDER>_CLIENT_ID`` and
 ``<PROVIDER>_CLIENT_SECRET``; the server is enabled when at least one is.
@@ -57,13 +55,6 @@ GOOGLE_CALLBACK_PATH = "/oauth/google/callback"
 GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
 # Clock skew allowed when checking a Google ID token's exp and iat.
 GOOGLE_LEEWAY = 60
-MICROSOFT_CALLBACK_PATH = "/oauth/microsoft/callback"
-# Microsoft's "common" endpoint accepts work/school and personal accounts alike,
-# so the issuer carries the signed-in account's own tenant id rather than a fixed
-# value. Any tenant is accepted; the id in the issuer must match the tid claim.
-MICROSOFT_ISSUER_RE = re.compile(r"^https://login\.microsoftonline\.com/([0-9a-f-]{36})/v2\.0$", re.IGNORECASE)
-# Clock skew allowed when checking a Microsoft ID token's exp and iat.
-MICROSOFT_LEEWAY = 60
 
 # Redirect URIs Claude uses. Claude Code uses an RFC 8252 loopback redirect on
 # an ephemeral port, accepted separately below.
@@ -96,13 +87,9 @@ def google_enabled() -> bool:
     return bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
 
 
-def microsoft_enabled() -> bool:
-    return bool(os.environ.get("MICROSOFT_CLIENT_ID") and os.environ.get("MICROSOFT_CLIENT_SECRET"))
-
-
 def oauth_enabled() -> bool:
     """The authorization server runs when at least one sign-in provider is configured."""
-    return github_enabled() or google_enabled() or microsoft_enabled()
+    return github_enabled() or google_enabled()
 
 
 def _github_oauth_base() -> str:
@@ -124,21 +111,6 @@ def _google_token_url() -> str:
 
 def _google_jwks_url() -> str:
     return os.environ.get("COGNICORE_GOOGLE_JWKS_URL", "https://www.googleapis.com/oauth2/v3/certs")
-
-
-# Microsoft's endpoints, overridable so tests (and staging) can point them elsewhere.
-def _microsoft_authorize_url() -> str:
-    return os.environ.get(
-        "COGNICORE_MICROSOFT_AUTHORIZE_URL", "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")
-
-
-def _microsoft_token_url() -> str:
-    return os.environ.get("COGNICORE_MICROSOFT_TOKEN_URL", "https://login.microsoftonline.com/common/oauth2/v2.0/token")
-
-
-def _microsoft_jwks_url() -> str:
-    return os.environ.get(
-        "COGNICORE_MICROSOFT_JWKS_URL", "https://login.microsoftonline.com/common/discovery/v2.0/keys")
 
 
 def base_url_from_headers(headers: dict[str, str], scheme: str, host: str) -> str:
@@ -268,11 +240,6 @@ font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
 .btn.google:hover{background:#f8f9fa;border-color:#c6c9cd}
 @media (prefers-color-scheme:dark){.btn.google{background:#131314;color:#e3e3e3;border-color:#3c4043}
 .btn.google:hover{background:#1c1c1e;border-color:#5f6368}}
-.btn.microsoft{background:#fff;color:#1f1f1f;border:1px solid #8c8c8c;
-font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif;font-weight:600}
-.btn.microsoft:hover{background:#f3f3f3;border-color:#767676}
-@media (prefers-color-scheme:dark){.btn.microsoft{background:#1f1f1f;color:#fff;border-color:#8c8c8c}
-.btn.microsoft:hover{background:#2b2b2b;border-color:#a6a6a6}}
 .btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .caption{margin:0;padding:0 2px;font-size:12.5px;line-height:1.5;color:var(--faint)}
 .caption-lead{display:block;color:var(--muted);font-weight:560;margin-bottom:2px}
@@ -339,14 +306,6 @@ _ICON_GOOGLE = (
     '0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>'
     '<path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57'
     '-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>'
-)
-# Microsoft's standard four-square mark, as used on its sign-in buttons. Kept unaltered.
-_ICON_MICROSOFT = (
-    '<svg width="20" height="20" viewBox="0 0 21 21" aria-hidden="true">'
-    '<rect x="1" y="1" width="9" height="9" fill="#F25022"/>'
-    '<rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>'
-    '<rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>'
-    '<rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>'
 )
 
 
@@ -435,54 +394,8 @@ def validate_google_id_token(id_token: str, *, client_id: str, nonce: str, jwks:
     return sub
 
 
-class MicrosoftSignInError(Exception):
-    """A Microsoft sign-in step failed. The message is a fixed reason, safe to log:
-    it never contains a code, a token or the user's ID."""
-
-
-def validate_microsoft_id_token(id_token: str, *, client_id: str, nonce: str, jwks: jwt.PyJWKClient) -> str:
-    """Verify a Microsoft ID token completely and return its ``sub``.
-
-    Raises MicrosoftSignInError on any failure. Only RS256 signatures from
-    Microsoft's published keys are accepted, so ``alg=none`` or a token signed
-    with a shared secret cannot pass. The "common" endpoint serves both work/
-    school and personal accounts, so unlike Google there is no single issuer
-    to require; instead the issuer must be ``https://login.microsoftonline.com/
-    <tenant>/v2.0`` and that tenant must match the token's own ``tid`` claim.
-    """
-    try:
-        header = jwt.get_unverified_header(id_token)
-    except jwt.PyJWTError:
-        raise MicrosoftSignInError("ID token is malformed") from None
-    if header.get("alg") != "RS256":
-        raise MicrosoftSignInError("ID token is not RS256-signed")
-    try:
-        key = jwks.get_signing_key_from_jwt(id_token).key
-    except jwt.PyJWTError:
-        raise MicrosoftSignInError("ID token signing key not found") from None
-    try:
-        claims = jwt.decode(
-            id_token, key, algorithms=["RS256"], audience=client_id,
-            leeway=MICROSOFT_LEEWAY, options={"require": ["iss", "aud", "exp", "iat", "sub", "tid"]},
-        )
-    except jwt.PyJWTError:
-        raise MicrosoftSignInError("ID token failed verification") from None
-    if claims.get("aud") != client_id:
-        raise MicrosoftSignInError("ID token audience mismatch")
-    issuer_match = MICROSOFT_ISSUER_RE.match(claims.get("iss", ""))
-    if not issuer_match or issuer_match.group(1).lower() != str(claims.get("tid", "")).lower():
-        raise MicrosoftSignInError("ID token issuer mismatch")
-    token_nonce = claims.get("nonce")
-    if not isinstance(token_nonce, str) or not secrets.compare_digest(token_nonce, nonce):
-        raise MicrosoftSignInError("ID token nonce mismatch")
-    sub = claims.get("sub")
-    if not isinstance(sub, str) or not sub:
-        raise MicrosoftSignInError("ID token has no subject")
-    return sub
-
-
 class OAuthServer:
-    """Stateless OAuth 2.1 authorization server backed by Google, Microsoft and GitHub sign-in."""
+    """Stateless OAuth 2.1 authorization server backed by Google and GitHub sign-in."""
 
     def __init__(self, secret: str, algorithm: str = "HS256"):
         self._secret = secret
@@ -503,21 +416,6 @@ class OAuthServer:
         """PKCE verifier for a Google sign-in, derived on the server so it never
         appears in a URL. Only its S256 challenge is sent to the browser."""
         digest = hmac.new(self._secret.encode(), f"google-pkce:{nonce}".encode(), hashlib.sha256)
-        return base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
-
-    def _microsoft_jwks(self) -> jwt.PyJWKClient:
-        """One cached key-set client per JWKS URL; it refetches when Microsoft rotates keys."""
-        url = _microsoft_jwks_url()
-        if url not in self._jwks_clients:
-            self._jwks_clients[url] = jwt.PyJWKClient(
-                url, cache_keys=True, lifespan=3600, timeout=8, headers={"User-Agent": "CogniCore-MCP"},
-            )
-        return self._jwks_clients[url]
-
-    def _microsoft_pkce_verifier(self, nonce: str) -> str:
-        """PKCE verifier for a Microsoft sign-in, derived on the server so it never
-        appears in a URL. Only its S256 challenge is sent to the browser."""
-        digest = hmac.new(self._secret.encode(), f"microsoft-pkce:{nonce}".encode(), hashlib.sha256)
         return base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
 
     # -- signing ---------------------------------------------------------------
@@ -645,14 +543,6 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
                 "No access to your email, contacts, Drive or any other Google data.",
                 f'<a class="btn google" href="{google_url}">{_ICON_GOOGLE}Continue with Google</a>',
             ))
-        if microsoft_enabled():
-            microsoft_url = html.escape(f"/authorize/microsoft?{query}")
-            providers.append((
-                "Microsoft",
-                "Only your Microsoft account ID, used to keep your memories separate.",
-                "No access to your email, OneDrive, Teams or any other Microsoft data.",
-                f'<a class="btn microsoft" href="{microsoft_url}">{_ICON_MICROSOFT}Continue with Microsoft</a>',
-            ))
         if github_enabled():
             github_url = html.escape(f"/authorize/github?{query}")
             providers.append((
@@ -668,12 +558,9 @@ connection from {html.escape(app_name)}. Any program on this computer can reques
 <p class="caption">{f'<span class="caption-lead">CogniCore receives from {provider}</span>' if single else ""}{gets} {never}</p></div>"""
             for provider, gets, never, button in providers
         )
-        # Signing in with a different provider opens an empty account, which looks like
+        # Signing in with the other provider opens an empty account, which looks like
         # lost memories. Say so where the choice is made.
-        provider_names = [provider for provider, *_ in providers]
-        names_list = " and ".join(provider_names) if len(provider_names) < 3 else \
-            f"{', '.join(provider_names[:-1])} and {provider_names[-1]}"
-        separate = "" if single else f"""<p class="note">{_ICON_INFO}<span>{names_list} are separate accounts.
+        separate = "" if single else f"""<p class="note">{_ICON_INFO}<span>Google and GitHub are separate accounts.
 Each sign-in option keeps its own memories, so choose the same one every time.</span></p>"""
         return _render_page(f"Connect {app_name}", f"""
 <div class="marks"><div class="mark app" title="{name}">{_ICON_APP}</div>
@@ -849,63 +736,6 @@ No new account or password needed.</p>
             return self._client_error(auth_request, "server_error", "Google sign-in failed")
         # Google's access and ID tokens go out of scope here; nothing from them is stored.
         return self._issue_code(request, auth_request, f"google:{google_sub}", "")
-
-    # -- Microsoft (OpenID Connect, scope openid only) -------------------------
-
-    def authorize_microsoft(self, request: Request):
-        auth_request, nonce, error = self._start_provider(request)
-        if error:
-            return error
-        # A typ of its own, so a Google or GitHub state cannot be replayed here, or the reverse.
-        state = self._sign("microsoftstate", REQUEST_TTL, req=auth_request, nonce=nonce)
-        url = f"{_microsoft_authorize_url()}?" + urllib.parse.urlencode({
-            "client_id": os.environ["MICROSOFT_CLIENT_ID"],
-            "redirect_uri": f"{base_url(request)}{MICROSOFT_CALLBACK_PATH}",
-            "response_type": "code",
-            "scope": "openid",
-            "prompt": "select_account",
-            "state": state,
-            "nonce": nonce,
-            "code_challenge": _pkce_s256(self._microsoft_pkce_verifier(nonce)),
-            "code_challenge_method": "S256",
-        })
-        return self._redirect_with_nonce(request, url, nonce)
-
-    async def microsoft_callback(self, request: Request):
-        q = request.query_params
-        microsoft_state, auth_request, error = self._check_callback(request, "microsoftstate")
-        if error:
-            return error
-
-        if q.get("error") or not q.get("code"):
-            return self._client_error(auth_request, "access_denied", "Microsoft sign-in was cancelled")
-
-        nonce = microsoft_state["nonce"]
-        client_id = os.environ["MICROSOFT_CLIENT_ID"]
-        try:
-            token = await asyncio.to_thread(_http_json, _microsoft_token_url(), {
-                "grant_type": "authorization_code",
-                "code": q["code"],
-                "client_id": client_id,
-                "client_secret": os.environ["MICROSOFT_CLIENT_SECRET"],
-                "redirect_uri": f"{base_url(request)}{MICROSOFT_CALLBACK_PATH}",
-                "code_verifier": self._microsoft_pkce_verifier(nonce),
-            })
-            id_token = token.get("id_token") if isinstance(token, dict) else None
-            if not isinstance(id_token, str) or not id_token:
-                raise MicrosoftSignInError("token response has no ID token")
-            # Fetching Microsoft's signing keys can block, so this runs off the event loop too.
-            microsoft_sub = await asyncio.to_thread(
-                validate_microsoft_id_token, id_token, client_id=client_id, nonce=nonce, jwks=self._microsoft_jwks(),
-            )
-        except MicrosoftSignInError as exc:  # a fixed reason, safe to log
-            print(f"[OAUTH] Microsoft sign-in failed: {exc}")
-            return self._client_error(auth_request, "server_error", "Microsoft sign-in failed")
-        except (OSError, ValueError) as exc:  # network or bad JSON; the message may echo request data
-            print(f"[OAUTH] Microsoft sign-in failed: {type(exc).__name__} at the token endpoint")
-            return self._client_error(auth_request, "server_error", "Microsoft sign-in failed")
-        # Microsoft's access and ID tokens go out of scope here; nothing from them is stored.
-        return self._issue_code(request, auth_request, f"microsoft:{microsoft_sub}", "")
 
     # -- token endpoint --------------------------------------------------------
 

@@ -1,23 +1,22 @@
 # Remote MCP server (Claude connector)
 
-`cognicore/connectors/remote.py` is the hosted MCP server behind the CogniCore Claude connector and the `cognicore-memory` plugin. Users sign in with Google, Microsoft or GitHub, and each account gets its own memory database.
+`cognicore/connectors/remote.py` is the hosted MCP server behind the CogniCore Claude connector and the `cognicore-memory` plugin. Users sign in with Google or GitHub, and each account gets its own memory database.
 
 This page covers sign-in, configuration and deployment. For what the server's 31 tools do, see [the tool reference](mcp-tools.md).
 
 ## How sign-in works
 
-The server is its own OAuth 2.1 authorization server (`cognicore/connectors/oauth.py`) and hands the actual sign-in to Google, Microsoft or GitHub:
+The server is its own OAuth 2.1 authorization server (`cognicore/connectors/oauth.py`) and hands the actual sign-in to Google or GitHub:
 
 1. Claude calls the MCP URL without a token and gets `401` with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource/...`.
 2. Claude reads the metadata, registers itself at `/register`, and opens `/authorize` with PKCE.
-3. The user sees a consent page with a button for each configured provider (Google first), and returns to `/oauth/google/callback`, `/oauth/microsoft/callback` or `/oauth/github/callback`.
+3. The user sees a consent page with a button for each configured provider (Google first), and returns to `/oauth/google/callback` or `/oauth/github/callback`.
 4. The server identifies the user and issues its own access and refresh tokens:
    - **Google:** OpenID Connect with only the `openid` scope, PKCE and a nonce. The server verifies the ID token (Google's signing keys, RS256 only, issuer, audience, authorized party, expiry, nonce), reads its `sub`, and sets `sub = google:<sub>`. No email or profile is requested, and no Google token is stored.
-   - **Microsoft:** OpenID Connect with only the `openid` scope, PKCE and a nonce, against the `common` endpoint so both work/school and personal accounts can sign in. The server verifies the ID token (Microsoft's signing keys, RS256 only, audience, expiry, nonce, and an issuer whose tenant id matches the token's own `tid`), reads its `sub`, and sets `sub = microsoft:<sub>`. No email or profile is requested, and no Microsoft token is stored.
    - **GitHub:** the server reads the numeric GitHub ID, sets `sub = github:<id>`, and discards the GitHub token.
 5. Every MCP call carries the access token; the server maps `sub` to `memory_<sha256(sub)>.db`.
 
-Accounts are never linked or matched by email: `google:123`, `microsoft:123` and `github:123` are different users with different databases. A person who signs in with one provider one day and another the next sees two separate memories, which the consent page says.
+Accounts are never linked or matched by email: `google:123` and `github:123` are different users with different databases. A person who signs in with Google one day and GitHub the next sees two separate memories, which the consent page says.
 
 No user database or Supabase project is involved.
 
@@ -39,8 +38,6 @@ No user database or Supabase project is involved.
 | `GITHUB_CLIENT_SECRET` | Yes | From the GitHub OAuth App. |
 | `GOOGLE_CLIENT_ID` | No | From the Google OAuth client. Google sign-in is offered only when this and the secret are set. |
 | `GOOGLE_CLIENT_SECRET` | No | From the Google OAuth client. |
-| `MICROSOFT_CLIENT_ID` | No | From the Microsoft (Entra ID) app registration. Microsoft sign-in is offered only when this and the secret are set. |
-| `MICROSOFT_CLIENT_SECRET` | No | From the Microsoft app registration. |
 | `COGNICORE_PUBLIC_URL` | Yes | Public origin, e.g. `https://mcp.cognicoree.tech`. Must match the origin of the provider callback URLs. |
 | `COGNICORE_DATA_DIR` | Set by the Dockerfile | `/data/cognicore`. Memories go to `$COGNICORE_DATA_DIR/remote`, so mount a persistent volume at `/data`. |
 | `COGNICORE_USE_SEMANTIC` | No | `0` to skip loading sentence-transformers. |
@@ -57,10 +54,10 @@ GitHub → Settings → Developer settings → OAuth Apps → New OAuth App:
 
 The callback URL must use the same origin as `COGNICORE_PUBLIC_URL`.
 
-The server code runs with any combination of Google, Microsoft and GitHub configured; the
-authorization server is switched off only when none of them is, and each provider's routes return
-`404` when it is not. `deploy/docker-compose.yml` requires the GitHub variables and treats the
-Google and Microsoft ones as optional, so production keeps working if either is not set up.
+The server code runs with Google alone, GitHub alone, or both; the authorization server is
+switched off only when neither is configured, and each provider's routes return `404` when it is
+not. `deploy/docker-compose.yml` requires the GitHub variables and treats the Google ones as
+optional, so production keeps working if Google is not set up.
 
 ## Google OAuth client
 
@@ -88,27 +85,6 @@ server with `docker compose ... up -d` for the new values to take effect.
 
 For tests and staging, `COGNICORE_GOOGLE_AUTHORIZE_URL`, `COGNICORE_GOOGLE_TOKEN_URL` and
 `COGNICORE_GOOGLE_JWKS_URL` replace Google's endpoints. Leave them unset in production.
-
-## Microsoft (Entra ID) app registration
-
-In the [Microsoft Entra admin center](https://entra.microsoft.com/), under **Identity → Applications
-→ App registrations → New registration**:
-
-1. **Name** `CogniCore Memory`, **Supported account types** "Accounts in any organizational
-   directory and personal Microsoft accounts" (multi-tenant + personal), so the `common` endpoint
-   this server uses accepts both work/school and personal sign-ins.
-2. **Redirect URI**, platform **Web**:
-   - `https://mcp.cognicoree.tech/oauth/microsoft/callback`
-   - `http://localhost:8000/oauth/microsoft/callback` (local development; better in a separate
-     development app registration)
-3. **API permissions:** leave the default `User.Read` delegated permission or remove it — the
-   server asks only for the `openid` scope, so no admin consent is required.
-4. **Certificates & secrets → New client secret**, and put the application (client) ID and secret
-   value in `deploy/.env` as `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET`. Client secrets
-   expire (up to 24 months); rotate before then or sign-in breaks.
-
-For tests and staging, `COGNICORE_MICROSOFT_AUTHORIZE_URL`, `COGNICORE_MICROSOFT_TOKEN_URL` and
-`COGNICORE_MICROSOFT_JWKS_URL` replace Microsoft's endpoints. Leave them unset in production.
 
 ## Deploying on a VM (Docker Compose)
 
@@ -141,7 +117,7 @@ Production runs on a single Linux VM with `deploy/docker-compose.yml`: the serve
    python scripts/checks/verify_remote_mcp.py https://mcp.cognicoree.tech
    ```
 
-6. In Claude, add a custom connector with URL `https://mcp.cognicoree.tech/mcp/stream` and sign in with Google, Microsoft or GitHub.
+6. In Claude, add a custom connector with URL `https://mcp.cognicoree.tech/mcp/stream` and sign in with Google or GitHub.
 
 `railway.toml` is kept for platforms that build from the Dockerfile; set the variables and mount a volume at `/data` there instead.
 
@@ -262,20 +238,17 @@ deploys like any other commit.
 
 ## Testing locally
 
-`tests/test_remote_oauth.py` covers the OAuth flow with GitHub stubbed out,
-`tests/test_remote_google_oauth.py` covers Google sign-in, and
-`tests/test_remote_microsoft_oauth.py` covers Microsoft sign-in, each against a fake provider that
-signs its own ID tokens. To run the server locally:
+`tests/test_remote_oauth.py` covers the OAuth flow with GitHub stubbed out, and
+`tests/test_remote_google_oauth.py` covers Google sign-in against a fake Google that signs its own
+ID tokens. To run the server locally:
 
 ```bash
 COGNICORE_JWT_SECRET=dev-secret GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=... \
 GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... \
-MICROSOFT_CLIENT_ID=... MICROSOFT_CLIENT_SECRET=... \
 COGNICORE_PUBLIC_URL=http://localhost:8000 \
 uvicorn cognicore.connectors.remote:app --port 8000
 ```
 
-A local GitHub OAuth App needs the callback `http://localhost:8000/oauth/github/callback`, a
-Google client the redirect URI `http://localhost:8000/oauth/google/callback`, and a Microsoft app
-registration the redirect URI `http://localhost:8000/oauth/microsoft/callback`. Any provider can be
-left out.
+A local GitHub OAuth App needs the callback `http://localhost:8000/oauth/github/callback`, and a
+Google client the redirect URI `http://localhost:8000/oauth/google/callback`. Either provider can
+be left out.
