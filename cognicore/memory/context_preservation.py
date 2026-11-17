@@ -29,8 +29,11 @@ from cognicore.memory.handoff import (
     environment_warnings,
     extract_sentences as _extract_sentences,
     handoff_from_legacy,
+    display_name,
     handoff_text_for_matching,
+    is_fragment,
     is_misread_task,
+    session_dates,
     json_cost,
     normalize_environment,
     normalize_sentence as _normalize_sentence,
@@ -40,6 +43,7 @@ from cognicore.memory.handoff import (
     validate_handoff,
 )
 from cognicore.memory.redact import redact_secrets
+from cognicore.memory import brief_filters as bf
 
 logger = logging.getLogger("cognicore.context_preservation")
 
@@ -421,6 +425,9 @@ def _memory_rows(handoff: Dict[str, Any]) -> List[Tuple[str, str, str]]:
         rows.append((text, "decisions", "session_decision"))
     for t in handoff["open_tasks"]:
         rows.append((t["task"], "action_items", "session_action"))
+    for c in handoff.get("completed") or []:
+        if isinstance(c, str) and c.strip():
+            rows.append((c, "completed", "session_completed"))
     for fact in handoff["key_facts"]:
         if isinstance(fact, str):
             for atom in decompose(fact):
@@ -471,6 +478,8 @@ def save_session(
     project: str = "",
     compact: bool = False,
     compression: Optional[Dict[str, Any]] = None,
+    project_context: Optional[Dict[str, Any]] = None,
+    goal_source: str = "",
 ) -> str:
     """
     TOOL 2: cognicore_save_session
@@ -532,6 +541,15 @@ def save_session(
     session_id = previous["session_id"] if previous else f"sess_{dt_str}_{uuid.uuid4().hex[:8]}"
     if previous and not session_name:
         session_name = previous["name"]
+    started_at = ""
+    if previous:
+        with backend._get_conn() as conn:
+            prev_doc = conn.execute("SELECT handoff_json FROM sessions WHERE session_id = ?",
+                                    (previous["session_id"],)).fetchone()
+        try:
+            started_at = json.loads(prev_doc["handoff_json"] or "{}").get("provenance", {}).get("created_at", "")
+        except (TypeError, ValueError, AttributeError):
+            started_at = ""
 
     if not session_name:
         date_pretty = datetime.fromtimestamp(timestamp).strftime("%b %d, %Y")
@@ -547,6 +565,17 @@ def save_session(
         )
     except HandoffInputError as e:
         return _compact_json({"error": str(e)})
+    prov = handoff["provenance"]
+    if started_at:
+        first, _ = session_dates({"session_id": session_id, "created_at": started_at})
+        prov["updated_at"] = prov["created_at"]
+        prov["created_at"] = started_at if started_at.startswith(first) else first + "T00:00:00Z"
+    else:
+        prov["updated_at"] = prov["created_at"]
+    if goal_source:
+        prov["goal_source"] = goal_source  # "carried": not stated in this session, so never carried again
+    if project_context:
+        handoff["project_context"] = project_context  # travels with sync, so hosted briefs have it too
     new_rows, existing_ids = _store_session(
         backend, handoff, session_id, session_name, timestamp, previous,
         message_count=len(conversation), tokens=TokenBudget.estimate_tokens(conversation),
@@ -709,7 +738,21 @@ def import_handoff(backend: Any, doc: Any, external_id: str, revision: Optional[
         return {"session_id": previous["session_id"], "status": "unchanged"}
 
     prov = doc["provenance"]
-    session_id = previous["session_id"] if previous else \
+    session_id = previous["session_id"] if previous else ""
+    sent_id = str(prov.get("session_id") or "")
+    if not session_id and re.fullmatch(r"sess_[0-9]{8}_[0-9]{6}_[0-9a-f]{8}", sent_id):
+        with backend._get_conn() as conn:
+            taken = conn.execute("SELECT 1 FROM sessions WHERE session_id = ?", (sent_id,)).fetchone()
+        session_id = "" if taken else sent_id
+    elif previous and session_id != sent_id and re.fullmatch(r"sess_[0-9]{8}_[0-9]{6}_[0-9a-f]{8}", sent_id):
+        # Stored under an id this store made up before ids were kept: take the sender's id.
+        with backend._get_conn() as conn:
+            if not conn.execute("SELECT 1 FROM sessions WHERE session_id = ?", (sent_id,)).fetchone():
+                for table in ("sessions", "memory_entries", "session_memories"):  # fixed names, not user input
+                    conn.execute(f"UPDATE {table} SET session_id = ? WHERE session_id = ?",  # nosec B608
+                                 (sent_id, session_id))
+                session_id = sent_id
+    session_id = session_id or \
         f"sess_{datetime.fromtimestamp(revision).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     prov["session_id"] = session_id
     session_name = str(prov.get("session_name") or (previous["name"] if previous else "") or
@@ -858,6 +901,67 @@ def _drop_last_item(included: Dict[str, Any], omitted: Dict[str, int]) -> bool:
     return False
 
 
+def _content_key(doc: Dict[str, Any]) -> Tuple[str, ...]:
+    return (_normalize_sentence(doc.get("goal") or ""), _normalize_sentence(doc.get("current_state") or ""),
+            *sorted(_normalize_sentence(f) for f in (doc.get("key_facts") or [])[:10] if isinstance(f, str)))
+
+
+def _without_duplicates(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One session per content: a session copied under a second id (an old sync, a re-import) is listed once."""
+    seen, out = set(), []
+    for d in docs:
+        key = _content_key(d)
+        if any(key[:2]) and key in seen:
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+
+def _carried_goal(doc: Dict[str, Any], by_time: List[Dict[str, Any]]) -> bool:
+    """The goal is an older session's goal carried forward: that session started 2+ days earlier."""
+    goal = _normalize_sentence(doc.get("goal") or "")
+    if not goal:
+        return False
+    first = session_dates(doc.get("provenance") or {})[0]
+    for other in by_time:
+        if other is doc or _normalize_sentence(other.get("goal") or "") != goal:
+            continue
+        other_first = session_dates(other.get("provenance") or {})[0]
+        try:
+            if other_first and first and (datetime.fromisoformat(first) - datetime.fromisoformat(other_first)).days >= 2:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _session_line(doc: Dict[str, Any]) -> str:
+    prov = doc.get("provenance") or {}
+    started, updated = session_dates(prov)
+    when = started + (f", updated {updated}" if updated and updated != started else "")
+    by = f", by {prov['agent']}" if prov.get("agent") else ""
+    what = doc.get("current_state") or doc.get("goal") or ""
+    return f"- {display_name(prov, doc.get('files'))} ({prov.get('session_id')}, {when}{by}): {what[:140]}"
+
+
+def _no_sessions_on(day: Any, by_time: List[Dict[str, Any]]) -> str:
+    """Answer for a day with no saved sessions: say so, and list the nearest ones by date."""
+    def distance(d: Dict[str, Any]) -> int:
+        first, last = session_dates(d.get("provenance") or {})
+        try:
+            return min(abs((datetime.fromisoformat(x).date() - day).days) for x in (first, last) if x)
+        except ValueError:
+            return 10 ** 6
+    nearest = sorted(by_time, key=distance)[:3]
+    lines = ["=== COGNICORE CONTEXT RESUME ===", f"No sessions were saved on {day.isoformat()}."]
+    if nearest:
+        lines.append("Nearest sessions:")
+        lines += [_session_line(d) for d in nearest]
+    brief = "\n".join(lines)
+    return f"{brief}\n\n=== END CONTEXT | {TokenBudget.estimate_tokens(brief)} tokens ==="
+
+
 def resume_session(
     backend: Any,
     query: Optional[str] = None,
@@ -892,6 +996,9 @@ def resume_session(
     with backend._get_conn() as conn:
         if session_id:
             rows = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchall()
+            if not rows:  # an id another store gave the same session (synced before ids were kept)
+                rows = conn.execute("SELECT * FROM sessions WHERE handoff_json LIKE ? ORDER BY timestamp DESC "
+                                    "LIMIT 1", (f'%"session_id": "{session_id}"%',)).fetchall()
         else:
             limit = 200 if query and query.strip() else max(1, last_n_sessions)
             if project:  # only this project's sessions
@@ -904,53 +1011,80 @@ def resume_session(
             return f"Error: no saved session with id {session_id!r}."
         return _resume_without_sessions(backend, query, include_action_items)
 
-    by_time = [_load_handoff(backend, row) for row in rows]  # newest first
-    docs = by_time if session_id else _rank_sessions(query, by_time)
-    docs = docs[:max(1, last_n_sessions)]
+    by_time = _without_duplicates([_load_handoff(backend, row) for row in rows])  # newest first
+    notices: List[str] = []
+    pool = by_time
+    day = None if session_id else bf.date_in_query(query)
+    agent = "" if session_id else bf.agent_in_query(query)
+    if day:
+        pool = [d for d in by_time if bf.on_day(d, day)]
+        if not pool:
+            return _no_sessions_on(day, by_time)
+        notices.append(f"Sessions on {day.isoformat()}: {len(pool)}")
+        notices += [_session_line(d) for d in pool]
+    if agent:
+        mine = [d for d in pool if bf.by_agent(d, agent)]
+        if mine:
+            pool = mine
+            notices.append(f"Sessions saved by {agent}: {len(mine)}")
+        else:
+            notices.append(f"No sessions saved by {agent}" + (f" on {day.isoformat()}" if day else "") +
+                           "; showing the best match from other agents.")
+    docs = pool if session_id else _rank_sessions(query, pool)
+    docs = docs[:max(1, last_n_sessions, len(pool) if day else 0)]
     primary, others = docs[0], docs[1:]
     env_saved = primary.get("environment") or {}
 
     def still_open(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Open tasks of *doc*, minus those a newer session reports as finished."""
+        """Open tasks of *doc*, minus those it or a newer session reports as finished."""
         newer = by_time[:next((i for i, d in enumerate(by_time) if d is doc), 0)]
         done = _done_text(newer)
+        reported = [c for d in newer + [doc] for c in d.get("completed") or []]
         return [t for t in doc.get("open_tasks", [])
-                if t.get("status") == "open" and not is_misread_task(t["task"])
-                and not _finished_later(t["task"], done)]
+                if t.get("status") == "open" and not is_misread_task(t["task"]) and not is_fragment(t["task"])
+                and not _finished_later(t["task"], done) and not bf.done_by(t["task"], reported)]
 
+    goal = primary.get("goal", "")
+    if goal and _carried_goal(primary, by_time):
+        goal = ""  # a goal carried forward from older work describes that work, not this session's
     sections: Dict[str, Any] = {
-        "goal": primary.get("goal", ""),
-        "current_state": primary.get("current_state", ""),
+        "goal": goal,
+        "current_state": bf.consistent_state(primary.get("current_state", ""), primary.get("completed") or []),
         "completed": list(reversed(primary.get("completed", []))),  # most recent first
         "environment_warnings": environment_warnings(env_saved, environment),
         "open_tasks": still_open(primary) if include_action_items else [],
-        "decisions": list(reversed(primary.get("decisions", []))),  # most recent first
-        "key_facts": primary.get("key_facts", []),
+        "decisions": [d for d in reversed(primary.get("decisions", [])) if bf.real_decision(d)],  # newest first
+        "key_facts": [f for f in primary.get("key_facts", []) if bf.real_fact(f)],
         "files": primary.get("files", []),
         "experiences": _relevant_experiences(backend, (query or "").strip() or primary.get("goal", ""), environment),
-        "code": primary.get("code", []),
+        "code": [c for c in primary.get("code", []) if bf.real_code(c)],
         "other_sessions": [
             {
                 "session_id": d["provenance"]["session_id"],
-                "session_name": d["provenance"].get("session_name", ""),
+                "session_name": display_name(d["provenance"], d.get("files")),
                 "created_at": d["provenance"].get("created_at", ""),
-                "goal": d.get("goal", ""),
-                "current_state": d.get("current_state", ""),
+                "updated_at": d["provenance"].get("updated_at", ""),
+                "agent": d["provenance"].get("agent", ""),
+                "goal": "" if _carried_goal(d, by_time) else d.get("goal", ""),
+                "current_state": bf.consistent_state(d.get("current_state", ""), d.get("completed") or []),
                 "completed": (d.get("completed") or [])[-5:],
                 "open_tasks": [t["task"] for t in still_open(d)][:3],
-                "decisions": [x["what"] for x in d.get("decisions", []) if x.get("status") == "made"][-3:],
-                "key_facts": d.get("key_facts", [])[:5],
+                "decisions": [x["what"] for x in d.get("decisions", [])
+                              if x.get("status") == "made" and bf.real_decision(x)][-3:],
+                "key_facts": [f for f in d.get("key_facts", []) if bf.real_fact(f)][:5],
             }
             for d in others
         ],
     }
-    provenance = primary["provenance"]
+    provenance = {**primary["provenance"], "session_name": display_name(primary["provenance"], primary.get("files"))}
+    if curated is None and not section:
+        curated = primary.get("project_context")  # synced with the session from the machine that has context.md
 
-    preface: List[str] = []
+    preface: List[str] = list(notices)
     if curated and not section:
         from cognicore.project_context import brief_lines
 
-        preface = brief_lines(curated)
+        preface += brief_lines(curated)
         if preface and curated.get("goal"):
             sections["goal"] = ""  # the curated goal is in the preface
         stated = {str(d.get("what", "")).strip().lower() for d in curated.get("decisions") or []}

@@ -191,6 +191,10 @@ def _sentences(text: str) -> List[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
 
 
+_TO_AGENT = re.compile(r"\b(?:you|your|yourself)\b", re.I)
+_AGENT_PROMPT = re.compile(r"^(?:you are|act as|you're)\b", re.I)
+
+
 def rule_sentences(conversation: List[Dict[str, Any]]) -> List[str]:
     """Rule-like sentences the user wrote: "Always ...", "Never ...", "Don't ...", "We never ...". """
     found = []
@@ -201,6 +205,8 @@ def rule_sentences(conversation: List[Dict[str, Any]]) -> List[str]:
             sent = sent.strip(" -*>").rstrip()
             if sent.endswith("?") or _NOT_A_RULE.match(sent) or not _RULE_START.match(sent):
                 continue
+            if _TO_AGENT.search(sent) or _AGENT_PROMPT.match(msg["content"].lstrip()):
+                continue  # how the agent should work this time ("never guess from your own memory"), not a project rule
             if not 4 <= len(sent.split()) <= 30:
                 continue
             found.append(sent.rstrip(".!") + ".")
