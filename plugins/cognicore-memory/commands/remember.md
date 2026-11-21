@@ -1,11 +1,7 @@
 ---
 name: remember
 description: Store a fact, decision, preference, or context into CogniCore persistent memory.
-usage: /remember <text> [--category <category>] [--scope user|project]
-examples:
-  - /remember This project uses FastAPI and PostgreSQL
-  - /remember I prefer verbose code comments --scope user
-  - /remember Always use pytest for tests in this repo --scope project --category testing
+argument-hint: "<text> [--category <category>] [--scope user|project]"
 ---
 
 Store the given text into CogniCore persistent memory using `cognicore_remember`.
@@ -16,3 +12,11 @@ Parse the input as follows:
 - `--scope` sets the scope: "user" (personal preference, default) or "project" (codebase-specific).
 
 After storing, confirm the memory was saved with its ID and a one-sentence summary.
+
+## Examples
+
+```
+/remember This project uses FastAPI and PostgreSQL
+/remember I prefer verbose code comments --scope user
+/remember Always use pytest for tests in this repo --scope project --category testing
+```
