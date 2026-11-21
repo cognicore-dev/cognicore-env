@@ -1,13 +1,24 @@
 {
   "name": "cognicore-memory",
   "displayName": "CogniCore Memory",
-  "version": "1.0.0",
-  "description": "Give Claude persistent, searchable memory across all your conversations. Store project decisions, preferences, bug fixes, and context — then recall them instantly with BM25 search. Sign in with GitHub; your memories live in a database of your own, and you can self-host the server.",
+  "version": "1.1.0",
+  "description": "Persistent, searchable memory for Claude across conversations, through the hosted CogniCore server. Save project decisions, preferences, bug fixes and session handoffs, then recall them later. Sign in with GitHub or Google; your memories live in a database of your own, and you can self-host the server.",
   "author": {
     "name": "CogniCore",
-    "url": "https://github.com/cognicore-dev/cognicore-my-openenv"
+    "url": "https://github.com/cognicore-dev/cognicore-env"
   },
   "license": "Apache-2.0",
-  "repository": "https://github.com/cognicore-dev/cognicore-my-openenv",
-  "homepage": "https://github.com/cognicore-dev/cognicore-my-openenv"
+  "repository": "https://github.com/cognicore-dev/cognicore-env",
+  "homepage": "https://github.com/cognicore-dev/cognicore-env/tree/main/plugins/cognicore-memory",
+  "privacyPolicyUrl": "https://github.com/cognicore-dev/cognicore-env/blob/main/PRIVACY.md",
+  "icon": ".claude-plugin/icon.png",
+  "keywords": [
+    "memory",
+    "persistent-memory",
+    "recall",
+    "sessions",
+    "context",
+    "mcp",
+    "productivity"
+  ]
 }

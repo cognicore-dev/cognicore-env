@@ -1,6 +1,6 @@
 ---
-name: Memory
-description: Teach Claude to persist facts, preferences, constraints, project decisions, and previous solutions across conversations.
+name: memory
+description: Guidelines for when to recall stored context and when to offer to save facts, preferences, project decisions and previous solutions with the CogniCore memory tools.
 ---
 
 # CogniCore Memory Guidelines
@@ -8,10 +8,11 @@ description: Teach Claude to persist facts, preferences, constraints, project de
 You have access to a persistent memory backend via the `cognicore` MCP server. This allows you to remember important information across conversations for the user.
 
 ## When to Remember
-- Always remember explicit user preferences (e.g., "always use TypeScript", "prefer dark mode").
+- Offer to remember explicit user preferences (e.g., "always use TypeScript", "prefer dark mode").
 - Store project-wide architectural constraints and technical decisions when discussing a project.
 - Store solutions to tricky bugs or environmental setup instructions so you do not have to solve them again in the future.
 - When the user explicitly asks you to remember a fact or context.
+- Except when the user explicitly asked, confirm with the user before calling `cognicore_remember`.
 
 ## When to Recall
 - Actively use `cognicore_recall` at the start of a new project session to check if there are known constraints or context.
