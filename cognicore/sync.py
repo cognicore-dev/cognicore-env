@@ -327,7 +327,9 @@ def access_token() -> str:
 # Push and pull
 # ---------------------------------------------------------------------------
 
-def push(backend: Any, external_id: str, timeout: float = PUSH_TIMEOUT) -> Dict[str, Any]:
+def push(
+    backend: Any, external_id: str, timeout: float = PUSH_TIMEOUT, *, skip_rejected: bool = False
+) -> Dict[str, Any]:
     """Upload one local session's handoff. Its local save time is the revision."""
     with backend._get_conn() as conn:
         row = conn.execute("SELECT handoff_json, timestamp FROM sessions WHERE external_id = ?",
@@ -335,10 +337,21 @@ def push(backend: Any, external_id: str, timeout: float = PUSH_TIMEOUT) -> Dict[
     if not row or not row["handoff_json"]:
         return {"status": "nothing to push"}
     state = load_state()
-    res = _request("PUT", f"{state['server']}/sync/sessions", {
-        "external_id": external_id, "revision": row["timestamp"], "handoff": json.loads(row["handoff_json"]),
-    }, token=access_token(), timeout=timeout)
-    _record_push(external_id, row["timestamp"])
+    revision = row["timestamp"]
+    token = access_token()
+    try:
+        res = _request("PUT", f"{state['server']}/sync/sessions", {
+            "external_id": external_id, "revision": revision, "handoff": json.loads(row["handoff_json"]),
+        }, token=token, timeout=timeout)
+    except _HTTPError as e:
+        if not skip_rejected or e.status not in (400, 413, 422):
+            raise
+        from cognicore.hooks import _log
+
+        _log(f"sync push refused for {external_id}: {e}")
+        _record_push(external_id, revision, stamp=False)
+        return {"status": "rejected"}
+    _record_push(external_id, revision)
     return res
 
 
@@ -349,7 +362,7 @@ def _record_push(external_id: str, revision: float, stamp: bool = True) -> None:
         if not state.get("refresh_token"):
             return
         pushed = dict(state.get("pushed") or {})
-        pushed[external_id] = revision
+        pushed[external_id] = max(revision, float(pushed.get(external_id, 0)))
         if len(pushed) > MAX_PUSHED_TRACKED:  # keep the newest entries
             pushed = dict(sorted(pushed.items(), key=lambda kv: kv[1])[-MAX_PUSHED_TRACKED:])
         state["pushed"] = pushed
@@ -378,25 +391,14 @@ def unpushed(backend: Any, limit: int = RETRY_RECENT) -> List[str]:
 def push_pending(backend: Any, first: str) -> int:
     """Upload *first*, then any recent session a failed upload left behind.
 
-    Stops at a network error (the server is down; the next save tries again). A
-    session the server refuses (a 4xx other than 401) is logged and not retried,
-    so it cannot block the ones behind it. Returns how many sessions were uploaded.
+    Stops on network or server errors so the next save can retry. A permanently
+    rejected handoff revision is logged and skipped. Returns the upload count.
     """
     count = 0
     for key in [first] + [k for k in unpushed(backend) if k != first]:
-        try:
-            if push(backend, key).get("status") != "nothing to push":
-                count += 1
-        except _HTTPError as e:
-            if e.status == 401 or e.status >= 500:
-                raise
-            from cognicore.hooks import _log
-
-            _log(f"sync push refused for {key}: {e}")
-            with backend._get_conn() as conn:
-                row = conn.execute("SELECT timestamp FROM sessions WHERE external_id = ?", (key,)).fetchone()
-            if row:
-                _record_push(key, row["timestamp"])  # this revision will never be accepted
+        result = push(backend, key, skip_rejected=True)
+        if result.get("status") not in ("nothing to push", "rejected"):
+            count += 1
     return count
 
 

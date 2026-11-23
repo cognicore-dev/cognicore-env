@@ -400,6 +400,50 @@ def test_retries_stop_at_a_network_error_but_skip_a_refused_session(signed_in, l
     assert len(calls) == 1  # one try while the server is down, not one per session
 
 
+def test_rate_limited_upload_is_retried_on_the_next_save(signed_in, local, monkeypatch):
+    _save(local, "claude-code:a", "write the first note")
+    real_request = sync._request
+
+    def rate_limited(*args, **kwargs):
+        raise sync._HTTPError(429, "try again later")
+
+    monkeypatch.setattr(sync, "_request", rate_limited)
+    assert sync.main(["push", "claude-code:a"]) == 0
+    assert sync.unpushed(local) == ["claude-code:a"]
+    assert not sync.load_state().get("last_push")
+
+    monkeypatch.setattr(sync, "_request", real_request)
+    _save(local, "claude-code:b", "write the second note")
+    assert sync.push_pending(local, "claude-code:b") == 2
+    assert sync.unpushed(local) == []
+
+
+def test_rejection_leaves_a_concurrent_newer_save_pending(signed_in, local, monkeypatch):
+    key = "claude-code:a"
+    _save(local, key, "write the first note")
+    real_request = sync._request
+
+    def reject_after_new_save(*args, **kwargs):
+        _save(local, key, "write the revised note")
+        raise sync._HTTPError(413, "handoff too large")
+
+    monkeypatch.setattr(sync, "_request", reject_after_new_save)
+    assert sync.push_pending(local, key) == 0
+    assert sync.unpushed(local) == [key]
+    assert not sync.load_state().get("last_push")
+
+    monkeypatch.setattr(sync, "_request", real_request)
+    assert sync.push_pending(local, key) == 1
+    assert sync.unpushed(local) == []
+
+
+def test_late_upload_acknowledgement_preserves_newer_revision(signed_in):
+    key = "claude-code:a"
+    sync._record_push(key, 200)
+    sync._record_push(key, 100)
+    assert sync.load_state()["pushed"][key] == 200
+
+
 # --- Fewer uploads per turn, no waiting while the server is down -------------
 
 def test_stop_uploads_at_most_once_a_minute_but_session_end_always_does(signed_in, monkeypatch, tmp_path):
