@@ -2,9 +2,9 @@
 
 <!-- mcp-name: io.github.cognicore-dev/cognicore-env -->
 
-**Pick up where you left off, even when you switch coding agents.**
+**Local-first session memory for Claude Code and Codex**
 
-Start a fix in Claude Code and finish it in Codex. CogniCore carries over the goal, decisions, exact details, and next steps in a short brief. Memory stays on your machine by default, and automatic capture works without a model API key.
+Start a fix in Claude Code. Open Codex in the same project and it can pick up the ticket, the reasoning behind your last change, and the test you still need to write. CogniCore saves that handoff locally without a model API key.
 
 [![PyPI](https://img.shields.io/pypi/v/cognicore-env)](https://pypi.org/project/cognicore-env/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/cognicore-env/)
@@ -12,19 +12,12 @@ Start a fix in Claude Code and finish it in Codex. CogniCore carries over the go
 
 [Quickstart](#quickstart) · [How it works](#how-it-works) · [Integrations](#integrations) · [Python SDK](#python-sdk) · [Benchmarks](#benchmarks)
 
-[![Demo showing a Claude Code session handing off work to Codex](docs/launch/kit/cognicore-demo.gif)](docs/launch/kit/cognicore-demo.mp4)
-
-<p>
-  <a href="https://www.producthunt.com/products/cognicore/launches/cognicore-2?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-cognicore-2"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1284310&amp;theme=light&amp;t=1795502699738" alt="CogniCore on Product Hunt" width="250" height="54"></a>
-  <a href="https://peerlist.io/kaushalt268/project/cognicore--memory-that-follows-you-between-ai"><img src="docs/launch/kit/peerlist-launch.png" alt="CogniCore on Peerlist Launchpad" width="250" height="131"></a>
-</p>
-
 ## Quickstart
 
 With Python 3.10+ and either Claude Code or Codex installed, run:
 
 ```bash
-pipx install "cognicore-env[mcp]"   # Or: uv tool install "cognicore-env[mcp]"
+pipx install "cognicore-env[mcp]"
 cognicore install
 ```
 
@@ -32,7 +25,9 @@ cognicore install
 2. Work in a project and leave a concrete follow-up, such as “The CSV export handles empty rows. Next, add a regression test for trailing blank lines.” End the session.
 3. Open a new session from the same project directory, in either agent. Ask “What should I do next?” The startup brief should include the follow-up and the work that led to it.
 
-Use `cognicore install --agent codex` to set up just Codex, or `cognicore install --dry-run` to preview the installer. [Claude Code marketplace setup and hook configuration](plugins/cognicore/README.md).
+If you use uv, install the CLI with `uv tool install "cognicore-env[mcp]"`. Use `cognicore install --agent codex` to set up just Codex, or `cognicore install --dry-run` to preview the installer. [Claude Code marketplace setup and hook configuration](plugins/cognicore/README.md).
+
+[![Demo showing a Claude Code session handing off work to Codex](docs/launch/kit/cognicore-demo.gif)](docs/launch/kit/cognicore-demo.mp4)
 
 ## How it works
 
@@ -42,7 +37,7 @@ Use `cognicore install --agent codex` to set up just Codex, or `cognicore instal
 
 Local session memory lives in SQLite under `~/.cognicore/mcp`. Capture uses conversation text and edited file paths, and redacts detected secrets before saving. Open the read-only session viewer with `python -m cognicore.memory.viewer` from a Python environment where CogniCore is installed. [Storage, capture, and configuration](plugins/cognicore/README.md).
 
-CogniCore groups sessions by the Git repository root, including sessions opened in subfolders and linked worktrees. Outside a repository, it uses the folder where the session started. A Git repository rooted in your home directory is ignored.
+CogniCore groups sessions by Git repository, including its subfolders and linked worktrees. Outside a repository, it uses the folder where the session started. A repository rooted in your home directory is ignored.
 
 ### Keep project decisions in Git
 
@@ -124,13 +119,14 @@ SQLite search works with the base package. The `[memory]` extra adds dependencie
 
 In the November 1, 2026 audit, both CogniCore and Claude-Mem 15.7.0 completed all three deferred follow-ups in each route. The harness withheld the prior transcript and simulated both products’ Codex startup hooks by running their hook commands and passing their output to Codex.
 
-| Metric | Claude Code → Claude Code | Claude Code → Codex |
-| --- | --- | --- |
-| New tokens, including background processing | 52,609 / 215,888 | 60,310 / 146,520 |
-| Memory ready after the first session | ~1 s / 70–80 s | ~1 s / 80–130 s |
-| Recall questions answered correctly | 24/24 / 24/24 | 23/24 / 24/24 |
+| Handoff | Memory system | New tokens | Memory ready | Recall |
+| --- | --- | ---: | ---: | ---: |
+| Claude Code → Claude Code | CogniCore | 52,609 | ~1 s | 24/24 |
+| Claude Code → Claude Code | Claude-Mem | 215,888 | 70–80 s | 24/24 |
+| Claude Code → Codex | CogniCore | 60,310 | ~1 s | 23/24 |
+| Claude Code → Codex | Claude-Mem | 146,520 | 80–130 s | 24/24 |
 
-Each cell lists CogniCore first, then Claude-Mem. The audit covers three tasks per route and one run per task. [Method, scoring notes, and full results](docs/transfer-audit.md#head-to-head-with-claude-mem-on-current-versions-2026-11-01).
+New token counts include background processing. The audit covers three tasks per route and one run per task. [Method, scoring notes, and full results](docs/transfer-audit.md#head-to-head-with-claude-mem-on-current-versions-2026-11-01).
 
 ### LongMemEval retrieval
 
@@ -141,10 +137,17 @@ On the repository’s LongMemEval evaluation, multi-hop retrieval reached **85.2
 - [CLI and configuration](plugins/cognicore/README.md) · [Architecture](docs/architecture.md) · [Integrations guide](docs/integrations.md)
 - [Contributing](CONTRIBUTING.md) · [Report an issue](https://github.com/cognicore-dev/cognicore-env/issues) · [Project website](https://www.cognicoree.tech)
 
+## Launches
+
+<p>
+  <a href="https://www.producthunt.com/products/cognicore/launches/cognicore-2?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-cognicore-2"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1284310&amp;theme=light&amp;t=1795502699738" alt="CogniCore on Product Hunt" width="250" height="54"></a>
+  <a href="https://peerlist.io/kaushalt268/project/cognicore--memory-that-follows-you-between-ai"><img src="docs/launch/kit/peerlist-launch.png" alt="CogniCore on Peerlist Launchpad" width="250" height="131"></a>
+</p>
+
 ## Program membership
 
 <a href="https://www.nvidia.com/en-us/startups/"><img src="docs/launch/kit/nvidia-inception.png" alt="NVIDIA Inception Program" width="250"></a>
 
 ## License
 
-[Apache License 2.0](LICENSE). Built by Kaushal Trivedi, Durvesh Bhadgaonkar, and Hassaan Tole.
+[Apache License 2.0](LICENSE). Built by [Kaushal Trivedi](https://www.linkedin.com/in/kaushal-trivedi-4450a8265), [Durvesh Bhadgaonkar](https://www.linkedin.com/in/durvesh-bhadgaonkar), and [Hassaan Tole](https://www.linkedin.com/in/hassaan-tole/).
