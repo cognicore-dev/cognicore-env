@@ -1,6 +1,6 @@
 # CogniCore Privacy Policy
 
-**Effective date:** 5 November 2026
+**Effective date:** 24 November 2026
 
 This policy explains what data the hosted CogniCore service collects, how it is used, and the choices you have. It covers the hosted MCP server at `https://mcp.cognicoree.tech`, which is what you use when you connect CogniCore to Claude, ChatGPT or another AI app.
 
@@ -61,7 +61,7 @@ We share data only in these cases:
   - Google and GitHub, for sign-in, depending on which you choose
   - our hosting provider (currently Microsoft Azure), which stores the data and runs the server
   - Cloudflare, which provides the domain name service for `cognicoree.tech` and hosts the website at <https://cognicoree.tech>
-- **Sarvam AI (India), for synced sessions, when the server has it turned on.** To shorten long synced sessions, our server may send the summary part of a session's handoff to Sarvam AI to be rewritten. That's the goal, state, decisions, open tasks, facts and file paths, after secrets are redacted. It is not the transcript. The shorter version replaces it in your account, and every ID, version and path must still match the original. Sarvam's own privacy policy applies to that request. Sessions you save directly in claude.ai or another app are not sent.
+- **Sarvam AI (India), for synced sessions, when the server has it turned on.** To shorten long synced sessions, our server may send the summary part of a session's handoff to Sarvam AI to be rewritten. That's the goal, state, decisions, open tasks, facts and file paths, after secrets are redacted. It is not the transcript. The shorter version replaces it in your account, and every ID, version and path must still match the original. Sarvam's own privacy policy applies to that request. Sessions you save directly in claude.ai or another app are not sent. The request is sent over an encrypted (HTTPS) connection and obvious secrets such as keys and tokens are removed first; Sarvam receives the remaining text in readable form to produce the summary.
 - **Figma, when you ask.** If you sync a Figma file, the Figma access token you provide is sent to Figma for that request only. We do not store it.
 - **When required by law**, or to protect the service and its users from abuse.
 
