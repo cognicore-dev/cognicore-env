@@ -2,6 +2,10 @@
 
 CogniCore provides drop-in memory and reflection capabilities for the most popular agent frameworks.
 
+## Historical conversation example
+
+[chatgpt-history.json](chatgpt-history.json) is a synthetic export with three related DIPY conversations, including an old decision and a tool attachment reference. [Import the example and inspect its sources over local MCP](../docs/history.md#import-and-recall-an-old-conversation).
+
 ## LangChain Integration
 
 CogniCore integrates seamlessly with LangChain via the `CogniCoreCallbackHandler` (which automatically records your agent's LLM interactions) and a suite of `BaseTool` objects.

@@ -2,6 +2,10 @@
 
 CogniCore is a Python framework that adds **memory, reasoning, and safety** to AI agents.
 
+## Historical conversation ingestion
+
+The Retrospective Memory Engine uses the existing SQLite memory backend and FTS5 index in a private database. Its provenance tables associate messages with source conversations, imports, and extracted experiences. Source event times, record integrity, and operator-attested execution evidence are tracked independently. The local archive is outside normal session sync and live experience transfer. [Architecture and data model](history.md#architecture-assessment-and-design)
+
 ## 🛡️ Immune System (Safety)
 
 Automatically blocks prompt injection and jailbreak attempts.

@@ -1,5 +1,7 @@
 # Hosted MCP tool reference
 
+For consented historical archives, see the [opt-in local stdio history tools](history.md#local-mcp-example).
+
 The hosted server at `https://mcp.cognicoree.tech/mcp/stream` exposes 31 tools. This page lists
 what each one does, so you can tell before you call it whether it reads your data, changes it, or
 talks to a third-party service.

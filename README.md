@@ -52,6 +52,18 @@ cognicore project list
 
 Run `cognicore project suggestions` to review proposals captured during sessions and `cognicore project accept <id>` to add one to the file.
 
+## Import historical conversations
+
+Import a ChatGPT ZIP or JSON export to search original messages, reconstruct project decisions, and trace claimed outcomes back to their source. Historical records keep their original event times and live in a private local archive. [Retrospective Memory Engine tutorial](docs/history.md)
+
+```bash
+cognicore history import chatgpt-export.zip --consent --project DIPY
+cognicore history search "DIPY optimization" --project DIPY
+cognicore history timeline --project DIPY --kind decision
+```
+
+To sync your stored archive across devices, run `cognicore history sync enable --consent` once on the device holding it. Other devices with empty archives restore automatically after you sign in to the same account. [History sync setup](docs/history.md#sync-history-across-devices)
+
 ## Integrations
 
 | If you use | Setup | How memory is accessed |

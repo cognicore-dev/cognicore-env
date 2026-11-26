@@ -19,9 +19,10 @@ class SQLiteMemoryBackend(MemoryBackend):
     in-python cosine similarity for embeddings.
     """
 
-    def __init__(self, db_path: str, provider: Optional[EmbeddingProvider] = None):
+    def __init__(self, db_path: str, provider: Optional[EmbeddingProvider] = None, *, publish_events: bool = True):
         self.db_path = Path(db_path).expanduser()
         self.provider = provider
+        self.publish_events = publish_events
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -239,7 +240,8 @@ class SQLiteMemoryBackend(MemoryBackend):
 
         with self._get_conn() as conn:
             entry_id = self._insert(conn, entry, embedding_json)
-        event_bus.publish("on_store", entry=entry, entry_id=entry_id)
+        if self.publish_events:
+            event_bus.publish("on_store", entry=entry, entry_id=entry_id)
         return entry_id
 
     def store_many(self, entries: List[MemoryEntry]) -> List[str]:
@@ -257,13 +259,15 @@ class SQLiteMemoryBackend(MemoryBackend):
 
         with self._get_conn() as conn:
             ids = [self._insert(conn, e, emb) for e, emb in zip(entries, embeddings)]
-        for entry, entry_id in zip(entries, ids):
-            event_bus.publish("on_store", entry=entry, entry_id=entry_id)
+        if self.publish_events:
+            for entry, entry_id in zip(entries, ids):
+                event_bus.publish("on_store", entry=entry, entry_id=entry_id)
         return ids
 
-    def _insert(self, conn: sqlite3.Connection, entry: MemoryEntry, embedding_json: Optional[str]) -> str:
+    def _insert(self, conn: sqlite3.Connection, entry: MemoryEntry, embedding_json: Optional[str], *,
+                preserve_timestamp: bool = False) -> str:
         metadata_json = json.dumps(entry.metadata) if entry.metadata else None
-        timestamp = entry.timestamp or time.time()
+        timestamp = entry.timestamp if preserve_timestamp else entry.timestamp or time.time()
         last_accessed = entry.last_accessed or timestamp
 
         cursor = conn.execute("""
@@ -407,7 +411,8 @@ class SQLiteMemoryBackend(MemoryBackend):
 
                 results.sort(key=lambda x: x.score, reverse=True)
                 final_results = results[:top_k]
-                event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
+                if self.publish_events:
+                    event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
                 return final_results
 
             # Lexical / BM25 mode: FTS5 prefix search with full-corpus BM25 fallback
@@ -497,7 +502,8 @@ class SQLiteMemoryBackend(MemoryBackend):
             results = self._normalize_scores(results)
             results.sort(key=lambda x: x.score, reverse=True)
             final_results = results[:top_k]
-            event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
+            if self.publish_events:
+                event_bus.publish("on_search", query=query, top_k=top_k, results=final_results)
             return final_results
 
     # ------------------------------------------------------------------

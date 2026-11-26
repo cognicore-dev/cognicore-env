@@ -131,6 +131,10 @@ def create_app() -> "FastAPI":
         allow_headers=["*"],
     )
 
+    from cognicore.history.api import router as history_router
+
+    app.include_router(history_router)
+
     # ---- Routes ----
 
     @app.get("/")
