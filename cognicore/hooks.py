@@ -58,7 +58,9 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
         return ""  # the session already carries its own history
     from cognicore import project_context
     from cognicore.memory.context_preservation import project_key, resume_session
+    from cognicore.history.sync import schedule as schedule_history_sync
 
+    schedule_history_sync()
     backend = _backend()
     pointer = _pull_from_other_apps(backend, event["cwd"])
     curated = project_context.load(event["cwd"])  # read first: the source of truth when set
@@ -113,9 +115,11 @@ PUSH_EVERY = 60.0
 
 def _push_in_background(session_key: str, event_name: str = "") -> None:
     from cognicore import sync
+    from cognicore.history.sync import schedule as schedule_history_sync
 
     if not session_key or not sync.enabled():
         return
+    schedule_history_sync()
     if event_name == "Stop" and time.time() - float(sync.load_state().get("last_push") or 0) < PUSH_EVERY:
         return
     try:
