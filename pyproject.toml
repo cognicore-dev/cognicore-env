@@ -31,6 +31,7 @@ rl = ["gymnasium>=1.0", "stable-baselines3>=2.0", "torch>=2.0"]
 rendering = ["pygame>=2.5"]
 memory = ["sentence-transformers>=2.0", "chromadb>=0.4.0"]
 hf = ["huggingface-hub>=0.20"]
+docs = ["pypdf>=4"]
 llm = ["openai>=1.0", "google-genai>=0.1", "anthropic>=0.30"]
 embeddings = ["sentence-transformers>=2.0", "openai>=1.0"]
 server = ["fastapi>=0.110", "uvicorn>=0.27", "pydantic>=2.0", "PyJWT[crypto]>=2.8.0"]
@@ -59,9 +60,10 @@ dev = [
     "PyJWT[crypto]>=2.8.0",  # RS256 for Google ID tokens
     "mcp[cli]>=1.2.0,<2",
     "anthropic>=1.0",  # tests for optional AI compression (fake client, no network)
+    "pypdf>=4",  # document memory tests (the docs extra)
 ]
 all = [
-    "cognicore-env[rl,rendering,memory,hf,llm,embeddings,server,mcp,langchain,crewai,openai-agents,mem0,memory-providers,extension,dev]",
+    "cognicore-env[rl,rendering,memory,docs,hf,llm,embeddings,server,mcp,langchain,crewai,openai-agents,mem0,memory-providers,extension,dev]",
 ]
 
 [project.urls]
