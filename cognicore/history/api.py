@@ -2,7 +2,7 @@
 
 import os
 import secrets
-from tempfile import SpooledTemporaryFile
+from tempfile import TemporaryFile
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
@@ -46,7 +46,7 @@ async def import_history(request: Request, project: str = "", consent: bool = Fa
     }:
         raise HTTPException(415, "Supply ZIP or JSON archive bytes.")
     size = 0
-    with SpooledTemporaryFile(max_size=1024**2, mode="w+b") as source:
+    with TemporaryFile(mode="w+b") as source:
         async for chunk in request.stream():
             size += len(chunk)
             if size > UPLOAD_LIMIT:
