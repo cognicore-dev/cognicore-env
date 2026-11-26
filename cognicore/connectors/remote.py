@@ -447,8 +447,14 @@ def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str =
 
 
 @_tool("Search memory", _READ)
-def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "all", top_k: int = 5, conversation: Optional[list] = None) -> str:
-    """Search memory, including facts from saved sessions. Returns scored results sorted by relevance."""
+def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "all", top_k: int = 5,
+                     conversation: Optional[list] = None, mode: str = "") -> str:
+    """Search memory, including facts from saved sessions. Returns scored results sorted by relevance.
+
+    mode: "standard" (default) returns the best matching memories, with text repeated across
+    them shown once. "lean" returns only the matching passages with the turn before each,
+    using fewer tokens. "rich" returns twice as many whole memories, using more tokens.
+    """
     backend = get_backend(ctx)
     # Each user has their own database, so "all" only spans that user's memories:
     # remembered notes (scope user) and facts from saved or synced sessions
@@ -461,11 +467,14 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         except ValueError:
             return "Error: scope must be 'all', 'user' or 'project'."
 
-    # Same results as search, each piece of text once, never more tokens (see compact_recall).
+    if mode and mode.strip().lower() not in ("lean", "standard", "rich"):
+        return "Error: mode must be 'lean', 'standard' or 'rich'."
+    # Search results in the chosen recall mode (see compact_recall); standard is never worse than search.
     results = compact_search(
         backend,
         query,
         top_k=top_k,
+        mode=mode or None,
         category=category if category else None,
         scope=mem_scope
     )
