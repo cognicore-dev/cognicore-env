@@ -178,26 +178,41 @@ def _content_words(text: str) -> List[str]:
     return [w for w in _WORD.findall(text.lower()) if len(w) > 1 and w not in _STOP_WORDS]
 
 
-def _session_neighbours(backend, entry) -> Tuple[List[str], List[str]]:
-    """Turns of the memories saved just before and after *entry* in the same session."""
-    session = getattr(entry, "session_id", "") or ""
-    if session in ("", "default") or not hasattr(backend, "_get_conn"):
-        return [], []
-    try:
-        entry_id = int(entry.entry_id)
-    except (TypeError, ValueError):
-        return [], []
-    found = []
+_NEIGHBOUR_SQL = {
+    # op and order are fixed here, not from input; values are ? parameters
+    True: "SELECT text FROM memory_entries WHERE session_id = ? AND entry_id < ? "
+          "AND state NOT IN ('archived', 'deleted') ORDER BY entry_id DESC LIMIT 1",
+    False: "SELECT text FROM memory_entries WHERE session_id = ? AND entry_id > ? "
+           "AND state NOT IN ('archived', 'deleted') ORDER BY entry_id ASC LIMIT 1",
+}
+
+
+def _session_neighbours(backend, entries) -> dict:
+    """{entry_id: (turns of the memory saved just before, just after)} in the same session.
+
+    One connection for all entries; each lookup uses the (session_id, entry_id) index.
+    Only conversations continue across memories; entries without a session get nothing.
+    """
+    out = {}
+    wanted = []
+    for entry in entries:
+        session = getattr(entry, "session_id", "") or ""
+        try:
+            wanted.append((entry.entry_id, session, int(entry.entry_id)))
+        except (TypeError, ValueError):
+            continue
+    wanted = [w for w in wanted if w[1] not in ("", "default")]
+    if not wanted or not hasattr(backend, "_get_conn"):
+        return out
     with backend._get_conn() as conn:
-        for op, order in (("<", "DESC"), (">", "ASC")):
-            row = conn.execute(
-                # nosec B608 - op and order are fixed strings from this function; values are ? parameters
-                f"SELECT text FROM memory_entries WHERE session_id = ? AND entry_id {op} ? "  # nosec B608
-                f"AND state NOT IN ('archived', 'deleted') ORDER BY entry_id {order} LIMIT 1",
-                (session, entry_id)).fetchone()
-            pieces, sep = split_pieces(row[0]) if row and row[0] else ([], "")
-            found.append(pieces if sep == "\n" else [])  # only conversations continue across memories
-    return found[0], found[1]
+        for key, session, entry_id in wanted:
+            found = []
+            for before in (True, False):
+                row = conn.execute(_NEIGHBOUR_SQL[before], (session, entry_id)).fetchone()
+                pieces, sep = split_pieces(row[0]) if row and row[0] else ([], "")
+                found.append(pieces if sep == "\n" else [])
+            out[key] = (found[0], found[1])
+    return out
 
 
 def lean_results(backend, query: str, pool: Sequence[SearchResult], top_k: int,
@@ -211,13 +226,14 @@ def lean_results(backend, query: str, pool: Sequence[SearchResult], top_k: int,
 
     # A stream per candidate: [previous memory's turns] + its own pieces + [next memory's turns]
     streams = []  # (result, pieces, own range, separator)
-    for r in pool:
-        own, sep = split_pieces(r.entry.text)
+    split = [(r, *split_pieces(r.entry.text)) for r in pool]
+    neighbours = _session_neighbours(backend, [r.entry for r, _, sep in split if sep == "\n"])
+    for r, own, sep in split:
         before: List[str] = []
         after: List[str] = []
         if sep == "\n":
             mine = {_key(p) for p in own}
-            before, after = _session_neighbours(backend, r.entry)
+            before, after = neighbours.get(r.entry.entry_id, ([], []))
             before = [p for p in before if p.strip() and _key(p) not in mine]
             after = [p for p in after if p.strip() and _key(p) not in mine]
         streams.append((r, before + own, range(len(before), len(before) + len(own)), sep or "\n"))
