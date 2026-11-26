@@ -363,7 +363,9 @@ def create_mcp_server() -> "FastMCP":
         # Prefer semantic search when a query is provided
         if query:
             try:
-                hits = _runtime.memory.search(query, top_k=top_k, category=category if category else None)
+                from cognicore.memory.compact_recall import compact_search
+
+                hits = compact_search(_runtime.memory, query, top_k=top_k, category=category if category else None)
                 for hit in hits:
                     results.append((hit.score, hit.entry))
             except Exception as exc:  # noqa: BLE001
