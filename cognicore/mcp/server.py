@@ -157,6 +157,9 @@ LOCAL_TOOLSETS: Dict[str, List[str]] = {
     "reflection": ["cognicore_recall_failures", "cognicore_recall_successes", "cognicore_reflect"],
     "safety": ["cognicore_scan_threat"],
     "project": ["cognicore_project_propose"],  # curated project context, for agents with hooks too
+    # File cards reach agents through the startup brief at no per-turn cost; these tools (about 240
+    # tokens of definitions on every turn) are opt-in.
+    "files": ["cognicore_file_card", "cognicore_note_file"],
 }
 
 
@@ -734,6 +737,31 @@ def create_mcp_server(*, allow_history: bool = False) -> "FastMCP":
             return json.dumps({"queued": False, "reason": res["skipped"]})
         return json.dumps({"queued": True, "number": res["n"], "item": project_suggest.describe(res),
                            "accept_with": f"cognicore project accept {res['n']}"})
+
+    @mcp.tool()
+    def cognicore_file_card(path: str, cwd: str = "") -> str:
+        """A project file's card: line count, outline (names with line numbers), the note agents left on it,
+        how many sessions used it, and whether it changed since the last session. Built from the file on disk.
+
+        path: the file, relative to the project or absolute. cwd: the project folder (default: the server's)."""
+        from cognicore import file_cards
+        from cognicore.hooks import _backend
+
+        found = file_cards.card(_backend(), cwd or os.getcwd(), path)
+        return json.dumps(found if found else {"error": "No card: the file is missing, outside the project, "
+                                                          "binary, larger than 2 MB or secret-looking."})
+
+    @mcp.tool()
+    def cognicore_note_file(path: str, note: str, cwd: str = "") -> str:
+        """Stores a one-line note (up to 300 characters) on a project file's card, shown with the file in later
+        sessions. Secrets in the note are redacted.
+
+        path: the file, relative to the project or absolute. cwd: the project folder (default: the server's)."""
+        from cognicore import file_cards
+        from cognicore.hooks import _backend
+
+        stored = file_cards.set_note(_backend(), cwd or os.getcwd(), path, note)
+        return json.dumps({"stored": stored} if stored is not None else {"error": "No card for that file."})
 
     # e.g. COGNICORE_TOOLSETS=memory,session for a memory-only agent. Default: all tools.
     toolsets = LOCAL_TOOLSETS
