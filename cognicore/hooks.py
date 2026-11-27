@@ -89,8 +89,21 @@ def session_start(event: dict, agent: str = "claude-code") -> str:
             brief = f"{body}\n\n=== END CONTEXT | {tokens} tokens ==="
     else:
         brief = project_context.standalone_brief(curated)
-    context = "\n\n".join(part for part in (brief, pointer) if part)
+    files = _file_cards_block(backend, event["cwd"], budget, brief) if known else ""
+    context = "\n\n".join(part for part in (brief, files, pointer) if part)
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})
+
+
+def _file_cards_block(backend, cwd: str, budget: int, brief: str) -> str:
+    """Most used files and their outlines, in the room the brief's token budget has left."""
+    try:
+        from cognicore import file_cards
+        from cognicore.memory.context_preservation import TokenBudget
+
+        room = budget - TokenBudget.estimate_tokens(brief) - 2  # 2: the blank line joining them
+        return file_cards.brief_block(backend, cwd, min(room, file_cards.BRIEF_TOKENS))
+    except Exception:
+        return ""
 
 
 def _pull_from_other_apps(backend, cwd: str) -> str:
@@ -166,6 +179,12 @@ def save(event: dict, agent: str = "claude-code") -> str:
     ))
     if not res.get("deduplicated") and not res.get("error"):
         _push_in_background(session_key, str(event.get("hook_event_name") or ""))
+    try:  # file cards: never let them break a save
+        from cognicore import file_cards
+
+        file_cards.capture(backend, transcript, project or cwd, session_key)
+    except Exception:
+        pass
     suggested = "" if res.get("deduplicated") else _suggest(backend, res, conversation, cwd, agent, session_key)
     return _join_messages(suggested, clear_hint(transcript, session_key))
 

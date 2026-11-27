@@ -202,7 +202,7 @@ def test_mcp_tool_proposes_but_cannot_accept(repo, monkeypatch):
     monkeypatch.setenv("COGNICORE_TOOLSETS", "search,project")
     server = create_server()
     tools = server._tool_manager._tools
-    assert set(tools) == {"cognicore_recall", "cognicore_project_propose"}
+    assert set(tools) == {"cognicore_recall", "cognicore_project_propose"}  # file card tools are opt-in
     out = json.loads(tools["cognicore_project_propose"].fn(kind="rule", text="Never commit .env files", cwd=str(repo)))
     assert out == {"queued": True, "number": 1, "item": "Rule: Never commit .env files",
                    "accept_with": "cognicore project accept 1"}

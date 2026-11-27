@@ -71,6 +71,8 @@ def test_mcp_tool_registration(monkeypatch, tmp_path):
 
     assert names == [
         "cognicore_compress_context",
+        "cognicore_file_card",
+        "cognicore_note_file",
         "cognicore_project_propose",
         "cognicore_recall",
         "cognicore_recall_failures",
