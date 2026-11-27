@@ -40,6 +40,7 @@ cloudflared.exe
 !.claude-plugin/*.json
 !plugins/**/*.json
 !tests/fixtures/**/*.json
+!benchmarks/search/*.json
 !examples/chatgpt-history.json
 !.vscode/mcp.json
 !.cursor/mcp.json

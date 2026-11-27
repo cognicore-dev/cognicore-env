@@ -246,6 +246,7 @@ from cognicore.memory import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
 from cognicore.memory.categorize import auto_categorize
 from cognicore.memory.brief_filters import agent_in_query, iso_day
+from cognicore.memory.compact_recall import compact_search
 from cognicore.memory.recall_extras import agent_sessions, literal_hits, memory_counts
 from cognicore.memory.context_preservation import (
     TokenBudget,
@@ -460,8 +461,10 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         except ValueError:
             return "Error: scope must be 'all', 'user' or 'project'."
 
-    results = backend.search(
-        query=query,
+    # Same results as search, each piece of text once, never more tokens (see compact_recall).
+    results = compact_search(
+        backend,
+        query,
         top_k=top_k,
         category=category if category else None,
         scope=mem_scope
