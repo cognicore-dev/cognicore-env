@@ -130,10 +130,12 @@ def use_link_token(oauth_server, token: str, used_db: Optional[str] = None) -> O
         return None
     if used_db is None:
         return claims if oauth_server._consume(claims["jti"], claims["exp"]) else None
+    import contextlib
     import sqlite3
     import time
 
-    with sqlite3.connect(used_db) as conn:
+    # closing(): the connection is released after each upload; timeout: concurrent uploads wait instead of failing.
+    with contextlib.closing(sqlite3.connect(used_db, timeout=10)) as db, db as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS used_upload_links (jti TEXT PRIMARY KEY, exp REAL NOT NULL)")
         conn.execute("DELETE FROM used_upload_links WHERE exp < ?", (time.time(),))
         try:
