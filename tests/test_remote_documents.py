@@ -94,7 +94,7 @@ def test_too_large_keeps_the_link_and_bad_files_are_explained(client, monkeypatc
     monkeypatch.setattr(docs, "MAX_BYTES", 10)
     assert _put(client, token).status_code == 413
     monkeypatch.setattr(docs, "MAX_BYTES", 25 * 1024 * 1024)
-    bad = _put(client, token, data=b"\x89PNG\r\n", name="photo.png")  # now the link is used
+    bad = _put(client, token, data=b"PK\x03\x04 zip", name="archive.zip")  # now the link is used
     assert bad.status_code == 400 and "unsupported" in bad.json()["detail"]
 
 

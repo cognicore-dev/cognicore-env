@@ -12,3 +12,7 @@ PyJWT
 cryptography
 httpx
 pypdf
+# Images in document memory: OCR (always available) and Claude vision (only when enabled)
+rapidocr
+onnxruntime
+anthropic

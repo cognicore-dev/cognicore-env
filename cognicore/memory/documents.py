@@ -1,6 +1,6 @@
 """Document memory: add a file once, recall only the parts that answer a question.
 
-A document (PDF, plain text or Markdown) is split into sections of about SECTION_TOKENS
+A document (PDF, image, plain text or Markdown) is split into sections of about SECTION_TOKENS
 tokens, never across pages, and each section is stored as a memory:
 
     text       "page <n>:\\n<section text>"     (text files: "part <n>:")
@@ -14,8 +14,10 @@ because search indexes the text: a file name repeated in every section would mak
 section match its words. Adding the same file again adds nothing
 (same doc_id, from the content's SHA-256). Removing a document deletes all its sections.
 
-PDF support needs ``pypdf`` (pip install cognicore-env[docs]). Scanned PDFs and images have
-no extractable text; they are refused with a clear message rather than stored empty.
+PDF support needs ``pypdf`` (pip install cognicore-env[docs]). Images, and PDF pages without a
+text layer (scans), are read by ``cognicore.memory.image_readers``: OCR by default
+(pip install cognicore-env[ocr]), a vision model when the operator enables one. A file with
+nothing readable is refused with a clear message rather than stored empty.
 """
 
 import hashlib
@@ -37,6 +39,9 @@ CATEGORY = "document"  # stored as "document:<name>"
 SOURCE = "documents"
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".text"}
 PDF_SUFFIXES = {".pdf"}
+# PDF pages with less text than this are treated as scanned: their images go through OCR.
+SCANNED_PAGE_TEXT = 20
+MAX_OCR_PAGES = 100  # about 2 s per page
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _BLANK_LINES = re.compile(r"\n\s*\n")
@@ -65,12 +70,39 @@ def read_pages(data: bytes, name: str) -> List[Tuple[Optional[int], str]]:
     """(page number or None, text) for each page of the document *data* named *name*."""
     if len(data) > MAX_BYTES:
         raise DocumentError(f"{name} is {len(data) // (1024 * 1024)} MB; the limit is {MAX_BYTES // (1024 * 1024)} MB.")
+    from cognicore.memory import image_readers
+
     suffix = Path(name).suffix.lower()
     if suffix in TEXT_SUFFIXES:
         return [(None, data.decode("utf-8", errors="replace"))]
     if suffix in PDF_SUFFIXES or data[:5] == b"%PDF-":
         return _pdf_pages(data, name)
-    raise DocumentError(f"{name}: unsupported file type. Supported: PDF, .txt, .md.")
+    if image_readers.is_image(data, name):
+        return [(None, image_readers.read_image(data, name).text)]
+    raise DocumentError(f"{name}: unsupported file type. Supported: PDF, images, .txt, .md.")
+
+
+def _ocr_scanned_pages(reader, pages: List[Tuple[Optional[int], str]]) -> List[Tuple[Optional[int], str]]:
+    """Replace the text of pages without a text layer by OCR of their images, when OCR is available."""
+    from cognicore.memory.image_readers import OcrReader
+
+    ocr = OcrReader()
+    scanned = [i for i, (_, text) in enumerate(pages) if len(text.strip()) < SCANNED_PAGE_TEXT]
+    if not scanned or not ocr.available():
+        return pages
+    pages = list(pages)
+    for i in scanned[:MAX_OCR_PAGES]:
+        texts = []
+        try:
+            for image in reader.pages[i].images:
+                text = ocr.read(image.data)
+                if text:
+                    texts.append(text)
+        except Exception:  # an unreadable embedded image leaves the page as it was
+            continue
+        if texts:
+            pages[i] = (pages[i][0], "\n".join(texts))
+    return pages
 
 
 def _pdf_pages(data: bytes, name: str) -> List[Tuple[Optional[int], str]]:
@@ -84,7 +116,8 @@ def _pdf_pages(data: bytes, name: str) -> List[Tuple[Optional[int], str]]:
             raise DocumentError(f"{name} is password protected.")
         if len(reader.pages) > MAX_PAGES:
             raise DocumentError(f"{name} has {len(reader.pages)} pages; the limit is {MAX_PAGES}.")
-        return [(i + 1, page.extract_text() or "") for i, page in enumerate(reader.pages)]
+        pages = [(i + 1, page.extract_text() or "") for i, page in enumerate(reader.pages)]
+        return _ocr_scanned_pages(reader, pages)
     except DocumentError:
         raise
     except Exception as e:  # pypdf raises many types on damaged files
@@ -182,8 +215,8 @@ def add_document(backend, data: bytes, name: str, replace: bool = False) -> Adde
     pages = read_pages(data, name)
     sections = split_sections(pages)
     if not sections:
-        raise DocumentError(f"{name} has no text to store. Scanned PDFs and images need text recognition, "
-                            "which is not supported yet.")
+        raise DocumentError(f"{name} has no text to store. Scanned pages need OCR: "
+                            "pip install cognicore-env[ocr].")
     if len(sections) > MAX_SECTIONS:
         raise DocumentError(f"{name} splits into {len(sections)} sections; the limit is {MAX_SECTIONS}.")
     if existing:
@@ -247,7 +280,7 @@ USAGE = """usage: cognicore docs add FILE [FILE ...] [--replace]
        cognicore docs list
        cognicore docs remove DOC_ID
 
-Adds documents (PDF, .txt, .md) to your local CogniCore memory, which Claude Code, Codex and
+Adds documents (PDF, images, .txt, .md) to your local CogniCore memory, which Claude Code, Codex and
 the local MCP server recall from. Only the sections that match a question are recalled."""
 
 

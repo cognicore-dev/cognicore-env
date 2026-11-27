@@ -545,7 +545,7 @@ def _public_base(ctx) -> str:
 
 @_tool("Add a document", _WRITE, meta={"openai/fileParams": ["file"]})
 def cognicore_add_document(ctx: Context, file: Optional[dict] = None) -> str:
-    """Add a document (PDF, .txt or .md, up to 25 MB) to memory, split into sections that memory search returns.
+    """Add a document (PDF, image, .txt or .md, up to 25 MB) to memory, split into sections that memory search returns.
 
     With a file attached, that file is added. Without one, returns a single-use link, valid for
     15 minutes, to a page where the file can be uploaded from a browser.
