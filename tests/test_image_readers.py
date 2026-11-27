@@ -232,3 +232,47 @@ def test_tesseract_is_run_without_temporary_files(monkeypatch):
     monkeypatch.setattr(subprocess, "run", slow_run)
     with pytest.raises(ir.ImageError, match="longer than 60 seconds"):
         ir.OcrReader().read(b"img")
+
+
+# --- image size from the header, without Pillow ------------------------------------------------
+
+@pytest.mark.parametrize("fmt,kwargs", [
+    ("PNG", {}), ("JPEG", {}), ("JPEG", {"progressive": True}), ("GIF", {}), ("BMP", {}),
+    ("WEBP", {"lossless": False}), ("WEBP", {"lossless": True}), ("TIFF", {}), ("TIFF", {"compression": "tiff_lzw"}),
+])
+def test_image_size_matches_pillow(fmt, kwargs):
+    for size in ((900, 200), (17, 3001), (4000, 1)):
+        img = Image.new("RGB", size, "white")
+        out = io.BytesIO()
+        img.save(out, fmt, **kwargs)
+        assert ir.image_size(out.getvalue()) == size, (fmt, kwargs, size)
+
+
+def test_big_endian_tiff_and_extended_webp():
+    img = Image.new("RGBA", (321, 123), (0, 0, 0, 0))
+    out = io.BytesIO()
+    img.save(out, "WEBP", lossless=False)  # alpha makes Pillow write the extended (VP8X) form
+    assert ir.image_size(out.getvalue()) == (321, 123)
+    # a minimal big-endian TIFF header with ImageWidth (SHORT) and ImageLength (LONG)
+    def be(value, size):
+        return value.to_bytes(size, "big")
+
+    tiff = (b"MM\x00*" + be(8, 4) + be(2, 2)
+            + be(256, 2) + be(3, 2) + be(1, 4) + be(640, 2) + b"\0\0"
+            + be(257, 2) + be(4, 2) + be(1, 4) + be(480, 4))
+    assert ir.image_size(tiff) == (640, 480)
+
+
+@pytest.mark.parametrize("data", [
+    b"", b"\x89PNG", b"GIF8", b"\xff\xd8\xff\xe0\x00", b"RIFF\0\0\0\0WEBPABCD", b"II*\x00",
+])
+def test_truncated_headers_give_no_size(data):
+    assert ir.image_size(data) is None
+
+
+def test_vision_skips_bmp_without_pillow(monkeypatch):
+    monkeypatch.setenv("COGNICORE_VISION_PROVIDER", "anthropic")
+    monkeypatch.setattr(ir, "_as_png", lambda data: None)
+    client = FakeClaude()
+    assert ir.AnthropicVisionReader(client=client).read(png(fmt="BMP")) == ""
+    assert client.calls == []

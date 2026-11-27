@@ -29,7 +29,7 @@ import base64
 import io
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from cognicore.memory.documents import DocumentError
 
@@ -171,7 +171,10 @@ class AnthropicVisionReader(ImageReader):
     def read(self, data: bytes) -> str:
         kind = media_type(data) or "image/png"
         if kind not in ("image/png", "image/jpeg", "image/gif", "image/webp"):
-            data, kind = _as_png(data), "image/png"
+            converted = _as_png(data)
+            if converted is None:
+                return ""  # BMP or TIFF without Pillow: OCR still reads it; no description
+            data, kind = converted, "image/png"
         request = {
             "model": os.environ.get("COGNICORE_VISION_MODEL", DEFAULT_VISION_MODEL),
             "max_tokens": 1024,
@@ -195,26 +198,87 @@ class AnthropicVisionReader(ImageReader):
         return "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
 
 
-def _as_png(data: bytes) -> bytes:
-    from PIL import Image
-
+def _as_png(data: bytes) -> Optional[bytes]:
+    """PNG bytes for a BMP or TIFF (for the vision API), or None when Pillow is not installed."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
     out = io.BytesIO()
     with Image.open(io.BytesIO(data)) as img:
         img.convert("RGB").save(out, "PNG")
     return out.getvalue()
 
 
+def _u16(b: bytes, big: bool) -> int:
+    return int.from_bytes(b[:2], "big" if big else "little")
+
+
+def _u32(b: bytes, big: bool) -> int:
+    return int.from_bytes(b[:4], "big" if big else "little")
+
+
+def image_size(data: bytes) -> Optional[Tuple[int, int]]:
+    """(width, height) read from the file header, without decoding the image, or None.
+
+    Covers PNG, GIF, BMP, WebP, JPEG and TIFF, the formats the readers accept.
+    """
+    try:
+        if data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
+            return _u32(data[16:], True), _u32(data[20:], True)
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            return _u16(data[6:], False), _u16(data[8:], False)
+        if data.startswith(b"BM"):
+            return abs(int.from_bytes(data[18:22], "little", signed=True)), \
+                abs(int.from_bytes(data[22:26], "little", signed=True))
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8 ":
+                return _u16(data[26:], False) & 0x3FFF, _u16(data[28:], False) & 0x3FFF
+            if chunk == b"VP8L":
+                bits = _u32(data[21:], False)
+                return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+            if chunk == b"VP8X":
+                return int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1
+            return None
+        if data.startswith(b"\xff\xd8"):
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = data[i + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:  # markers without a length
+                    i += 2
+                    continue
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):  # start of frame
+                    return _u16(data[i + 7:], True), _u16(data[i + 5:], True)
+                i += 2 + _u16(data[i + 2:], True)
+            return None
+        if data[:4] in (b"II*\x00", b"MM\x00*"):
+            big = data[:2] == b"MM"
+            ifd = _u32(data[4:], big)
+            width = height = None
+            for n in range(_u16(data[ifd:], big)):
+                entry = data[ifd + 2 + 12 * n: ifd + 14 + 12 * n]
+                tag, kind = _u16(entry, big), _u16(entry[2:], big)
+                value = _u16(entry[8:], big) if kind == 3 else _u32(entry[8:], big)
+                if tag == 256:
+                    width = value
+                elif tag == 257:
+                    height = value
+            return (width, height) if width and height else None
+    except (IndexError, ValueError):
+        return None
+    return None
+
+
 def check_size(data: bytes, name: str) -> None:
     """Refuse images too large to decode safely, before any reader decodes them."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return  # readers that need Pillow are unavailable too
-    try:
-        with Image.open(io.BytesIO(data)) as img:
-            w, h = img.size
-    except Exception as e:
-        raise ImageError(f"{name} could not be read as an image ({type(e).__name__}).") from e
+    size = image_size(data)
+    if size is None:
+        raise ImageError(f"{name} could not be read as an image.")
+    w, h = size
     if w * h > MAX_PIXELS:
         raise ImageError(f"{name} is {w}x{h} pixels; the limit is {MAX_PIXELS // 1_000_000} million pixels.")
 
