@@ -29,6 +29,17 @@ No user database or Supabase project is involved.
 | `/health` | Health check for the platform. |
 | `PUT /sync/sessions`, `GET /sync/sessions?since=` | Session sync for `cognicore login` on local machines (`cognicore/sync.py`). The same bearer tokens as MCP; a handoff is at most 512 KB, and a newer revision always wins. |
 
+## Team memory
+
+A shared memory that a team's members read and write from any of their AI apps (`cognicore/connectors/teams.py`). The tools are in the opt-in `teams` toolset: list it in `COGNICORE_TOOLSETS` (or set `all`) to offer them, since every tool's definition costs every user tokens on every turn.
+
+- `cognicore_team`: share facts to a team (owners and editors; secrets are redacted first), create a team, create a single-use invite code (owners; valid 7 days, stored hashed), join with a code, list teams and members, change roles (owners), read the audit log.
+- `cognicore_team_remove`: leave, remove a member (owners), or delete the team with its shared memory, members, invites and log (owners).
+- `cognicore_recall` searches the user's teams too and labels those results with the team and who shared them; personal and team results share one `top_k`, so recall returns no more results than before. `cognicore_forget("team:<team>:<id>")` deletes a team memory (owners any, editors their own).
+- `cognicore_remember`, `cognicore_recall` and `cognicore_forget` keep their signatures and descriptions, so people who do not use teams pay no extra tokens; recall output for them is unchanged.
+
+Roles: owner, editor, viewer. Each team's memory is its own database (`team_<hash>.db`); the registry of teams, members, invites and the audit log is `teams.db`, both under `$COGNICORE_DATA_DIR/remote`. Every operation takes the signed-in user from the request and checks membership; a team the user is not in is reported as not found. Limits: 20 teams created per user, 50 members per team, 20 unused invites per team.
+
 ## Environment variables
 
 | Variable | Required | Value |
@@ -42,6 +53,7 @@ No user database or Supabase project is involved.
 | `COGNICORE_DATA_DIR` | Set by the Dockerfile | `/data/cognicore`. Memories go to `$COGNICORE_DATA_DIR/remote`, so mount a persistent volume at `/data`. |
 | `COGNICORE_USE_SEMANTIC` | No | `0` to skip loading sentence-transformers. |
 | `COGNICORE_EXTRA_REDIRECT_URIS` | No | Comma-separated extra OAuth redirect URIs accepted at `/register`, on top of Claude's callbacks and RFC 8252 loopback. Add one per MCP client that needs to register dynamically — e.g. `https://connect.smithery.ai/oauth/callback` for Smithery. |
+| `COGNICORE_TOOLSETS` | No | Comma-separated tool groups to offer (`memory`, `session`, `experience`, `commerce`, `figma`, `elevenlabs`, `teams`) or `all`. Default: every group except the opt-in `teams`. |
 | `COGNICORE_RATE_LIMIT_USER` | No | Requests per minute per signed-in user. Default `120`; `0` turns it off. |
 | `COGNICORE_RATE_LIMIT_IP` | No | Requests per minute per IP address for requests without a valid token (sign-in steps, scans). Default `120`; `0` turns it off. Signed-in users are never limited per IP, because Claude and ChatGPT share IP ranges. |
 
