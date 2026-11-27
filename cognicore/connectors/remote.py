@@ -76,11 +76,17 @@ _EXTERNAL_WRITE = dict(readOnlyHint=False, destructiveHint=False, openWorldHint=
 _TOOL_ACCEPTS_ANNOTATIONS = {"title", "annotations"} <= set(_inspect.signature(mcp.tool).parameters)
 
 
-def _tool(title: str, hints: dict, **extra):
-    """``@mcp.tool()`` with a title and annotations, on any supported mcp version."""
+_TOOL_ACCEPTS_META = "meta" in set(_inspect.signature(mcp.tool).parameters)
+
+
+def _tool(title: str, hints: dict, meta: Optional[dict] = None, **extra):
+    """``@mcp.tool()`` with a title and annotations (and _meta, when given), on any supported mcp version."""
     if not _TOOL_ACCEPTS_ANNOTATIONS or _ToolAnnotations is None:
         return mcp.tool()
-    return mcp.tool(title=title, annotations=_ToolAnnotations(title=title, **hints, **extra))
+    kwargs = {"title": title, "annotations": _ToolAnnotations(title=title, **hints, **extra)}
+    if meta and _TOOL_ACCEPTS_META:
+        kwargs["meta"] = meta
+    return mcp.tool(**kwargs)
 
 
 
@@ -246,6 +252,7 @@ from cognicore.memory import MemoryEntry, MemoryScope
 from cognicore.memory.decompose import decompose
 from cognicore.memory.categorize import auto_categorize
 from cognicore.memory.brief_filters import agent_in_query, iso_day
+from cognicore.memory.compact_recall import compact_search
 from cognicore.memory.recall_extras import agent_sessions, literal_hits, memory_counts
 from cognicore.memory.context_preservation import (
     TokenBudget,
@@ -459,8 +466,14 @@ def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str =
 
 
 @_tool("Search memory", _READ)
-def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "all", top_k: int = 5, conversation: Optional[list] = None) -> str:
-    """Search memory, including facts from saved sessions. Returns scored results sorted by relevance."""
+def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = "all", top_k: int = 5,
+                     conversation: Optional[list] = None, mode: str = "") -> str:
+    """Search memory, including facts from saved sessions. Returns scored results sorted by relevance.
+
+    mode: "standard" (default) returns the best matching memories, with text repeated across
+    them shown once. "lean" returns only the matching passages with the turn before each,
+    using fewer tokens. "rich" returns twice as many whole memories, using more tokens.
+    """
     backend = get_backend(ctx)
     # Each user has their own database, so "all" only spans that user's memories:
     # remembered notes (scope user) and facts from saved or synced sessions
@@ -473,9 +486,14 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         except ValueError:
             return "Error: scope must be 'all', 'user' or 'project'."
 
-    results = backend.search(
-        query=query,
+    if mode and mode.strip().lower() not in ("lean", "standard", "rich"):
+        return "Error: mode must be 'lean', 'standard' or 'rich'."
+    # Search results in the chosen recall mode (see compact_recall); standard is never worse than search.
+    results = compact_search(
+        backend,
+        query,
         top_k=top_k,
+        mode=mode or None,
         category=category if category else None,
         scope=mem_scope
     )
@@ -609,6 +627,138 @@ def cognicore_team_remove(team: str, ctx: Context, member: str = "", delete_team
         return f"Left {name}." if not member or member == user else f"Removed {member} from {name}."
     except TeamError as e:
         return f"Error: {e}"
+
+
+# --- documents ---------------------------------------------------------------------------------
+
+MAX_DOCUMENTS = int(os.environ.get("COGNICORE_MAX_DOCUMENTS", "100"))
+
+
+def _add_document_to(backend, data: bytes, name: str):
+    """Add a document to *backend* within the per-account document limit; returns AddedDocument."""
+    from cognicore.memory import documents as _docs
+
+    if len(_docs.list_documents(backend)) >= MAX_DOCUMENTS:
+        raise _docs.DocumentError(f"This account already has {MAX_DOCUMENTS} documents; remove one first.")
+    return _docs.add_document(backend, data, name)
+
+
+def _describe_added(d) -> str:
+    if d.already_present:
+        return f"{d.name} was already in memory ({d.sections} sections, id {d.doc_id})."
+    pages = f" from {d.pages} pages" if d.pages > 1 else ""
+    return f"Added {d.name}: {d.sections} sections{pages}, id {d.doc_id}."
+
+
+# Documents whose OCR would take long (scanned PDFs) are read in the background, one at a time
+# by default, so a tool call or upload returns at once and OCR cannot take over the server's CPU.
+INLINE_OCR_PAGES = int(os.environ.get("COGNICORE_INLINE_OCR_PAGES", "2"))
+MAX_PENDING_DOCUMENTS = 3
+_document_workers = None
+
+
+def _document_pool():
+    global _document_workers
+    if _document_workers is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        _document_workers = ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("COGNICORE_OCR_WORKERS", "1"))),
+                                               thread_name_prefix="cognicore-ocr")
+    return _document_workers
+
+
+def _add_or_queue(backend, data: bytes, name: str) -> dict:
+    """Add the document now, or, when it needs OCR on more than INLINE_OCR_PAGES pages, queue it.
+
+    Returns {"message", "queued"} plus, when added now, the AddedDocument's fields."""
+    from cognicore.memory import documents as _docs
+
+    pages = _docs.ocr_pages_needed(data, name)
+    if pages <= INLINE_OCR_PAGES:
+        d = _add_document_to(backend, data, name)
+        return {"message": _describe_added(d), "queued": False, "doc_id": d.doc_id, "name": d.name,
+                "sections": d.sections, "pages": d.pages, "already_present": d.already_present}
+    if sum(1 for j in _docs.list_jobs(backend) if j["status"] == "processing") >= MAX_PENDING_DOCUMENTS:
+        raise _docs.DocumentError(f"{MAX_PENDING_DOCUMENTS} documents are already being read; "
+                                  "add this one when one of them is done.")
+    if len(_docs.list_documents(backend)) >= MAX_DOCUMENTS:
+        raise _docs.DocumentError(f"This account already has {MAX_DOCUMENTS} documents; remove one first.")
+    job = _docs.start_job(backend, name)
+
+    def work():
+        try:
+            d = _add_document_to(backend, data, name)
+            _docs.finish_job(backend, job, "done", _describe_added(d))
+        except _docs.DocumentError as e:
+            _docs.finish_job(backend, job, "failed", str(e))
+        except Exception as e:  # never leave a job "processing" forever
+            _docs.finish_job(backend, job, "failed", f"unexpected error ({type(e).__name__})")
+
+    _document_pool().submit(work)
+    minutes = max(1, round(pages * _docs.OCR_SECONDS_PER_PAGE / 60))
+    return {"message": f"Reading {pages} scanned pages of {os.path.basename(name)} in the background "
+                       f"(about {minutes} min). It appears in the document list when it is ready.",
+            "queued": True, "name": os.path.basename(name)}
+
+
+def _public_base(ctx) -> str:
+    configured = os.environ.get("COGNICORE_PUBLIC_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    request = getattr(getattr(ctx, "request_context", None), "request", None)
+    try:
+        return _oauth.base_url(request)
+    except Exception:
+        return ""
+
+
+@_tool("Add a document", _WRITE, meta={"openai/fileParams": ["file"]})
+def cognicore_add_document(ctx: Context, file: Optional[dict] = None) -> str:
+    """Add a document (PDF, image, .txt or .md, up to 25 MB) to memory, split into sections that memory search returns.
+
+    With a file attached, that file is added. Without one, returns a single-use link, valid for
+    15 minutes, to a page where the file can be uploaded from a browser.
+    """
+    from cognicore.connectors import document_upload as _up
+    from cognicore.memory.documents import DocumentError
+
+    user = _authenticated_user(ctx)
+    if file:
+        try:
+            data, name = _up.fetch_attached_file(file)
+            return _add_or_queue(get_backend(ctx), data, name)["message"]
+        except DocumentError as e:
+            return f"Error: {e}"
+    if not user:
+        return "Upload links are available on the hosted server. Locally, add files with: cognicore docs add <file>"
+    base = _public_base(ctx)
+    if not base:
+        return "Error: this server cannot tell its public address; set COGNICORE_PUBLIC_URL."
+    link = _up.link_for(base, _up.make_link_token(oauth_server, user))
+    return (f"Upload link (works once, expires in 15 minutes): {link}\n"
+            "Open it in a browser and choose the file. It adds the document to this account only.")
+
+
+@_tool("List documents", _READ)
+def cognicore_list_documents(ctx: Context) -> str:
+    """List the documents in memory (id, name, sections and pages) and any still being read or that failed."""
+    from cognicore.memory import documents as _docs
+
+    backend = get_backend(ctx)
+    lines = [f"Being read: {j['name']}" if j["status"] == "processing" else f"Failed: {j['name']}: {j['detail']}"
+             for j in _docs.list_jobs(backend) if j["status"] != "done"]
+    lines += [f"{r['doc_id']}  {r['name']}  ({r['sections']} sections"
+              + (f", {r['pages']} pages)" if r["pages"] else ")") for r in _docs.list_documents(backend)]
+    return "\n".join(lines) if lines else "No documents in memory."
+
+
+@_tool("Remove a document", _DELETE)
+def cognicore_remove_document(doc_id: str, ctx: Context) -> str:
+    """Remove a document and all of its sections from memory, by its id."""
+    from cognicore.memory import documents as _docs
+
+    removed = _docs.remove_document(get_backend(ctx), (doc_id or "").strip())
+    return f"Removed {removed} sections." if removed else "Not found"
 
 
 @_tool("List memories", _READ)
@@ -1870,6 +2020,58 @@ def _summarize_synced(backend: Any, external_id: str, handoff: Dict[str, Any], r
     return outcome if res.get("status") == "updated" else f"{outcome}, not stored: {res}"
 
 
+# One-time document upload links (see cognicore.connectors.document_upload). The token is in the
+# link's #fragment and arrives only in a header, so it never appears in a URL the server logs.
+_UPLOAD_PAGE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                               "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+}
+
+
+@app.get("/documents/upload")
+def document_upload_page():
+    """The page a one-time upload link opens."""
+    from fastapi.responses import HTMLResponse
+
+    from cognicore.connectors.document_upload import upload_page
+
+    return HTMLResponse(upload_page(), headers=_UPLOAD_PAGE_HEADERS)
+
+
+@app.put("/documents/upload")
+async def document_upload(request: Request, name: str = ""):
+    """Add the request body as a document to the account named by a one-time upload token."""
+    import asyncio
+
+    from cognicore.connectors import document_upload as _up
+    from cognicore.memory.documents import MAX_BYTES, DocumentError
+
+    token = request.headers.get(_up.UPLOAD_HEADER, "")
+    if not _up.check_link_token(oauth_server, token):
+        raise HTTPException(status_code=401, detail="This upload link has expired or is not valid. Ask for a new one.")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > MAX_BYTES:
+            raise HTTPException(status_code=413, detail=f"The file is larger than {MAX_BYTES // (1024 * 1024)} MB.")
+    # After the body is read, so a too-large file keeps the link. Used links are recorded on disk:
+    # a link stays used across restarts.
+    claims = _up.use_link_token(oauth_server, token, used_db=str(_data_dir() / "upload_links.db"))
+    if not claims:
+        raise HTTPException(status_code=401, detail="This upload link was already used. Ask for a new one.")
+    from cognicore.memory import SQLiteMemoryBackend
+
+    backend = SQLiteMemoryBackend(get_db_path_for_user(claims["sub"]), provider=_get_shared_provider())
+    try:
+        body = await asyncio.to_thread(_add_or_queue, backend, bytes(data), name or "document")
+    except DocumentError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/sync/sessions")
 def sync_pull(request: Request, since: float = 0.0, limit: int = 50):
     """Sessions saved since ``since`` (oldest first), each with its handoff and revision."""
@@ -2281,6 +2483,9 @@ TOOLSETS = {
     "memory": ["cognicore_remember", "cognicore_recall", "cognicore_forget", "cognicore_list", "cognicore_stats"],
     "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
     "teams": ["cognicore_team", "cognicore_team_remove"],
+
+
+    "documents": ["cognicore_add_document", "cognicore_list_documents", "cognicore_remove_document"],
     "experience": ["cognicore_record_experience", "cognicore_verify_experience", "cognicore_recall_experience",
                    "cognicore_share_experience", "cognicore_check_experience"],
     "commerce": ["cognicore_list_for_sale", "cognicore_purchase_memory", "cognicore_value_my_memory",

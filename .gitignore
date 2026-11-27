@@ -40,6 +40,8 @@ cloudflared.exe
 !.claude-plugin/*.json
 !plugins/**/*.json
 !tests/fixtures/**/*.json
+!benchmarks/documents/*.json
+!benchmarks/search/*.json
 !examples/chatgpt-history.json
 !.vscode/mcp.json
 !.cursor/mcp.json
@@ -71,3 +73,6 @@ scratch_repo/
 !docs/launch/kit/cognicore-demo.mp4
 # Deployment secrets (deploy/.env.example is the template)
 deploy/.env
+
+# Documents fetched by scripts/bench_documents.py --download
+benchmarks/data/documents/
