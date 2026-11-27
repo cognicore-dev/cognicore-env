@@ -119,11 +119,27 @@ def check_link_token(oauth_server, token: str) -> Optional[Dict[str, Any]]:
     return claims
 
 
-def use_link_token(oauth_server, token: str) -> Optional[Dict[str, Any]]:
-    """Like check_link_token, and marks the link used: a second use returns None."""
+def use_link_token(oauth_server, token: str, used_db: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Like check_link_token, and marks the link used: a second use returns None.
+
+    With *used_db*, used links are recorded in that SQLite file, so a link stays used across
+    server restarts; without it, only in this process's memory.
+    """
     claims = check_link_token(oauth_server, token)
-    if not claims or not oauth_server._consume(claims["jti"], claims["exp"]):
+    if not claims:
         return None
+    if used_db is None:
+        return claims if oauth_server._consume(claims["jti"], claims["exp"]) else None
+    import sqlite3
+    import time
+
+    with sqlite3.connect(used_db) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS used_upload_links (jti TEXT PRIMARY KEY, exp REAL NOT NULL)")
+        conn.execute("DELETE FROM used_upload_links WHERE exp < ?", (time.time(),))
+        try:
+            conn.execute("INSERT INTO used_upload_links (jti, exp) VALUES (?, ?)", (claims["jti"], claims["exp"]))
+        except sqlite3.IntegrityError:
+            return None  # already used
     return claims
 
 

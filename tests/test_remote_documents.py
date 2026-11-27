@@ -192,3 +192,13 @@ def test_list_and_remove_are_per_account(client):
     assert _names(ALICE) == ["office.txt"]
     assert remote.cognicore_remove_document(doc_id, _ctx(ALICE)).startswith("Removed")
     assert _names(ALICE) == []
+
+
+def test_a_used_link_stays_used_after_a_restart(client, tmp_path):
+    """Used links are recorded on disk, not only in the process's memory."""
+    token = _link_token()
+    assert _put(client, token).status_code == 200
+    remote.oauth_server._consumed.clear()  # what a restart does to in-memory state
+    again = _put(client, token, data=b"other", name="other.txt")
+    assert again.status_code == 401 and "already used" in again.json()["detail"]
+    assert _names(ALICE) == ["office.txt"]

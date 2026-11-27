@@ -1887,7 +1887,9 @@ async def document_upload(request: Request, name: str = ""):
         data.extend(chunk)
         if len(data) > MAX_BYTES:
             raise HTTPException(status_code=413, detail=f"The file is larger than {MAX_BYTES // (1024 * 1024)} MB.")
-    claims = _up.use_link_token(oauth_server, token)  # after the body is read: a too-large file keeps the link
+    # After the body is read, so a too-large file keeps the link. Used links are recorded on disk:
+    # a link stays used across restarts.
+    claims = _up.use_link_token(oauth_server, token, used_db=str(_data_dir() / "upload_links.db"))
     if not claims:
         raise HTTPException(status_code=401, detail="This upload link was already used. Ask for a new one.")
     from cognicore.memory import SQLiteMemoryBackend
