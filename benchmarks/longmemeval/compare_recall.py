@@ -1,12 +1,13 @@
 """Compare plain search with compact recall on LongMemEval, through the product code.
 
-    python benchmarks/longmemeval/compare_recall.py --dataset oracle|s [--limit N] [--spend 0.5]
+    python benchmarks/longmemeval/compare_recall.py --dataset oracle|s [--mode lean|standard|rich]
+        [--limit N] [--spend 0.5]
 
 For each question its chat history is stored in a fresh keyword-only database (as the hosted
 server runs) in windows of 5 turns overlapping by 2, each tagged with its session. Then:
 
     old = SQLiteMemoryBackend.search(question, top_k=5)          (today's recall)
-    new = compact_recall.compact_search(backend, question, top_k=5)
+    new = compact_recall.compact_search(backend, question, top_k=5, mode=<--mode>)
 
 and both are scored the same way:
 
@@ -17,8 +18,11 @@ and both are scored the same way:
                is also returned, measured for old and new on those same turns
     speed      time per question for each
 
-It prints the results and PASS / FAIL for the guarantees: new recall >= old, no question
-costs more tokens with new, context on old's answers >= old. Datasets: run
+It prints the results and PASS / FAIL for what the mode promises:
+    standard  recall, answers and context >= old; no question costs more tokens than old
+    rich      recall, answers and context >= old; no question costs more than old's top 10
+    lean      no question costs more tokens than old (recall and context are reported only)
+Datasets: run
 benchmarks/data/longmemeval/download_datasets.py first.
 """
 import argparse
@@ -71,6 +75,7 @@ def main():
     ap.add_argument("--dataset", choices=DATASETS, default="oracle")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--spend", type=float, help="share of saved tokens extras may use (default: the env setting)")
+    ap.add_argument("--mode", choices=cr.MODES, default="standard", help="recall mode to compare with old")
     ap.add_argument("--out", help="write per-question results as JSON lines")
     args = ap.parse_args()
     logging.disable(logging.WARNING)
@@ -88,8 +93,10 @@ def main():
             t0 = time.perf_counter()
             old = [r.entry.text for r in backend.search(q, top_k=TOP_K)]
             t1 = time.perf_counter()
-            new = [r.entry.text for r in cr.compact_search(backend, q, top_k=TOP_K, spend=args.spend)]
+            new = [r.entry.text for r in cr.compact_search(backend, q, top_k=TOP_K, spend=args.spend,
+                                                           mode=args.mode)]
             t2 = time.perf_counter()
+            old_wide = [r.entry.text for r in backend.search(q, top_k=TOP_K * cr.RICH_FACTOR)]
 
             convo = [[f"{t['role']}: {t['content']}" for t in s] for s in item["haystack_sessions"]]
             old_blob, new_blob = "\n\0\n".join(old), "\n\0\n".join(new)
@@ -106,7 +113,7 @@ def main():
                 "question_id": item["question_id"], "type": item["question_type"],
                 "old_hit": all(found(ev, old) for _, _, ev in evid),
                 "new_hit": all(found(ev, new) for _, _, ev in evid),
-                "old_tokens": cost(old), "new_tokens": cost(new),
+                "old_tokens": cost(old), "new_tokens": cost(new), "old_wide_tokens": cost(old_wide),
                 "old_ms": (t1 - t0) * 1000, "new_ms": (t2 - t1) * 1000, "ctx": ctx,
             })
             if (n + 1) % 50 == 0:
@@ -123,9 +130,9 @@ def main():
         v = sorted(r[key] for r in rows)
         return v[min(len(v) - 1, int(q * (len(v) - 1)))]
 
-    print(f"\nLongMemEval {args.dataset}, {len(rows)} questions, top_k={TOP_K}, "
+    print(f"\nLongMemEval {args.dataset}, {len(rows)} questions, top_k={TOP_K}, mode={args.mode}, "
           f"extra spend={cr.extra_spend() if args.spend is None else args.spend}\n")
-    print("| | old (search) | new (compact recall) | change |\n|---|---|---|---|")
+    print(f"| | old (search) | new ({args.mode}) | change |\n|---|---|---|---|")
     o, w = pct(r["old_hit"] for r in rows), pct(r["new_hit"] for r in rows)
     print(f"| recall | {o:.1f}% | {w:.1f}% | {w - o:+.1f} pts |")
     ot, nt = statistics.mean(r["old_tokens"] for r in rows), statistics.mean(r["new_tokens"] for r in rows)
@@ -144,15 +151,21 @@ def main():
     for t, rs in sorted(by_type.items()):
         print(f"| {t} | {len(rs)} | {pct(r['old_hit'] for r in rs):.1f}% | {pct(r['new_hit'] for r in rs):.1f}% |")
 
-    over = sum(r["new_tokens"] > r["old_tokens"] for r in rows)
+    limit = "old_wide_tokens" if args.mode == "rich" else "old_tokens"
+    over = sum(r["new_tokens"] > r[limit] for r in rows)
     lost = sum(r["old_hit"] and not r["new_hit"] for r in rows)
     ctx_lost = sum(c[1] and not c[2] for r in rows for c in r["ctx"])
-    print("\nGuarantees:")
-    print(f"  {'PASS' if w >= o else 'FAIL'}  recall new >= old")
-    print(f"  {'PASS' if lost == 0 else 'FAIL'}  no question answered by old is missed by new ({lost} missed)")
-    print(f"  {'PASS' if over == 0 else 'FAIL'}  no question costs more tokens with new ({over} over)")
-    verdict = "PASS" if ctx_lost == 0 else "FAIL"
-    print(f"  {verdict}  no context turn shown by old is missing in new ({ctx_lost} missing)")
+
+    def line(ok, text, promised=True):
+        print(f"  {('PASS' if ok else 'FAIL') if promised else 'info'}  {text}")
+
+    promised = args.mode != "lean"
+    print(f"\nPromises of {args.mode} mode:")
+    line(w >= o, "recall new >= old", promised)
+    line(lost == 0, f"no question answered by old is missed by new ({lost} missed)", promised)
+    line(ctx_lost == 0, f"no context turn shown by old is missing in new ({ctx_lost} missing)", promised)
+    cap = "old's top 10" if args.mode == "rich" else "old"
+    line(over == 0, f"no question costs more tokens than {cap} ({over} over)")
 
 
 if __name__ == "__main__":
