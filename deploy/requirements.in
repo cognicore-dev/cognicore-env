@@ -11,3 +11,4 @@ mcp==1.30.0
 PyJWT
 cryptography
 httpx
+pypdf

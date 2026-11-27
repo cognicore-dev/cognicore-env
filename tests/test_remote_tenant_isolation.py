@@ -77,3 +77,29 @@ def test_fabric_tools_run_per_user():
     # These called an undefined _get_backend() and failed on every call.
     out = remote.cognicore_fabric_recommend(_ctx(ALICE), tool_name="figma", task="pick a palette")
     assert "recommendations" in json.loads(out)
+
+
+def test_document_upload_link_only_writes_to_its_own_account(monkeypatch):
+    """An upload link names one account; it cannot be turned into another account's upload."""
+    from fastapi.testclient import TestClient
+
+    from cognicore.connectors import document_upload as up
+    from cognicore.memory import documents as docs
+
+    monkeypatch.setenv("COGNICORE_PUBLIC_URL", "https://mcp.example.com")
+    link = remote.cognicore_add_document(_ctx(ALICE)).split(": ", 1)[1].split()[0]
+    token = link.split("#t=", 1)[1]
+    client = TestClient(remote.app)
+    # The token decides the account: no header, query or name can redirect it to Bob.
+    r = client.put(f"/documents/upload?name=x.txt&user={BOB}", content=b"Alice's private notes",
+                   headers={up.UPLOAD_HEADER: token, "Authorization": "Bearer " + jwt.encode(
+                       {"sub": BOB, "typ": "access", "exp": int(time.time()) + 600},
+                       remote.JWT_SECRET, algorithm=remote.JWT_ALGORITHM)})
+    assert r.status_code == 200
+    assert [d["name"] for d in docs.list_documents(remote.get_backend(_ctx(ALICE)))] == ["x.txt"]
+    assert docs.list_documents(remote.get_backend(_ctx(BOB))) == []
+    # Bob's access token alone is not an upload token.
+    bob_access = jwt.encode({"sub": BOB, "typ": "access", "exp": int(time.time()) + 600},
+                            remote.JWT_SECRET, algorithm=remote.JWT_ALGORITHM)
+    assert client.put("/documents/upload?name=y.txt", content=b"x",
+                      headers={up.UPLOAD_HEADER: bob_access}).status_code == 401
