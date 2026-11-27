@@ -42,6 +42,17 @@ Images, and PDF pages without a text layer (scans), are read with OCR on this se
 
 Sections are stored in the user's own database (`category = document:<name>`, `session_id = doc:<id>`); `cognicore_remove_document` deletes all of a document's sections. Each account holds at most `COGNICORE_MAX_DOCUMENTS` documents.
 
+## Team memory
+
+A shared memory that a team's members read and write from any of their AI apps (`cognicore/connectors/teams.py`). The tools are in the opt-in `teams` toolset: list it in `COGNICORE_TOOLSETS` (or set `all`) to offer them, since every tool's definition costs every user tokens on every turn.
+
+- `cognicore_team`: share facts to a team (owners and editors; secrets are redacted first), create a team, create a single-use invite code (owners; valid 7 days, stored hashed), join with a code, list teams and members, change roles (owners), read the audit log.
+- `cognicore_team_remove`: leave, remove a member (owners), or delete the team with its shared memory, members, invites and log (owners).
+- `cognicore_recall` searches the user's teams too and labels those results with the team and who shared them; personal and team results share one `top_k`, so recall returns no more results than before. `cognicore_forget("team:<team>:<id>")` deletes a team memory (owners any, editors their own).
+- `cognicore_remember`, `cognicore_recall` and `cognicore_forget` keep their signatures and descriptions, so people who do not use teams pay no extra tokens; recall output for them is unchanged.
+
+Roles: owner, editor, viewer. Each team's memory is its own database (`team_<hash>.db`); the registry of teams, members, invites and the audit log is `teams.db`, both under `$COGNICORE_DATA_DIR/remote`. Every operation takes the signed-in user from the request and checks membership; a team the user is not in is reported as not found. Limits: 20 teams created per user, 50 members per team, 20 unused invites per team.
+
 ## Environment variables
 
 | Variable | Required | Value |
@@ -65,6 +76,7 @@ Sections are stored in the user's own database (`category = document:<name>`, `s
 | `COGNICORE_VISION_WHEN` | No | `little_text` (default): describe an image only when OCR found under 200 characters. `always`: describe every image. |
 | `ANTHROPIC_API_KEY` | With vision | API key for `COGNICORE_VISION_PROVIDER=anthropic`. |
 | `COGNICORE_EXTRA_REDIRECT_URIS` | No | Comma-separated extra OAuth redirect URIs accepted at `/register`, on top of Claude's callbacks and RFC 8252 loopback. Add one per MCP client that needs to register dynamically — e.g. `https://connect.smithery.ai/oauth/callback` for Smithery. |
+| `COGNICORE_TOOLSETS` | No | Comma-separated tool groups to offer (`memory`, `session`, `experience`, `commerce`, `figma`, `elevenlabs`, `teams`) or `all`. Default: every group except the opt-in `teams`. |
 | `COGNICORE_RATE_LIMIT_USER` | No | Requests per minute per signed-in user. Default `120`; `0` turns it off. |
 | `COGNICORE_RATE_LIMIT_IP` | No | Requests per minute per IP address for requests without a valid token (sign-in steps, scans). Default `120`; `0` turns it off. Signed-in users are never limited per IP, because Claude and ChatGPT share IP ranges. |
 

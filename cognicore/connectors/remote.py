@@ -415,6 +415,19 @@ def _normalize_score(score: float, max_score: float) -> float:
     return round(min(score / max_score, 1.0), 3)
 
 
+_team_registry = None
+
+
+def _teams():
+    """The team registry and team memories (cognicore.connectors.teams), in the hosted data folder."""
+    global _team_registry
+    if _team_registry is None or _team_registry.data_dir != _data_dir():
+        from cognicore.connectors.teams import Teams
+
+        _team_registry = Teams(_data_dir(), provider=_get_shared_provider())
+    return _team_registry
+
+
 @_tool("Remember a fact", _WRITE)
 def cognicore_remember(text: str, ctx: Context, category: str = "", scope: str = "user", conversation: Optional[list] = None) -> str:
     """Store a fact, preference, or decision. Auto-decomposes and auto-categorizes."""
@@ -484,6 +497,19 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
         category=category if category else None,
         scope=mem_scope
     )
+    # Teams the user belongs to are searched too (whole-account searches only). Personal and team
+    # results share one top_k, so recall returns no more results than before.
+    user = _authenticated_user(ctx) if mem_scope is None else None
+    team_hits = _teams().search(user, query, top_k=top_k, category=category or None) if user else []
+    max_score = max(max((r.score for r in results), default=0.0), 0.001)
+    ranked = [(None, r, _normalize_score(r.score, max_score)) for r in results]
+    if team_hits:  # scores from different memories are on different scales: rank them on one
+        from cognicore.connectors.teams import blend_scores
+
+        ranked += [(t, r, max(0.0, min(1.0, r.score))) for t, r in team_hits]
+        blended = blend_scores(query, ranked, [r.entry.text for _, r, _ in ranked], [s for _, _, s in ranked])
+        ranked = [(t, r, b) for (t, r, _), b in zip(ranked, blended)]
+        ranked = sorted(ranked, key=lambda item: item[2], reverse=True)[:top_k]
     head: list = []
     agent = agent_in_query(query)
     if agent:
@@ -493,23 +519,26 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
     if exact:
         head.append(f"Exact matches ({len(exact)}):")
         head += [f"  - {text} ({where}, {day})" for text, where, day in exact]
-    if not results and not head:
+    if not ranked and not head:
         return apply_auto_compression(ctx, conversation, "(none)" + _empty_account_note(ctx, backend))
 
-    # Normalize scores to 0.0-1.0
-    max_score = max(r.score for r in results) if results else 1.0
-    max_score = max(max_score, 0.001)  # avoid div-by-zero
-
     shown = {text.strip().lower() for text, _, _ in exact}
-    lines = head + [f"Found {len(results)} memories:"]
-    for r in results:
+    names: dict = {}
+    lines = head + [f"Found {len(ranked)} memories:"]
+    for t, r, norm in ranked:
         if r.entry.text.strip().lower() in shown:
             continue
-        norm = _normalize_score(r.score, max_score)
-        by = f", by {r.entry.source_agent}" if getattr(r.entry, "source_agent", "") else ""
         day = iso_day(r.entry.timestamp) if getattr(r.entry, "timestamp", None) else ""
-        lines.append(f"  [{norm:.2f}] {r.entry.text} ({r.entry.category}{by}{', ' + day if day else ''}) "
-                     f"#{r.entry.entry_id}")
+        if t is None:
+            by = f", by {r.entry.source_agent}" if getattr(r.entry, "source_agent", "") else ""
+            where, ref = r.entry.category + by, r.entry.entry_id
+        else:
+            if t["team_id"] not in names:
+                names[t["team_id"]] = _teams().display_names(t["team_id"])
+            sharer = (r.entry.metadata or {}).get("shared_by", "")
+            where = f"team {t['name']}, shared by {names[t['team_id']].get(sharer, sharer)}, {r.entry.category}"
+            ref = f"team:{t['team_id']}:{r.entry.entry_id}"
+        lines.append(f"  [{norm:.2f}] {r.entry.text} ({where}{', ' + day if day else ''}) #{ref}")
     res = "\n".join(lines)
     return apply_auto_compression(ctx, conversation, res)
 
@@ -517,10 +546,87 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
 @_tool("Delete a memory", _DELETE)
 def cognicore_forget(entry_id: Union[int, str], ctx: Context, conversation: Optional[list] = None) -> str:
     """Delete a memory by ID."""
+    from cognicore.connectors.teams import TeamError, parse_team_entry_id
+
+    team_ref = parse_team_entry_id(str(entry_id))
+    if team_ref:
+        user = _authenticated_user(ctx)
+        if not user:
+            return "Error: team memory is available on the hosted server."
+        try:
+            res = "OK" if _teams().forget(user, *team_ref) else "Not found"
+        except TeamError as e:
+            res = f"Error: {e}"
+        return apply_auto_compression(ctx, conversation, res)
     backend = get_backend(ctx)
     success = backend.delete(str(entry_id))
     res = "OK" if success else "Not found"
     return apply_auto_compression(ctx, conversation, res)
+
+
+@_tool("Manage a team", _WRITE)
+def cognicore_team(action: str, ctx: Context, team: str = "", text: str = "", category: str = "", name: str = "",
+                   code: str = "", role: str = "editor", member: str = "", your_name: str = "") -> str:
+    """Team memory shared across members' AI apps. action: share (team, text; secrets redacted), create (name),
+    invite (team, role: owner|editor|viewer; single-use code, 7 days), join (code), list, members (team),
+    set_role (team, member, role), audit (team). your_name: shown to teammates. Memory search includes your teams."""
+    from cognicore.connectors.teams import TeamError
+
+    user = _authenticated_user(ctx)
+    if not user:
+        return "Error: team memory is available on the hosted server."
+    teams = _teams()
+    action = (action or "").strip().lower()
+    try:
+        if action == "share":
+            if not text.strip():
+                return "Error: give the text to share."
+            facts = [(fact, category or auto_categorize(fact)[0]) for fact in decompose(text)]
+            t, ids, redacted = teams.share(user, team, facts)
+            note = f"; {redacted} secret(s) redacted" if redacted else ""
+            refs = ",".join("team:%s:%s" % (t["team_id"], i) for i in ids)
+            return f"Shared {len(ids)} fact(s) with {t['name']} (ids={refs}{note})"
+        if action == "create":
+            t = teams.create(user, name, your_name)
+            return f"Created team {t['name']} (id {t['team_id']}). You are its owner."
+        if action == "invite":
+            code_, t = teams.invite(user, team, role)
+            return (f"Invite code for {t['name']} as {role}: {code_}\n"
+                    "It works once and expires in 7 days. Whoever receives it joins with action=join.")
+        if action == "join":
+            t = teams.join(user, code, your_name)
+            return f"You are in {t['name']} (id {t['team_id']}) as {t['role']}."
+        if action == "list":
+            rows = teams.teams_for(user)
+            return "\n".join(f"{r['team_id']}  {r['name']}  ({r['role']})" for r in rows) if rows else "No teams."
+        if action == "members":
+            return "\n".join(f"{m['user_id']}  {m['name'] or '-'}  ({m['role']})" for m in teams.members(user, team))
+        if action == "set_role":
+            return f"{member} is now {teams.set_role(user, team, member, role)}."
+        if action == "audit":
+            rows = teams.audit_log(user, team)
+            return "\n".join(f"{iso_day(r['ts'])}  {r['actor']}  {r['action']}  {r['detail']}"
+                             for r in rows) or "Empty."
+    except TeamError as e:
+        return f"Error: {e}"
+    return "Error: action must be share, create, invite, join, list, members, set_role or audit."
+
+
+@_tool("Leave or remove from a team", _DELETE)
+def cognicore_team_remove(team: str, ctx: Context, member: str = "", delete_team: bool = False) -> str:
+    """Leave a team, remove a member (owners), or delete the team and its shared memory (owners)."""
+    from cognicore.connectors.teams import TeamError
+
+    user = _authenticated_user(ctx)
+    if not user:
+        return "Error: team memory is available on the hosted server."
+    try:
+        if delete_team:
+            return f"Deleted team {_teams().delete(user, team)} and its shared memory."
+        name = _teams().remove(user, team, member)
+        return f"Left {name}." if not member or member == user else f"Removed {member} from {name}."
+    except TeamError as e:
+        return f"Error: {e}"
 
 
 # --- documents ---------------------------------------------------------------------------------
@@ -2376,6 +2482,9 @@ from cognicore.mcp.server import limit_toolsets, strip_schema_titles  # noqa: E4
 TOOLSETS = {
     "memory": ["cognicore_remember", "cognicore_recall", "cognicore_forget", "cognicore_list", "cognicore_stats"],
     "session": ["cognicore_save_session", "cognicore_resume_session", "cognicore_compress_context"],
+    "teams": ["cognicore_team", "cognicore_team_remove"],
+
+
     "documents": ["cognicore_add_document", "cognicore_list_documents", "cognicore_remove_document"],
     "experience": ["cognicore_record_experience", "cognicore_verify_experience", "cognicore_recall_experience",
                    "cognicore_share_experience", "cognicore_check_experience"],
@@ -2387,8 +2496,12 @@ TOOLSETS = {
     "elevenlabs": ["cognicore_elevenlabs_sync", "cognicore_elevenlabs_recall", "cognicore_elevenlabs_learn",
                    "cognicore_elevenlabs_feedback", "cognicore_elevenlabs_recommend"],
 }
-# e.g. COGNICORE_TOOLSETS=memory,session,experience. Default: all tools.
-limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), TOOLSETS)
+# Opt-in groups: left out unless COGNICORE_TOOLSETS names them (or says "all"), because every tool
+# definition costs tokens on every turn for every user.
+OPT_IN_TOOLSETS = {"teams"}
+# e.g. COGNICORE_TOOLSETS=memory,session,experience. Default: all tools except the opt-in groups.
+_toolsets_spec = os.environ.get("COGNICORE_TOOLSETS", "").strip() or ",".join(sorted(set(TOOLSETS) - OPT_IN_TOOLSETS))
+limit_toolsets(mcp, _toolsets_spec, TOOLSETS)
 strip_schema_titles(mcp)
 
 # Expose one canonical, authenticated MCP surface. Mounting the same app at "/"

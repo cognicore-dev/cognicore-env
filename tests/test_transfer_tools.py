@@ -106,7 +106,9 @@ def test_toolsets_groups_cover_every_hosted_tool():
     remote = pytest.importorskip("cognicore.connectors.remote")
     listed = {t.name for t in asyncio.run(remote.mcp.list_tools())}
     grouped = {name for names in remote.TOOLSETS.values() for name in names}
-    assert listed == grouped  # a new tool must be put in a group
+    opt_in = {name for group in remote.OPT_IN_TOOLSETS for name in remote.TOOLSETS[group]}
+    assert listed == grouped - opt_in  # a new tool must be put in a group; opt-in groups are off by default
+    assert opt_in and not opt_in & listed
 
 
 @pytest.mark.parametrize("spec,kept", [

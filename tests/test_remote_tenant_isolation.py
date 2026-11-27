@@ -79,6 +79,24 @@ def test_fabric_tools_run_per_user():
     assert "recommendations" in json.loads(out)
 
 
+def test_team_memory_is_invisible_to_non_members():
+    """Knowing a team's id or name gives a non-member nothing: no read, write, delete or log."""
+    out = remote.cognicore_team("create", _ctx(ALICE), name="Alice's team")
+    team_id = out.split("(id ")[1].split(")")[0]
+    shared = remote.cognicore_team("share", _ctx(ALICE), team=team_id, text="Alice's team roadmap is private")
+    entry = shared.split("ids=")[1].rstrip(")")
+    for ref in (team_id, "Alice's team"):
+        for out in (remote.cognicore_team("share", _ctx(BOB), team=ref, text="Bob's note"),
+                    remote.cognicore_team("members", _ctx(BOB), team=ref),
+                    remote.cognicore_team("audit", _ctx(BOB), team=ref),
+                    remote.cognicore_team("invite", _ctx(BOB), team=ref),
+                    remote.cognicore_team_remove(ref, _ctx(BOB), delete_team=True)):
+            assert out == "Error: No team by that name or id among your teams.", out
+    assert remote.cognicore_forget(entry, _ctx(BOB)) == "Error: No team by that name or id among your teams."
+    assert "roadmap" not in remote.cognicore_recall("roadmap private", _ctx(BOB))
+    assert "roadmap" in remote.cognicore_recall("roadmap private", _ctx(ALICE))
+
+
 def test_document_upload_link_only_writes_to_its_own_account(monkeypatch):
     """An upload link names one account; it cannot be turned into another account's upload."""
     from fastapi.testclient import TestClient
