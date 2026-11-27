@@ -500,7 +500,9 @@ def cognicore_recall(query: str, ctx: Context, category: str = "", scope: str = 
     # Teams the user belongs to are searched too (whole-account searches only). Personal and team
     # results share one top_k, so recall returns no more results than before.
     user = _authenticated_user(ctx) if mem_scope is None else None
-    team_hits = _teams().search(user, query, top_k=top_k, category=category or None) if user else []
+    # No team has ever been created on this server: skip opening the registry on every recall.
+    has_teams = user and (_team_registry is not None or (_data_dir() / "teams.db").exists())
+    team_hits = _teams().search(user, query, top_k=top_k, category=category or None) if has_teams else []
     max_score = max(max((r.score for r in results), default=0.0), 0.001)
     ranked = [(None, r, _normalize_score(r.score, max_score)) for r in results]
     if team_hits:  # scores from different memories are on different scales: rank them on one

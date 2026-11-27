@@ -20,6 +20,7 @@ Ids of team memories in recall look like ``team:<team_id>:<entry_id>``.
 
 import hashlib
 import secrets
+import contextlib
 import sqlite3
 import time
 from pathlib import Path
@@ -68,10 +69,16 @@ class Teams:
                 CREATE INDEX IF NOT EXISTS idx_audit_team ON audit(team_id, ts);
             """)
 
+    @contextlib.contextmanager
     def _conn(self):
+        """A registry connection that commits on success, rolls back on error and is always closed."""
         conn = sqlite3.connect(self.data_dir / "teams.db", timeout=10)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _db_path(self, team_id: str) -> Path:
         return self.data_dir / f"team_{_hash('team:' + team_id)}.db"

@@ -196,3 +196,9 @@ def test_everyday_tools_carry_nothing_about_teams_so_people_without_teams_pay_no
     for name in ("cognicore_remember", "cognicore_recall", "cognicore_forget"):
         definition = json.dumps({"description": tools[name].description, "schema": tools[name].inputSchema}).lower()
         assert "team" not in definition, name
+
+
+def test_recall_does_not_open_the_team_registry_before_any_team_exists(tmp_path):
+    remote.cognicore_remember("Billing note", _ctx(ALICE))
+    remote.cognicore_recall("billing", _ctx(ALICE))
+    assert not (tmp_path / "remote" / "teams.db").exists()
