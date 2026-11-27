@@ -148,15 +148,20 @@ def test_scanned_pdf_without_ocr_is_refused_with_how_to_fix(backend, monkeypatch
 
 # --- real OCR (runs where the ocr extra is installed) ---------------------------------------
 
+def _need_ocr():
+    if ir.ocr_engine() is None:
+        pytest.skip("no OCR engine installed (Tesseract, or the ocr extra)")
+
+
 def test_real_ocr_reads_an_image(backend):
-    pytest.importorskip("rapidocr")
+    _need_ocr()
     docs.add_document(backend, png(), "invoice.png")
     hit = backend.search("INV-2026-0412", top_k=1)[0]
     assert "Invoice INV-2026-0412" in hit.entry.text and "1,250.00 USD" in hit.entry.text
 
 
 def test_real_ocr_reads_a_scanned_pdf(backend):
-    pytest.importorskip("rapidocr")
+    _need_ocr()
     pytest.importorskip("pypdf")
     scan = io.BytesIO()
     Image.open(io.BytesIO(png(("Contract 77-B", "Renewal date: 1 March 2027")))).save(scan, "PDF")
@@ -164,3 +169,66 @@ def test_real_ocr_reads_a_scanned_pdf(backend):
     assert d.pages == 1
     hit = backend.search("renewal date contract", top_k=1)[0]
     assert hit.entry.text.startswith("page 1:") and "1 March 2027" in hit.entry.text
+
+
+def test_anthropic_reader_calls_the_api_directly_without_the_sdk(monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("COGNICORE_VISION_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert not ir.AnthropicVisionReader().available()  # no key, no vision
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    sent = {}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        sent.update(url=url, json=json, headers=headers)
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "A line chart rising to 40."}]})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    reader = ir.AnthropicVisionReader()
+    assert reader.available() and reader.read(png()) == "A line chart rising to 40."
+    assert sent["url"] == "https://api.anthropic.com/v1/messages"
+    assert sent["headers"] == {"x-api-key": "test-key", "anthropic-version": "2023-06-01"}
+    assert sent["json"]["model"] == ir.DEFAULT_VISION_MODEL
+    assert sent["json"]["messages"][0]["content"][0]["source"]["media_type"] == "image/png"
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(529, json={}))
+    with pytest.raises(ir.ImageError, match="HTTP 529"):
+        reader.read(png())
+
+
+# --- choosing the OCR engine --------------------------------------------------------------------
+
+@pytest.mark.parametrize("setting,tesseract,rapid,expected", [
+    ("auto", True, True, "tesseract"), ("auto", False, True, "rapidocr"), ("auto", False, False, None),
+    ("rapidocr", True, True, "rapidocr"), ("tesseract", False, True, None),
+])
+def test_engine_choice(monkeypatch, setting, tesseract, rapid, expected):
+    monkeypatch.setenv("COGNICORE_OCR_ENGINE", setting)
+    monkeypatch.setattr(ir, "_tesseract_path", lambda: "/usr/bin/tesseract" if tesseract else None)
+    monkeypatch.setattr(ir, "_rapidocr_installed", lambda: rapid)
+    assert ir.ocr_engine() == expected
+    monkeypatch.setenv("COGNICORE_IMAGE_OCR", "0")
+    assert ir.ocr_engine() is None
+
+
+def test_tesseract_is_run_without_temporary_files(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    def fake_run(argv, input=None, capture_output=None, timeout=None, check=None):
+        calls.append((argv, input))
+        return SimpleNamespace(stdout=b"Invoice INV-7\n\n  Total 12 USD  \n", returncode=0)
+
+    monkeypatch.setenv("COGNICORE_OCR_ENGINE", "tesseract")
+    monkeypatch.setattr(ir, "_tesseract_path", lambda: "/usr/bin/tesseract")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ir.OcrReader().read(b"img") == "Invoice INV-7\nTotal 12 USD"
+    assert calls == [(["/usr/bin/tesseract", "stdin", "stdout", "-l", "eng"], b"img")]
+
+    def slow_run(*a, **k):
+        raise subprocess.TimeoutExpired("tesseract", 60)
+    monkeypatch.setattr(subprocess, "run", slow_run)
+    with pytest.raises(ir.ImageError, match="longer than 60 seconds"):
+        ir.OcrReader().read(b"img")

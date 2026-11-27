@@ -3,7 +3,9 @@
 ``read_image(data, name)`` returns the text to store for an image:
 
 ocr     Text in the image (screenshots, scans, photographed pages), read on this machine by
-        RapidOCR (pip install cognicore-env[ocr]). Free, offline, nothing leaves the machine.
+        Tesseract when it is installed (the hosted server image has it), else by RapidOCR
+        (pip install cognicore-env[ocr], no system package needed). Free, offline, nothing
+        leaves the machine.
 vision  A description of what the image shows (diagrams, charts, photos), from a vision
         model. Off unless COGNICORE_VISION_PROVIDER is set; then the image is sent to that
         provider, which costs money per image. By default it runs only when OCR found little
@@ -14,7 +16,9 @@ can be added without changing callers. An image with no readable text and no des
 is refused rather than stored empty.
 
 Settings (environment):
-    COGNICORE_IMAGE_OCR          "0" turns OCR off (default on when RapidOCR is installed)
+    COGNICORE_IMAGE_OCR          "0" turns OCR off (default on when an engine is installed)
+    COGNICORE_OCR_ENGINE         auto (default: Tesseract, else RapidOCR) | tesseract | rapidocr
+    COGNICORE_OCR_LANG           Tesseract language(s), e.g. eng or eng+deu (default eng)
     COGNICORE_VISION_PROVIDER    "anthropic" to describe images with Claude (default: off)
     COGNICORE_VISION_MODEL       model name (default claude-haiku-5-5)
     COGNICORE_VISION_WHEN        little_text (default) | always
@@ -76,30 +80,73 @@ class ImageReader:
         raise NotImplementedError
 
 
+def _tesseract_path() -> Optional[str]:
+    import shutil
+
+    return shutil.which(os.environ.get("COGNICORE_TESSERACT", "tesseract"))
+
+
+def _rapidocr_installed() -> bool:
+    try:
+        import rapidocr  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def ocr_engine() -> Optional[str]:
+    """The OCR engine to use: COGNICORE_OCR_ENGINE, else Tesseract when installed, else RapidOCR."""
+    if os.environ.get("COGNICORE_IMAGE_OCR", "1").strip() == "0":
+        return None
+    wanted = os.environ.get("COGNICORE_OCR_ENGINE", "auto").strip().lower()
+    if wanted in ("auto", "tesseract") and _tesseract_path():
+        return "tesseract"
+    if wanted in ("auto", "rapidocr") and _rapidocr_installed():
+        return "rapidocr"
+    return None
+
+
 class OcrReader(ImageReader):
-    """RapidOCR: text lines in reading order. The engine loads once per process."""
+    """Text lines in reading order, from Tesseract (a system package, used on the hosted server)
+    or RapidOCR (pip only: pip install cognicore-env[ocr]). RapidOCR loads once per process."""
 
     name = "ocr"
-    _engine = None
+    _rapid = None
+    TIMEOUT = 60
 
     def available(self) -> bool:
-        if os.environ.get("COGNICORE_IMAGE_OCR", "1").strip() == "0":
-            return False
-        try:
-            import rapidocr  # noqa: F401
-        except ImportError:
-            return False
-        return True
+        return ocr_engine() is not None
 
     def read(self, data: bytes) -> str:
-        if OcrReader._engine is None:
+        engine = ocr_engine()
+        if engine == "tesseract":
+            return self._tesseract(data)
+        if engine == "rapidocr":
+            return self._rapidocr(data)
+        return ""
+
+    def _tesseract(self, data: bytes) -> str:
+        import subprocess
+
+        # stdin to stdout: no temporary files (the hosted server's filesystem is read-only)
+        try:
+            lang = os.environ.get("COGNICORE_OCR_LANG", "eng")
+            done = subprocess.run([_tesseract_path(), "stdin", "stdout", "-l", lang],  # nosec B603 - fixed argv
+                                  input=data, capture_output=True, timeout=self.TIMEOUT, check=False)
+        except subprocess.TimeoutExpired as e:
+            raise ImageError(f"Reading the image's text took longer than {self.TIMEOUT} seconds.") from e
+        text = done.stdout.decode("utf-8", errors="replace")
+        return "\n".join(ln.strip() for ln in text.splitlines() if ln.strip())
+
+    def _rapidocr(self, data: bytes) -> str:
+        if OcrReader._rapid is None:
             import logging
 
             from rapidocr import RapidOCR
 
             logging.getLogger("RapidOCR").setLevel(logging.WARNING)
-            OcrReader._engine = RapidOCR()
-        result = OcrReader._engine(data)
+            OcrReader._rapid = RapidOCR()
+        result = OcrReader._rapid(data)
         return "\n".join(t.strip() for t in (result.txts or ()) if t and t.strip())
 
 
@@ -108,40 +155,44 @@ class AnthropicVisionReader(ImageReader):
 
     name = "vision"
 
+    API_URL = "https://api.anthropic.com/v1/messages"
+    API_VERSION = "2023-06-01"
+
     def __init__(self, client=None):
+        # *client*: anything with messages.create(**request) (the anthropic SDK, or a test fake).
+        # Without one, the Messages API is called directly with httpx: no SDK to install.
         self._client = client
 
     def available(self) -> bool:
         if os.environ.get("COGNICORE_VISION_PROVIDER", "").strip().lower() != "anthropic":
             return False
-        if self._client is not None:
-            return True
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            return False
-        try:
-            import anthropic  # noqa: F401
-        except ImportError:
-            return False
-        return True
+        return self._client is not None or bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     def read(self, data: bytes) -> str:
-        if self._client is None:
-            import anthropic
-
-            self._client = anthropic.Anthropic()
         kind = media_type(data) or "image/png"
         if kind not in ("image/png", "image/jpeg", "image/gif", "image/webp"):
             data, kind = _as_png(data), "image/png"
-        message = self._client.messages.create(
-            model=os.environ.get("COGNICORE_VISION_MODEL", DEFAULT_VISION_MODEL),
-            max_tokens=1024,
-            messages=[{"role": "user", "content": [
+        request = {
+            "model": os.environ.get("COGNICORE_VISION_MODEL", DEFAULT_VISION_MODEL),
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": kind,
                                              "data": base64.b64encode(data).decode("ascii")}},
                 {"type": "text", "text": VISION_PROMPT},
             ]}],
-        )
-        return "\n".join(b.text for b in message.content if getattr(b, "type", "") == "text").strip()
+        }
+        if self._client is not None:
+            message = self._client.messages.create(**request)
+            blocks = [{"type": getattr(b, "type", ""), "text": getattr(b, "text", "")} for b in message.content]
+        else:
+            import httpx
+
+            resp = httpx.post(self.API_URL, json=request, timeout=60.0, headers={
+                "x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": self.API_VERSION})
+            if resp.status_code != 200:
+                raise ImageError(f"The vision model could not describe the image (HTTP {resp.status_code}).")
+            blocks = resp.json().get("content") or []
+        return "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
 
 
 def _as_png(data: bytes) -> bytes:

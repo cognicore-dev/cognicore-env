@@ -198,8 +198,8 @@ go.addEventListener("click", async () => {{
                           {{ method: "PUT", body: f, headers: {{ "{UPLOAD_HEADER}": token }} }});
     const body = await r.json().catch(() => ({{}}));
     if (!r.ok) throw new Error(body.detail || ("Upload failed (" + r.status + ")"));
-    status.textContent = body.already_present
-      ? body.name + " was already in your memory."
+    status.textContent = body.queued ? body.message + " You can close this page."
+      : body.already_present ? body.name + " was already in your memory."
       : "Added " + body.name + ": " + body.sections + " sections. You can close this page.";
   }} catch (e) {{ status.className = "bad"; status.textContent = e.message; }}
 }});

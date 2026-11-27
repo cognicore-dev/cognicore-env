@@ -34,7 +34,7 @@ No user database or Supabase project is involved.
 
 `cognicore_add_document` adds a PDF, image, `.txt` or `.md` file (up to 25 MB) to the signed-in user's memory, split into sections that recall returns with the document's name and page.
 
-Images, and PDF pages without a text layer (scans), are read with OCR on this server (RapidOCR, about 2 seconds per image or page, at most 100 scanned pages per PDF). With `COGNICORE_VISION_PROVIDER` set, images in which OCR finds little text are also described by a vision model. An image with nothing readable is refused, not stored empty.
+Images, and PDF pages without a text layer (scans), are read with OCR on this server by Tesseract, which the image installs (about 160 MB; build with `--build-arg WITH_OCR=0` to leave it out). A dense A4 page takes about 5 seconds, so a document that needs OCR on more than `COGNICORE_INLINE_OCR_PAGES` pages is read in the background: the tool or upload returns at once, `cognicore_list_documents` shows it as being read (or why it failed), and it is searchable when done. At most 3 documents per account wait at a time; `COGNICORE_OCR_WORKERS` (default 1) read at once. Up to 100 scanned pages per PDF are read. With `COGNICORE_VISION_PROVIDER` set, images in which OCR finds little text are also described by a vision model. An image with nothing readable is refused, not stored empty.
 
 - **Attached in ChatGPT:** the tool declares its `file` argument in `_meta["openai/fileParams"]`, so ChatGPT passes an attached file as a temporary download link. The server fetches it only over HTTPS, only from hosts in `COGNICORE_DOCUMENT_FILE_HOSTS` that resolve to public addresses, without following redirects, and reads at most 25 MB. ChatGPT has been reported to drop the file on a minority of calls; the tool then returns an upload link instead.
 - **Any other app (and ChatGPT without a file):** the tool returns a link `<COGNICORE_PUBLIC_URL>/documents/upload#t=<token>`. The user opens it in a browser and picks the file. The token is signed with `COGNICORE_JWT_SECRET`, names one account, works once, expires after 15 minutes and only allows adding a document. It sits in the `#fragment`, which browsers do not send, so it never appears in proxy or server logs. Used links are recorded in `$COGNICORE_DATA_DIR/remote/upload_links.db` (pruned as they expire), so a link stays used across restarts.
@@ -57,6 +57,9 @@ Sections are stored in the user's own database (`category = document:<name>`, `s
 | `COGNICORE_MAX_DOCUMENTS` | No | Documents per account. Default `100`. |
 | `COGNICORE_DOCUMENT_FILE_HOSTS` | No | Comma-separated host suffixes the server may download attached files from. Default `oaiusercontent.com,openai.com`. |
 | `COGNICORE_IMAGE_OCR` | No | `0` turns off OCR of images and scanned PDF pages. On by default; it runs on this server and nothing leaves it. |
+| `COGNICORE_OCR_LANG` | No | Tesseract languages, e.g. `eng+deu` (each needs its `tesseract-ocr-<lang>` package). Default `eng`. |
+| `COGNICORE_INLINE_OCR_PAGES` | No | Documents needing OCR on more pages than this are read in the background. Default `2`. |
+| `COGNICORE_OCR_WORKERS` | No | Background OCR jobs run at once. Default `1`, so OCR never takes over the server's CPU. |
 | `COGNICORE_VISION_PROVIDER` | No | `anthropic` to have Claude describe images that OCR cannot read (diagrams, charts, photos). Off by default. When on, those images are sent to Anthropic and each costs an API call; update the privacy policy before turning it on. |
 | `COGNICORE_VISION_MODEL` | No | Vision model. Default `claude-haiku-5-5`. |
 | `COGNICORE_VISION_WHEN` | No | `little_text` (default): describe an image only when OCR found under 200 characters. `always`: describe every image. |

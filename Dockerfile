@@ -4,6 +4,18 @@ FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438
 
 WORKDIR /app
 
+# Tesseract reads text in images and scanned PDF pages for document memory (about 160 MB).
+# Its page orientation model (osd, 11 MB) is never used, so it is removed. Build with
+# --build-arg WITH_OCR=0 for an image without it: images are then refused with a message,
+# or described by a vision model if one is enabled.
+ARG WITH_OCR=1
+RUN if [ "$WITH_OCR" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+        && rm -f /usr/share/tesseract-ocr/*/tessdata/osd.traineddata \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Exact versions with hashes: pip refuses any file whose hash differs, so a
 # poisoned or re-published release cannot slip into a build. To change them,
 # edit deploy/requirements.in and recompile deploy/requirements.txt.

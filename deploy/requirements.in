@@ -12,7 +12,6 @@ PyJWT
 cryptography
 httpx
 pypdf
-# Images in document memory: OCR (always available) and Claude vision (only when enabled)
-rapidocr
-onnxruntime
-anthropic
+# Images in document memory: Pillow checks image size and converts formats. OCR is Tesseract,
+# a system package (see Dockerfile); vision (opt-in) calls the Anthropic API with httpx.
+pillow

@@ -41,7 +41,8 @@ TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".text"}
 PDF_SUFFIXES = {".pdf"}
 # PDF pages with less text than this are treated as scanned: their images go through OCR.
 SCANNED_PAGE_TEXT = 20
-MAX_OCR_PAGES = 100  # about 2 s per page
+MAX_OCR_PAGES = 100
+OCR_SECONDS_PER_PAGE = 5  # measured: Tesseract on a dense A4 page, one core
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _BLANK_LINES = re.compile(r"\n\s*\n")
@@ -272,6 +273,77 @@ def remove_document(backend, doc_id: str) -> int:
         cur = conn.execute("DELETE FROM memory_entries WHERE session_id = ? AND source_component = ?",
                            (_doc_session(doc_id), SOURCE))
         return cur.rowcount
+
+
+# --- slow documents (OCR) ------------------------------------------------------------------------
+
+def ocr_pages_needed(data: bytes, name: str) -> int:
+    """How many pages or images of this document OCR would read (0 when OCR is unavailable)."""
+    from cognicore.memory import image_readers
+
+    if image_readers.ocr_engine() is None:
+        return 0
+    if image_readers.is_image(data, name) and Path(name).suffix.lower() not in PDF_SUFFIXES:
+        return 1
+    if not (Path(name).suffix.lower() in PDF_SUFFIXES or data[:5] == b"%PDF-"):
+        return 0
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted or len(reader.pages) > MAX_PAGES:
+            return 0  # add_document refuses these with the reason
+        scanned = sum(1 for page in reader.pages if len((page.extract_text() or "").strip()) < SCANNED_PAGE_TEXT)
+    except Exception:
+        return 0
+    return min(scanned, MAX_OCR_PAGES)
+
+
+JOB_STALE_SECONDS = 2 * 3600  # a job still "processing" after this was lost (e.g. a restart)
+JOB_KEEP_SECONDS = 24 * 3600  # finished and failed jobs are listed this long
+
+
+def _jobs_schema(conn) -> None:
+    conn.execute("""CREATE TABLE IF NOT EXISTS document_jobs (
+        job_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, detail TEXT DEFAULT '',
+        created REAL NOT NULL, finished REAL)""")
+
+
+def start_job(backend, name: str) -> str:
+    import secrets
+    import time
+
+    job_id = secrets.token_hex(6)
+    with backend._get_conn() as conn:
+        _jobs_schema(conn)
+        conn.execute("INSERT INTO document_jobs (job_id, name, status, created) VALUES (?, ?, 'processing', ?)",
+                     (job_id, Path(name).name, time.time()))
+    return job_id
+
+
+def finish_job(backend, job_id: str, status: str, detail: str = "") -> None:
+    import time
+
+    with backend._get_conn() as conn:
+        _jobs_schema(conn)
+        conn.execute("UPDATE document_jobs SET status = ?, detail = ?, finished = ? WHERE job_id = ?",
+                     (status, detail[:300], time.time(), job_id))
+
+
+def list_jobs(backend) -> List[Dict[str, Any]]:
+    """Recent background jobs, newest first: processing, failed (with the reason) or done."""
+    import time
+
+    now = time.time()
+    with backend._get_conn() as conn:
+        _jobs_schema(conn)
+        conn.execute("UPDATE document_jobs SET status = 'failed', detail = 'interrupted; add the file again', "
+                     "finished = ? WHERE status = 'processing' AND created < ?", (now, now - JOB_STALE_SECONDS))
+        conn.execute("DELETE FROM document_jobs WHERE status != 'processing' AND finished < ?",
+                     (now - JOB_KEEP_SECONDS,))
+        rows = conn.execute("SELECT job_id, name, status, detail, created FROM document_jobs "
+                            "ORDER BY created DESC").fetchall()
+    return [{"job_id": r[0], "name": r[1], "status": r[2], "detail": r[3], "created": r[4]} for r in rows]
 
 
 # --- command line ---------------------------------------------------------------------------
