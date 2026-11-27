@@ -490,6 +490,7 @@ def status_text() -> str:
 
 
 def sync_now(out=print) -> int:
+    from cognicore.history.sync import sync_existing
     from cognicore.hooks import _backend
 
     backend = _backend()
@@ -505,6 +506,13 @@ def sync_now(out=print) -> int:
     out(f"Pushed {pushed} session(s), pulled {len(imported)} new session(s).")
     for s in imported:
         out(f"  + {s['session_name'] or s['session_id']}: {s['goal'][:100]}")
+    try:
+        history = sync_existing()
+    except (SyncError, OSError, ValueError):
+        out("Historical sync deferred. Run `cognicore history sync now` to retry.")
+    else:
+        if history["enabled"]:
+            out(f"Synced history with {history['conversations']} conversation(s) and {history['messages']} message(s).")
     return 0
 
 
@@ -520,6 +528,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
         if command == "login":
             state = login(argv[1] if len(argv) > 1 else "")
+            from cognicore.history.sync import schedule as schedule_history_sync
+
+            schedule_history_sync(on_login=True)
             print(f"Signed in as {state['login'] or 'you'}. Claude Code and Codex now sync with your hosted memory.")
             return 0
         if command == "logout":

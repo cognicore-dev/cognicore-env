@@ -1,5 +1,7 @@
 # CogniCore API Reference
 
+See the [history CLI reference](history.md#cli-reference) and [authenticated local REST endpoints](history.md#rest-api) for historical imports, retrieval, and deletion.
+
 > **Version:** 0.9.5 | **License:** MIT | **Python:** 3.10+
 
 ---
