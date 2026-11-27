@@ -41,6 +41,7 @@ cloudflared.exe
 !plugins/**/*.json
 !tests/fixtures/**/*.json
 !benchmarks/documents/*.json
+!benchmarks/search/*.json
 !examples/chatgpt-history.json
 !.vscode/mcp.json
 !.cursor/mcp.json

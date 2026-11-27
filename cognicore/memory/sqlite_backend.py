@@ -168,6 +168,8 @@ class SQLiteMemoryBackend(MemoryBackend):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project, timestamp)")
+        # A session's memories in save order (resume, lean recall's neighbouring memories)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_entries_session ON memory_entries(session_id, entry_id)")
         try:  # once per database: sessions saved under a subfolder move to their repository's key
             from cognicore.memory.context_preservation import migrate_project_keys
 
