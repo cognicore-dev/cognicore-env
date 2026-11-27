@@ -191,6 +191,13 @@ def cmd_lesson(args):
     return lesson_main(args.rest)
 
 
+def cmd_docs(args):
+    """Documents in local memory: add, list, remove."""
+    from cognicore.memory.documents import main as docs_main
+
+    return docs_main(args.rest)
+
+
 def cmd_project(args):
     """Curated project context: goal, status, decisions, rules, facts."""
     from cognicore.project_context import main as project_main
@@ -513,12 +520,18 @@ def main():
                                  add_help=False)
     project_cmd.add_argument("rest", nargs=argparse.REMAINDER)
 
+    docs_cmd = sub.add_parser("docs", help="Documents in memory: add PDFs and text files, list, remove",
+                              add_help=False)
+    docs_cmd.add_argument("rest", nargs=argparse.REMAINDER)
+
     usage_cmd = sub.add_parser("usage", help="Tokens per session and project, startup size, and what CogniCore saves",
                                add_help=False)
     usage_cmd.add_argument("rest", nargs=argparse.REMAINDER)
 
     if sys.argv[1:2] == ["usage"]:  # its own options (--days, --json) are not cognicore's
         sys.exit(cmd_usage(argparse.Namespace(rest=sys.argv[2:])))
+    if sys.argv[1:2] == ["docs"]:  # its own options (--replace, --help) are not cognicore's
+        sys.exit(cmd_docs(argparse.Namespace(rest=sys.argv[2:])))
     if sys.argv[1:2] == ["project"]:  # its own options (--why, --rejected) are not cognicore's
         sys.exit(cmd_project(argparse.Namespace(rest=sys.argv[2:])))
     register_history(sub)
@@ -530,7 +543,7 @@ def main():
             "passport": cmd_passport, "civilization": cmd_civilization,
             "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install,
             "login": cmd_login, "logout": cmd_logout, "sync": cmd_sync,
-            "lesson": cmd_lesson, "usage": cmd_usage, "project": cmd_project, "history": run_history}
+            "lesson": cmd_lesson, "docs": cmd_docs, "usage": cmd_usage, "project": cmd_project, "history": run_history}
     if args.command in cmds:
         result = cmds[args.command](args)
         if isinstance(result, int) and result:

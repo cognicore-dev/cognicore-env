@@ -1,0 +1,41 @@
+{
+  "description": "Questions about public documents, each with text that must appear in what recall returns for the answer to count as found. Used by scripts/bench_documents.py.",
+  "documents": [
+    {
+      "file": "attention-is-all-you-need.pdf",
+      "url": "https://arxiv.org/pdf/1706.03762",
+      "questions": [
+        {"q": "How many identical layers does the encoder have?", "expect": "N = 6 identical layers"},
+        {"q": "What is the dimension of the model outputs?", "expect": "dmodel = 512"},
+        {"q": "What BLEU score does the model get on English to German translation?", "expect": "28.4 BLEU"},
+        {"q": "How many warmup steps were used for the learning rate?", "expect": "warmup_steps = 4000"},
+        {"q": "What hardware were the models trained on?", "expect": "8 NVIDIA P100 GPUs"},
+        {"q": "What dropout rate does the base model use?", "expect": "Pdrop = 0.1"}
+      ]
+    },
+    {
+      "file": "hindsight-agent-memory.pdf",
+      "url": "https://arxiv.org/pdf/2512.12818",
+      "questions": [
+        {"q": "What score does Hindsight reach on LongMemEval?", "expect": "91.4% on LongMemEval"},
+        {"q": "How is the agent memory organised into networks?", "expect": "four logical networks"},
+        {"q": "Which core operations does the framework support?", "expect": "retain, recall, and reflect"},
+        {"q": "What does TEMPR stand for?", "expect": "TEMPR (Temporal Entity Memory Priming Retrieval)"},
+        {"q": "What does CARA stand for?", "expect": "CARA (Coherent Adaptive Reasoning Agents)"},
+        {"q": "What accuracy does Hindsight get on LoCoMo?", "expect": "89.61% on LoCoMo"}
+      ]
+    },
+    {
+      "file": "rfc9110-http-semantics.pdf",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.pdf",
+      "questions": [
+        {"q": "When is a request method considered idempotent?", "expect": "is considered \"idempotent\" if"},
+        {"q": "What does the 405 Method Not Allowed status code indicate?", "expect": "The 405 (Method Not Allowed) status code indicates"},
+        {"q": "What does the Retry-After header field tell the user agent?", "expect": "send the \"Retry-After\" header field to indicate how long"},
+        {"q": "What does the Content-Length header field indicate?", "expect": "The \"Content-Length\" header field indicates"},
+        {"q": "What is the 418 status code used for?", "expect": "418 (Unused)"},
+        {"q": "What does the 308 Permanent Redirect status code mean?", "expect": "The 308 (Permanent Redirect) status code indicates"}
+      ]
+    }
+  ]
+}
