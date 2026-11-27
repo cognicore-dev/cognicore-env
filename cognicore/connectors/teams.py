@@ -311,13 +311,13 @@ def _erase(db: Path) -> None:
         return
     except PermissionError:
         pass
-    with sqlite3.connect(db) as conn:
+    with contextlib.closing(sqlite3.connect(db, timeout=10)) as handle, handle as conn:
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
                                               "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'memory_fts%'")]
         for table in tables:  # memory_entries' delete trigger empties its search index too
             conn.execute(f'DELETE FROM "{table}"')  # nosec B608 - names from sqlite_master
-    with sqlite3.connect(db) as conn:
-        conn.execute("VACUUM")
+    with contextlib.closing(sqlite3.connect(db, timeout=10)) as conn:
+        conn.execute("VACUUM")  # reclaims the space so deleted text is not left in free pages
 
 
 def blend_scores(query: str, items: List[Any], texts: List[str], scores: List[float]) -> List[float]:
