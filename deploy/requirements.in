@@ -12,3 +12,5 @@ PyJWT
 cryptography
 httpx
 pypdf
+# Images in document memory need no Python packages here: OCR is Tesseract (see Dockerfile),
+# image sizes are read from file headers, and vision (opt-in) calls the Anthropic API with httpx.

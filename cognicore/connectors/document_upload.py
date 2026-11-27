@@ -38,6 +38,8 @@ UPLOAD_HEADER = "X-CogniCore-Upload-Token"
 UPLOAD_PATH = "/documents/upload"
 DEFAULT_FILE_HOSTS = ("oaiusercontent.com", "openai.com")
 FETCH_TIMEOUT = 30.0
+_EXTENSIONS = {"application/pdf": ".pdf", "text/plain": ".txt", "text/markdown": ".md", "image/png": ".png",
+               "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
 
 def allowed_file_hosts() -> Tuple[str, ...]:
@@ -83,8 +85,8 @@ def fetch_attached_file(file: Any, transport=None) -> Tuple[bytes, str]:
         raise DocumentError("The attached file's link does not point to a public server.")
 
     name = os.path.basename(str(file.get("file_name") or "")) or "document"
-    if "." not in name and file.get("mime_type") == "application/pdf":
-        name += ".pdf"
+    if "." not in name and file.get("mime_type") in _EXTENSIONS:
+        name += _EXTENSIONS[file["mime_type"]]
     data = bytearray()
     try:
         with httpx.Client(transport=transport, timeout=FETCH_TIMEOUT, follow_redirects=False) as client:
@@ -166,9 +168,10 @@ button {{ background:var(--accent); color:#fff; border:0; border-radius:6px; pad
 #status {{ min-height:1.5em; color:var(--fg); }} #status.bad {{ color:var(--bad); }}
 </style></head><body><main>
 <h1>Add a document to your memory</h1>
-<p>PDF, .txt or .md, up to {max_mb} MB. It is split into sections that your AI apps recall when a question
+<p>PDF, image, .txt or .md, up to {max_mb} MB. It is split into sections that your AI apps recall when a question
 needs them. This link works once and expires 15 minutes after it was made.</p>
-<input id="file" type="file" accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown">
+<input id="file" type="file"
+  accept=".pdf,.txt,.md,.markdown,image/*,application/pdf,text/plain,text/markdown">
 <button id="go" disabled>Upload</button>
 <div id="status" role="status" aria-live="polite"></div>
 </main>
@@ -195,8 +198,8 @@ go.addEventListener("click", async () => {{
                           {{ method: "PUT", body: f, headers: {{ "{UPLOAD_HEADER}": token }} }});
     const body = await r.json().catch(() => ({{}}));
     if (!r.ok) throw new Error(body.detail || ("Upload failed (" + r.status + ")"));
-    status.textContent = body.already_present
-      ? body.name + " was already in your memory."
+    status.textContent = body.queued ? body.message + " You can close this page."
+      : body.already_present ? body.name + " was already in your memory."
       : "Added " + body.name + ": " + body.sections + " sections. You can close this page.";
   }} catch (e) {{ status.className = "bad"; status.textContent = e.message; }}
 }});

@@ -544,6 +544,57 @@ def _describe_added(d) -> str:
     return f"Added {d.name}: {d.sections} sections{pages}, id {d.doc_id}."
 
 
+# Documents whose OCR would take long (scanned PDFs) are read in the background, one at a time
+# by default, so a tool call or upload returns at once and OCR cannot take over the server's CPU.
+INLINE_OCR_PAGES = int(os.environ.get("COGNICORE_INLINE_OCR_PAGES", "2"))
+MAX_PENDING_DOCUMENTS = 3
+_document_workers = None
+
+
+def _document_pool():
+    global _document_workers
+    if _document_workers is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        _document_workers = ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("COGNICORE_OCR_WORKERS", "1"))),
+                                               thread_name_prefix="cognicore-ocr")
+    return _document_workers
+
+
+def _add_or_queue(backend, data: bytes, name: str) -> dict:
+    """Add the document now, or, when it needs OCR on more than INLINE_OCR_PAGES pages, queue it.
+
+    Returns {"message", "queued"} plus, when added now, the AddedDocument's fields."""
+    from cognicore.memory import documents as _docs
+
+    pages = _docs.ocr_pages_needed(data, name)
+    if pages <= INLINE_OCR_PAGES:
+        d = _add_document_to(backend, data, name)
+        return {"message": _describe_added(d), "queued": False, "doc_id": d.doc_id, "name": d.name,
+                "sections": d.sections, "pages": d.pages, "already_present": d.already_present}
+    if sum(1 for j in _docs.list_jobs(backend) if j["status"] == "processing") >= MAX_PENDING_DOCUMENTS:
+        raise _docs.DocumentError(f"{MAX_PENDING_DOCUMENTS} documents are already being read; "
+                                  "add this one when one of them is done.")
+    if len(_docs.list_documents(backend)) >= MAX_DOCUMENTS:
+        raise _docs.DocumentError(f"This account already has {MAX_DOCUMENTS} documents; remove one first.")
+    job = _docs.start_job(backend, name)
+
+    def work():
+        try:
+            d = _add_document_to(backend, data, name)
+            _docs.finish_job(backend, job, "done", _describe_added(d))
+        except _docs.DocumentError as e:
+            _docs.finish_job(backend, job, "failed", str(e))
+        except Exception as e:  # never leave a job "processing" forever
+            _docs.finish_job(backend, job, "failed", f"unexpected error ({type(e).__name__})")
+
+    _document_pool().submit(work)
+    minutes = max(1, round(pages * _docs.OCR_SECONDS_PER_PAGE / 60))
+    return {"message": f"Reading {pages} scanned pages of {os.path.basename(name)} in the background "
+                       f"(about {minutes} min). It appears in the document list when it is ready.",
+            "queued": True, "name": os.path.basename(name)}
+
+
 def _public_base(ctx) -> str:
     configured = os.environ.get("COGNICORE_PUBLIC_URL", "").strip().rstrip("/")
     if configured:
@@ -557,7 +608,7 @@ def _public_base(ctx) -> str:
 
 @_tool("Add a document", _WRITE, meta={"openai/fileParams": ["file"]})
 def cognicore_add_document(ctx: Context, file: Optional[dict] = None) -> str:
-    """Add a document (PDF, .txt or .md, up to 25 MB) to memory, split into sections that memory search returns.
+    """Add a document (PDF, image, .txt or .md, up to 25 MB) to memory, split into sections that memory search returns.
 
     With a file attached, that file is added. Without one, returns a single-use link, valid for
     15 minutes, to a page where the file can be uploaded from a browser.
@@ -569,7 +620,7 @@ def cognicore_add_document(ctx: Context, file: Optional[dict] = None) -> str:
     if file:
         try:
             data, name = _up.fetch_attached_file(file)
-            return _describe_added(_add_document_to(get_backend(ctx), data, name))
+            return _add_or_queue(get_backend(ctx), data, name)["message"]
         except DocumentError as e:
             return f"Error: {e}"
     if not user:
@@ -584,14 +635,15 @@ def cognicore_add_document(ctx: Context, file: Optional[dict] = None) -> str:
 
 @_tool("List documents", _READ)
 def cognicore_list_documents(ctx: Context) -> str:
-    """List the documents in memory: id, name, sections and pages."""
+    """List the documents in memory (id, name, sections and pages) and any still being read or that failed."""
     from cognicore.memory import documents as _docs
 
-    rows = _docs.list_documents(get_backend(ctx))
-    if not rows:
-        return "No documents in memory."
-    return "\n".join(f"{r['doc_id']}  {r['name']}  ({r['sections']} sections"
-                     + (f", {r['pages']} pages)" if r["pages"] else ")") for r in rows)
+    backend = get_backend(ctx)
+    lines = [f"Being read: {j['name']}" if j["status"] == "processing" else f"Failed: {j['name']}: {j['detail']}"
+             for j in _docs.list_jobs(backend) if j["status"] != "done"]
+    lines += [f"{r['doc_id']}  {r['name']}  ({r['sections']} sections"
+              + (f", {r['pages']} pages)" if r["pages"] else ")") for r in _docs.list_documents(backend)]
+    return "\n".join(lines) if lines else "No documents in memory."
 
 
 @_tool("Remove a document", _DELETE)
@@ -1908,11 +1960,9 @@ async def document_upload(request: Request, name: str = ""):
 
     backend = SQLiteMemoryBackend(get_db_path_for_user(claims["sub"]), provider=_get_shared_provider())
     try:
-        d = await asyncio.to_thread(_add_document_to, backend, bytes(data), name or "document")
+        body = await asyncio.to_thread(_add_or_queue, backend, bytes(data), name or "document")
     except DocumentError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
-    body = {"message": _describe_added(d), "doc_id": d.doc_id, "name": d.name,
-            "sections": d.sections, "pages": d.pages, "already_present": d.already_present}
     return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 

@@ -94,7 +94,7 @@ def test_too_large_keeps_the_link_and_bad_files_are_explained(client, monkeypatc
     monkeypatch.setattr(docs, "MAX_BYTES", 10)
     assert _put(client, token).status_code == 413
     monkeypatch.setattr(docs, "MAX_BYTES", 25 * 1024 * 1024)
-    bad = _put(client, token, data=b"\x89PNG\r\n", name="photo.png")  # now the link is used
+    bad = _put(client, token, data=b"PK\x03\x04 zip", name="archive.zip")  # now the link is used
     assert bad.status_code == 400 and "unsupported" in bad.json()["detail"]
 
 
@@ -202,3 +202,67 @@ def test_a_used_link_stays_used_after_a_restart(client, tmp_path):
     again = _put(client, token, data=b"other", name="other.txt")
     assert again.status_code == 401 and "already used" in again.json()["detail"]
     assert _names(ALICE) == ["office.txt"]
+
+
+# --- slow documents are read in the background ------------------------------------------------
+
+class _Pool:
+    """Stands in for the OCR thread pool: runs submitted work only when told to."""
+
+    def __init__(self):
+        self.pending = []
+
+    def submit(self, fn):
+        self.pending.append(fn)
+
+    def run_all(self):
+        while self.pending:
+            self.pending.pop(0)()
+
+
+@pytest.fixture
+def slow(monkeypatch):
+    pool = _Pool()
+    monkeypatch.setattr(remote, "_document_pool", lambda: pool)
+    monkeypatch.setattr(docs, "ocr_pages_needed", lambda data, name: 12)
+    return pool
+
+
+def test_scanned_documents_are_queued_and_appear_when_read(client, slow):
+    r = _put(client, _link_token())
+    assert r.status_code == 200 and r.json()["queued"] and "Reading 12 scanned pages" in r.json()["message"]
+    assert "Being read: office.txt" in remote.cognicore_list_documents(_ctx())
+    slow.run_all()
+    listing = remote.cognicore_list_documents(_ctx())
+    assert "office.txt  (1 sections)" in listing and "Being read" not in listing
+
+
+def test_failed_background_reads_say_why(slow, monkeypatch):
+    def broken(backend, data, name):
+        raise docs.DocumentError("scan.pdf has no text to store.")
+    monkeypatch.setattr(remote, "_add_document_to", broken)
+    out = remote._add_or_queue(remote.get_backend(_ctx()), b"x", "scan.pdf")
+    assert out["queued"]
+    slow.run_all()
+    assert "Failed: scan.pdf: scan.pdf has no text to store." in remote.cognicore_list_documents(_ctx())
+
+
+def test_at_most_three_documents_wait_per_account(slow):
+    backend = remote.get_backend(_ctx())
+    for i in range(remote.MAX_PENDING_DOCUMENTS):
+        remote._add_or_queue(backend, b"x", f"scan{i}.pdf")
+    with pytest.raises(docs.DocumentError, match="already being read"):
+        remote._add_or_queue(backend, b"x", "one-more.pdf")
+    assert remote._add_or_queue(remote.get_backend(_ctx(BOB)), b"x", "bob.pdf")["queued"]  # per account
+
+
+def test_a_job_lost_in_a_restart_is_reported(slow, monkeypatch):
+    backend = remote.get_backend(_ctx())
+    remote._add_or_queue(backend, b"x", "scan.pdf")
+    monkeypatch.setattr(docs, "JOB_STALE_SECONDS", -1)  # as if the job started hours ago
+    assert "Failed: scan.pdf: interrupted; add the file again" in remote.cognicore_list_documents(_ctx())
+
+
+def test_small_documents_are_still_added_at_once(client):
+    r = _put(client, _link_token())
+    assert r.json()["queued"] is False and r.json()["sections"] == 1

@@ -132,7 +132,7 @@ def test_list_and_remove_only_touch_that_document(backend):
 
 def test_unsupported_too_large_empty_and_damaged(backend, monkeypatch):
     with pytest.raises(docs.DocumentError, match="unsupported"):
-        docs.add_document(backend, b"\x89PNG\r\n", "photo.png")
+        docs.add_document(backend, b"PK\x03\x04 zip", "archive.zip")
     with pytest.raises(docs.DocumentError, match="no text"):
         docs.add_document(backend, make_pdf([[]]), "scan.pdf")
     with pytest.raises(docs.DocumentError, match="could not be read"):

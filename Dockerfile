@@ -1,8 +1,36 @@
 # Base image pinned by digest so a rebuild cannot silently pick up a changed
 # image. Dependabot (docker ecosystem) proposes digest updates as PRs.
+#
+# Stage 1: Tesseract, which reads text in images and scanned PDF pages for document memory.
+# Installing the package brings about 150 MB of dependencies, most of which Tesseract never
+# loads. Only the binary, the English model and the shared libraries it loads that the base
+# image lacks are copied into the server image, under /opt/tesseract, with a wrapper that
+# points Tesseract (and only Tesseract) at them. Build with --build-arg WITH_OCR=0 to leave
+# it out: images are then refused with a message, or described by a vision model if enabled.
+FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60 AS ocr
+ARG WITH_OCR=1
+RUN mkdir -p /opt/tesseract && if [ "$WITH_OCR" = "1" ]; then \
+        ls /usr/lib/x86_64-linux-gnu > /tmp/base-libs \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+        && mkdir -p /opt/tesseract/bin /opt/tesseract/lib /opt/tesseract/tessdata \
+        && cp /usr/bin/tesseract /opt/tesseract/bin/ \
+        && cp /usr/share/tesseract-ocr/*/tessdata/eng.traineddata /opt/tesseract/tessdata/ \
+        && ldd /usr/bin/tesseract | awk '$3 ~ /^\// {print $3}' | while read -r lib; do \
+               grep -qx "$(basename "$lib")" /tmp/base-libs || cp -L "$lib" /opt/tesseract/lib/; \
+           done \
+        && printf '#!/bin/sh\nLD_LIBRARY_PATH=/opt/tesseract/lib TESSDATA_PREFIX=/opt/tesseract/tessdata exec /opt/tesseract/bin/tesseract "$@"\n' \
+               > /opt/tesseract/tesseract \
+        && chmod 755 /opt/tesseract/tesseract \
+        && /opt/tesseract/tesseract --list-langs | grep -qx eng; \
+    fi
+
+# Stage 2: the server.
 FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 WORKDIR /app
+
+COPY --from=ocr /opt/tesseract /opt/tesseract
 
 # Exact versions with hashes: pip refuses any file whose hash differs, so a
 # poisoned or re-published release cannot slip into a build. To change them,
@@ -21,6 +49,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     HOME=/tmp \
     COGNICORE_DATA_DIR=/data/cognicore \
+    COGNICORE_TESSERACT=/opt/tesseract/tesseract \
     SUPABASE_URL=""
 
 # Run as an unprivileged user. The data volume must be owned by uid 10001
