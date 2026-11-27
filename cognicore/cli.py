@@ -218,7 +218,7 @@ def cmd_mcp(args):
 
         transport = getattr(args, 'transport', 'stdio')
         print(f"  Starting CogniCore MCP server (transport={transport})...", file=sys.stderr)
-        server = create_mcp_server()
+        server = create_mcp_server(allow_history=transport == "stdio")
         server.run(transport=transport)
     else:
         print(f"  Unknown MCP action: {action}")
@@ -437,6 +437,8 @@ def cmd_studio(args):
 
 
 def main():
+    from cognicore.history.cli import register as register_history, run as run_history
+
     if len(sys.argv) > 1 and sys.argv[1] == "lesson":  # its own parser, including --help
         from cognicore.lessons import main as lesson_main
 
@@ -519,6 +521,7 @@ def main():
         sys.exit(cmd_usage(argparse.Namespace(rest=sys.argv[2:])))
     if sys.argv[1:2] == ["project"]:  # its own options (--why, --rejected) are not cognicore's
         sys.exit(cmd_project(argparse.Namespace(rest=sys.argv[2:])))
+    register_history(sub)
     args = p.parse_args()
     cmds = {"list": cmd_list, "train": cmd_train, "benchmark": cmd_benchmark,
             "arena": cmd_arena, "ui": cmd_ui, "integrations": cmd_integrations,
@@ -527,7 +530,7 @@ def main():
             "passport": cmd_passport, "civilization": cmd_civilization,
             "studio": cmd_studio, "setup": cmd_setup, "install": cmd_install,
             "login": cmd_login, "logout": cmd_logout, "sync": cmd_sync,
-            "lesson": cmd_lesson, "usage": cmd_usage, "project": cmd_project}
+            "lesson": cmd_lesson, "usage": cmd_usage, "project": cmd_project, "history": run_history}
     if args.command in cmds:
         result = cmds[args.command](args)
         if isinstance(result, int) and result:

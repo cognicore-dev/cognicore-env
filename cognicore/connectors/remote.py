@@ -1632,6 +1632,54 @@ def health_check():
 SYNC_MAX_BYTES = 512 * 1024
 
 
+def _history_sync_account(request: Request):
+    if not request.headers.get("Authorization", "").lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="History sync requires an OAuth access token.")
+    owner = get_user_id(request)
+    memory = Path(get_db_path_for_user(owner))
+    path = memory.with_name(f"history_{memory.name}")
+    return path, hashlib.sha256(owner.encode()).hexdigest()
+
+
+@app.get("/sync/history")
+def sync_history_get(request: Request):
+    """Fetch the signed-in account's current logical history snapshot."""
+    from cognicore.history.hosted import exchange
+
+    path, owner = _history_sync_account(request)
+    return JSONResponse(exchange(path, owner), headers={"Cache-Control": "no-store"})
+
+
+@app.put("/sync/history")
+async def sync_history_put(request: Request):
+    """Replace the signed-in account's snapshot when its revision still matches."""
+    import asyncio
+    import base64
+
+    from cognicore.history.hosted import exchange
+    from cognicore.history.replica import MAX_COMPRESSED, MAX_WIRE
+
+    path, owner = _history_sync_account(request)
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > MAX_WIRE + 1024:
+            raise HTTPException(status_code=413, detail="History snapshot exceeds the transfer size limit.")
+        raw.extend(chunk)
+    try:
+        body = json.loads(raw)
+        revision, payload = body["revision"], body["payload"]
+        if type(revision) is not int or revision < 0 or not isinstance(payload, str) or len(payload) > MAX_WIRE:
+            raise ValueError
+        if not 0 < len(base64.b64decode(payload, validate=True)) <= MAX_COMPRESSED:
+            raise ValueError
+    except (ValueError, KeyError, TypeError, RecursionError):
+        raise HTTPException(status_code=400, detail="Invalid history snapshot.") from None
+    result = await asyncio.to_thread(exchange, path, owner, revision=revision, payload=payload)
+    if result is None:
+        raise HTTPException(status_code=409, detail="History revision changed.")
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
 def _sync_backend(request: Request):
     from cognicore.memory import SQLiteMemoryBackend
 

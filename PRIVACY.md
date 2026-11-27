@@ -8,6 +8,8 @@ It does **not** cover the open-source `cognicore-env` Python package when you ru
 
 ## In short
 
+Historical ChatGPT archives imported through the Retrospective Memory Engine live in a separate SQLite database. When you explicitly enable history sync, the hosted service stores a copy of the archive as imported in your signed-in account so your other devices can restore it. This includes source messages, derived claims, attachment references, and verification receipts. [History sync, redaction, and deletion](docs/history.md#sync-history-across-devices)
+
 - You sign in with Google or GitHub. With Google we receive **your Google account ID only**, not your name, email, contacts, Drive or any other Google data. With GitHub we receive your **GitHub user ID and username** only, not your email, repositories or private data.
 - We store **what you ask CogniCore to remember**, in a database that belongs to your account alone.
 - We **do not sell** your data, show ads, use analytics trackers, or use your data to train AI models.

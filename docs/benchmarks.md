@@ -1,5 +1,19 @@
 # Benchmarks
 
+## Retrospective Memory Engine
+
+Run `python -m benchmarks.history_benchmark` from the checkout. The [synthetic ChatGPT archive](../examples/chatgpt-history.json) has three conversations and nine messages. The benchmark includes eight manually checked retrieval questions, eight labeled claims, and one labeled candidate conflict. Each query is timed 25 times. The throughput run imports 100 copies of the three conversations with distinct conversation IDs, then repeats the exact archive to check deduplication.
+
+Raw search indexes each source message and uses the same SQLite BM25 backend. The conventional baseline uses the existing deterministic session save and recall pipeline, and the benchmark maps its sessions back to conversation IDs. RME searches both indexed source messages and claims. Recall@5 counts questions with a matching source or verbatim source text in the top five. Temporal and attribution accuracy use all questions as the denominator, including misses. A null timestamp is correct for the undated attachment record.
+
+| Retrieval method | Recall@5 | Temporal accuracy | Conversation attribution | Message attribution | p50 / p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Raw BM25 | 100% | 100% | 100% | 100% | 1.035 / 1.179 ms |
+| Conventional session memory | 50% | 0% | 50% | 0% | 1.051 / 1.376 ms |
+| Retrospective retrieval | 100% | 100% | 100% | 100% | 1.927 / 2.082 ms |
+
+On Windows with Python 3.11.9 and SQLite 3.45.1, RME extracted seven of eight labeled claims with 100% precision and 87.5% recall. It found the single labeled candidate conflict. The throughput run imported 900 messages in 3.675 seconds (244.9 messages per second) and added zero index entries on exact reimport. This small fixture checks behavior reproducibly. It cannot establish a recall advantage over raw search or characterize extraction quality on real exports.
+
 ## LongMemEval
 
 LongMemEval tests how well an agent can recall facts that are scattered across many past conversations — not just recent ones. It's the hardest memory benchmark because the answer requires **combining evidence from multiple separate sessions**.

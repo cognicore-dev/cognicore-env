@@ -247,7 +247,7 @@ def _state_path() -> Path:
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
-def create_mcp_server() -> "FastMCP":
+def create_mcp_server(*, allow_history: bool = False) -> "FastMCP":
     """Create and return a configured :class:`FastMCP` instance.
 
     Raises:
@@ -738,7 +738,13 @@ def create_mcp_server() -> "FastMCP":
                            "accept_with": f"cognicore project accept {res['n']}"})
 
     # e.g. COGNICORE_TOOLSETS=memory,session for a memory-only agent. Default: all tools.
-    limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), LOCAL_TOOLSETS)
+    toolsets = LOCAL_TOOLSETS
+    if allow_history and os.environ.get("COGNICORE_ENABLE_HISTORY_MCP") == "1":
+        from cognicore.history.mcp import TOOL_NAMES, register
+
+        register(mcp)
+        toolsets = {**LOCAL_TOOLSETS, "history": TOOL_NAMES}
+    limit_toolsets(mcp, os.environ.get("COGNICORE_TOOLSETS", ""), toolsets)
     strip_schema_titles(mcp)
     return mcp
 
@@ -757,7 +763,7 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
     logger.info("Starting CogniCore MCP server …")
-    server = create_mcp_server()
+    server = create_mcp_server(allow_history=True)
     server.run(transport="stdio")
 
 

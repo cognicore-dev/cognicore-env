@@ -1,0 +1,164 @@
+[
+  {
+    "title": "DIPY optimization",
+    "conversation_id": "dipy-architecture-2025",
+    "create_time": 1740992400,
+    "mapping": {
+      "root": {
+        "parent": null,
+        "children": [
+          "d1"
+        ],
+        "message": null
+      },
+      "d1": {
+        "parent": "root",
+        "children": [
+          "d2"
+        ],
+        "message": {
+          "id": "d1",
+          "author": {
+            "role": "user"
+          },
+          "create_time": 1740992400,
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "Can we speed up DIPY tractography on the lab workstation?"
+            ]
+          }
+        }
+      },
+      "d2": {
+        "parent": "d1",
+        "children": [
+          "d3"
+        ],
+        "message": {
+          "id": "d2",
+          "author": {
+            "role": "user"
+          },
+          "create_time": 1740992460,
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "We chose memory-mapped arrays instead of copying volumes because peak RAM was the limiting factor."
+            ]
+          }
+        }
+      },
+      "d3": {
+        "parent": "d2",
+        "children": [],
+        "message": {
+          "id": "d3",
+          "author": {
+            "role": "assistant"
+          },
+          "create_time": 1740992520,
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "Vectorized batching failed on Windows because the native dependency was missing."
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "title": "DIPY follow-up",
+    "conversation_id": "dipy-followup-2025",
+    "create_time": 1746435600,
+    "mapping": {
+      "d4": {
+        "parent": null,
+        "children": [
+          "d5",
+          "d6"
+        ],
+        "message": {
+          "id": "d4",
+          "author": {
+            "role": "user"
+          },
+          "create_time": 1746435600,
+          "content": {
+            "parts": [
+              "Vectorized batching worked on Linux because the native dependency was installed."
+            ]
+          }
+        }
+      },
+      "d5": {
+        "parent": "d4",
+        "children": [],
+        "message": {
+          "id": "d5",
+          "author": {
+            "role": "assistant"
+          },
+          "create_time": 1746435660,
+          "content": {
+            "parts": [
+              "We shipped the DIPY batching workflow. Run python -m dipy_bench."
+            ]
+          }
+        }
+      },
+      "d6": {
+        "parent": "d4",
+        "children": [],
+        "message": {
+          "id": "d6",
+          "author": {
+            "role": "tool",
+            "name": "benchmark"
+          },
+          "create_time": null,
+          "content": {
+            "parts": [
+              "DIPY timing table",
+              {
+                "asset_pointer": "file-service://sample-timing-table"
+              }
+            ]
+          },
+          "metadata": {
+            "attachments": [
+              {
+                "id": "file-sample",
+                "name": "timings.csv"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "title": "DIPY benchmark replay",
+    "conversation_id": "dipy-replay-2025",
+    "create_time": 1751619600,
+    "messages": [
+      {
+        "id": "d7",
+        "role": "assistant",
+        "create_time": 1751619600,
+        "content": "Vectorized batching failed on Linux because the runtime library differed."
+      },
+      {
+        "id": "d8",
+        "role": "user",
+        "content": "The persistent memory prototype remains open as a research idea."
+      },
+      {
+        "id": "d9",
+        "role": "user",
+        "content": "We migrated profiling to sampled traces instead of instrumenting every function."
+      }
+    ]
+  }
+]
