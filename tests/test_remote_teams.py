@@ -187,16 +187,12 @@ def test_team_tools_are_opt_in():
     assert "cognicore_remember" in listed  # sharing to a team uses the existing tool's team argument
 
 
-def test_everyday_tools_are_unchanged_so_people_without_teams_pay_nothing():
-    """remember, recall and forget keep main's signature and descriptions: no extra tokens per turn."""
+def test_everyday_tools_carry_nothing_about_teams_so_people_without_teams_pay_nothing():
+    """Team memory adds no argument and no wording to remember, recall or forget: no extra tokens per turn."""
     import asyncio
-    import inspect
+    import json
 
     tools = {t.name: t for t in asyncio.run(remote.mcp.list_tools())}
-    assert "team" not in tools["cognicore_remember"].inputSchema["properties"]
-    assert tools["cognicore_remember"].description == ("Store a fact, preference, or decision. "
-                                                       "Auto-decomposes and auto-categorizes.")
-    assert tools["cognicore_recall"].description == ("Search memory, including facts from saved sessions. "
-                                                     "Returns scored results sorted by relevance.")
-    assert tools["cognicore_forget"].description == "Delete a memory by ID."
-    assert "team" not in inspect.signature(remote.cognicore_remember).parameters
+    for name in ("cognicore_remember", "cognicore_recall", "cognicore_forget"):
+        definition = json.dumps({"description": tools[name].description, "schema": tools[name].inputSchema}).lower()
+        assert "team" not in definition, name
